@@ -1,11 +1,11 @@
 //! A reign without UI: action -> tick -> event -> choice.
 
-use crate::data::Data;
+use crate::data::{Data, by_age};
 use crate::fx::Fx;
 use crate::neighbour::neighbour_tick;
 use crate::rng::Rng;
-use crate::rules::{ActionTarget, Choice, Ctx, Event, EventTarget, Target, add_axis};
-use crate::state::{ActiveAction, Holder, NeighbourId, Preset, ProvinceId, World};
+use crate::rules::{ActionTarget, Choice, Ctx, Effect, Event, EventTarget, Target, add_axis};
+use crate::state::{ActiveAction, HeirStatus, Holder, NeighbourId, Preset, ProvinceId, World};
 use crate::time::Tick;
 use serde::{Deserialize, Serialize};
 
@@ -30,6 +30,8 @@ pub enum DecisionKind {
         action_id: ActionId,
         target: Option<Target>,
     },
+    /// `Game::abdicate`; the confirm or cancel choice follows as an `EventChoice`.
+    Abdicate,
 }
 
 /// The event waiting for `choose`.
@@ -93,8 +95,13 @@ pub struct Game {
     pub pending_event: Option<PendingEvent>,
     /// Deferred events from `SpawnEvent`: `(due tick, event id)`.
     pub queue: Vec<(Tick, String)>,
-    /// Events started by neighbours, with their targets; they go before `queue`.
-    pub neighbour_events: Vec<PendingEvent>,
+    /// Cause of the reign end, set by `RulerDies` or `Abdicate`.
+    pub ended: Option<String>,
+    /// `wait` has returned `Step::ReignEnded`; every call errs from now on.
+    pub reported: bool,
+    /// Events started by neighbours, with their targets; they go after due `queue` entries.
+    /// At most one per neighbour: a neighbour with one waiting starts no other.
+    pub neighbour_events: Vec<(NeighbourId, PendingEvent)>,
 }
 
 impl Game {
@@ -107,6 +114,8 @@ impl Game {
             decisions: Vec::new(),
             pending_event: None,
             queue: Vec::new(),
+            ended: None,
+            reported: false,
             neighbour_events: Vec::new(),
         }
     }
@@ -148,6 +157,9 @@ impl Game {
     }
 
     pub fn start_action(&mut self, id: &str, target: Option<Target>) -> Result<(), GameError> {
+        if self.ended.is_some() {
+            return Err(GameError::ReignEnded);
+        }
         if self.pending_event.is_some() {
             return Err(GameError::EventPending);
         }
@@ -192,6 +204,9 @@ impl Game {
 
     /// Advances one tick, or repeats the pending event without advancing.
     pub fn wait(&mut self) -> Result<Step, GameError> {
+        if self.ended.is_some() {
+            return self.report_end();
+        }
         if let Some(p) = &self.pending_event {
             return Ok(Step::Event(self.view(p)));
         }
@@ -203,19 +218,28 @@ impl Game {
         if (self.world.tick.0).is_multiple_of(self.data.time_unit.ticks_per_year) {
             let ids: Vec<_> = self.world.neighbours.keys().cloned().collect();
             for id in ids {
-                let e = neighbour_tick(&mut self.world, &self.data, &mut self.rng, id);
-                self.neighbour_events.extend(e);
+                let busy = self.neighbour_events.iter().any(|(n, _)| *n == id);
+                let e = neighbour_tick(&mut self.world, &self.data, &mut self.rng, id.clone());
+                if let Some(e) = e.filter(|_| !busy) {
+                    self.neighbour_events.push((id, e));
+                }
             }
             // Relations price the paths through foreign land.
             self.world.recompute_crown_power(&self.data);
         }
-        let picked = pick_event(
-            &self.data,
-            &self.world,
-            &mut self.rng,
-            &mut self.queue,
-            &mut self.neighbour_events,
-        );
+        if self.ended.is_some() {
+            return self.report_end();
+        }
+        let death = self.death_roll();
+        let picked = death.or_else(|| {
+            pick_event(
+                &self.data,
+                &self.world,
+                &mut self.rng,
+                &mut self.queue,
+                &mut self.neighbour_events,
+            )
+        });
         let Some(p) = picked else {
             return Ok(Step::Idle);
         };
@@ -228,17 +252,13 @@ impl Game {
     }
 
     pub fn choose(&mut self, idx: usize) -> Result<(), GameError> {
-        let p = self.pending_event.as_ref().ok_or(GameError::NoEvent)?;
-        let event = find_event(&self.data, &p.event_id).expect("pending events exist");
-        let choice = event.choices.get(idx).ok_or(GameError::BadChoice)?;
-        let mut ctx = Ctx {
-            data: &self.data,
-            queue: &mut self.queue,
-            target: p.target.as_ref(),
-        };
-        for e in &choice.effects {
-            e.apply(&mut self.world, &mut ctx);
+        if self.ended.is_some() {
+            return Err(GameError::ReignEnded);
         }
+        let p = self.pending_event.clone().ok_or(GameError::NoEvent)?;
+        let event = find_event(&self.data, &p.event_id).expect("pending events exist");
+        let choice = event.choices.get(idx).ok_or(GameError::BadChoice)?.clone();
+        self.apply(&choice.effects, p.target.as_ref());
         self.world.recompute_loyalty(&self.data);
         self.world.recompute_crown_power(&self.data);
         self.decisions.push(Decision {
@@ -267,6 +287,7 @@ impl Game {
         if w.tick.0 % d.time_unit.ticks_per_year == 0 {
             w.ruler.age += 1;
             w.heirs.iter_mut().for_each(|h| h.age += 1);
+            heirs_year(d, w, &mut self.rng);
         }
 
         let step = per_tick(d.drift.step);
@@ -307,15 +328,104 @@ impl Game {
                 ActionTarget::Heir => Target::Heir(key.parse().expect("written by target_key")),
                 ActionTarget::None => unreachable!("untargeted actions store no target"),
             });
-            let mut ctx = Ctx {
-                data: &self.data,
-                queue: &mut self.queue,
-                target: target.as_ref(),
-            };
-            for e in &def.on_complete {
-                e.apply(&mut self.world, &mut ctx);
+            let effects = def.on_complete.clone();
+            self.apply(&effects, target.as_ref());
+        }
+    }
+
+    /// Fires the abdication event from `Data.abdication`; its choices confirm or cancel.
+    pub fn abdicate(&mut self) -> Result<(), GameError> {
+        if self.ended.is_some() {
+            return Err(GameError::ReignEnded);
+        }
+        if self.pending_event.is_some() {
+            return Err(GameError::EventPending);
+        }
+        let id = &self.data.abdication.event;
+        find_event(&self.data, id).ok_or(GameError::Unknown)?;
+        self.pending_event = Some(PendingEvent {
+            event_id: id.clone(),
+            target: None,
+        });
+        self.decisions.push(Decision {
+            tick: self.world.tick,
+            kind: DecisionKind::Abdicate,
+            cause_tag: id.clone(),
+        });
+        Ok(())
+    }
+
+    /// Applies effects in order. Those needing the rng or ending the reign are done here.
+    fn apply(&mut self, effects: &[Effect], target: Option<&Target>) {
+        for e in effects {
+            match e {
+                Effect::Chance(c) => {
+                    let hit = self.rng.range(0, Fx::from_int(100).0) < c.percent(&self.world).0;
+                    self.apply(if hit { &c.then } else { &c.otherwise }, target);
+                }
+                Effect::RulerDies(cause) => self.ended = Some(cause.clone()),
+                Effect::Abdicate => {
+                    let (a, w) = (&self.data.abdication, &mut self.world);
+                    let (axis, min) = &a.institutions;
+                    let calm = w.axes[axis] > *min
+                        && w.heirs.first().is_some_and(|h| h.ability > a.heir_ability);
+                    if !calm {
+                        if let Some(h) = w.heirs.first_mut() {
+                            h.claim = (h.claim - a.claim_drop).max(Fx(0));
+                        }
+                        w.flags.insert(a.contested_flag.clone());
+                    }
+                    self.ended = Some(a.event.clone());
+                }
+                e => {
+                    let mut ctx = Ctx {
+                        data: &self.data,
+                        queue: &mut self.queue,
+                        target,
+                    };
+                    e.apply(&mut self.world, &mut ctx);
+                }
             }
         }
+    }
+
+    /// Rolls the ruler's death risk (`Data.death`). A hit returns its death event, which
+    /// goes before any other event this tick; one whose `when` is false is dropped.
+    fn death_roll(&mut self) -> Option<PendingEvent> {
+        let (d, w) = (&self.data, &self.world);
+        let health = (Fx::from_int(100) - w.ruler.health) * d.death.health_k;
+        let base = (by_age(&d.death.base, w.ruler.age) + health, &d.death.event);
+        let risks = d.death.risks.iter().filter(|r| r.when.eval(w));
+        let risks = risks.map(|r| (r.per_mille, &r.event));
+        // Per mille per year, in Fx units, spread over the ticks of a year.
+        let ticks = d.time_unit.ticks_per_year as i64;
+        let mut roll = self.rng.range(0, 1000 * Fx::SCALE * ticks);
+        for (risk, id) in std::iter::once(base).chain(risks) {
+            let event = find_event(d, id);
+            if event.is_some_and(|e| cooling(e, w)) {
+                continue;
+            }
+            if roll < risk.0 {
+                return event.filter(|e| e.when.eval(w)).map(|e| PendingEvent {
+                    event_id: e.id.clone(),
+                    target: None,
+                });
+            }
+            roll -= risk.0;
+        }
+        None
+    }
+
+    fn report_end(&mut self) -> Result<Step, GameError> {
+        if self.reported {
+            return Err(GameError::ReignEnded);
+        }
+        self.reported = true;
+        Ok(Step::ReignEnded(ReignEnd {
+            cause: self.ended.clone().expect("called once the reign ended"),
+            tick: self.world.tick,
+            world: self.world.snapshot(),
+        }))
     }
 
     fn view(&self, p: &PendingEvent) -> EventView {
@@ -324,6 +434,7 @@ impl Game {
         let name = match &p.target {
             Some(Target::Province(id)) => w.provinces.get(id).map(|x| ("{province}", &x.name)),
             Some(Target::Neighbour(id)) => w.neighbours.get(id).map(|x| ("{neighbour}", &x.name)),
+            Some(Target::Heir(i)) => w.heirs.get(*i as usize).map(|x| ("{heir}", &x.name)),
             _ => None,
         };
         let fill = |s: &str| {
@@ -358,6 +469,48 @@ fn target_key(t: &Target) -> String {
     }
 }
 
+/// Yearly: ability grows by status until adulthood, claims follow the succession law,
+/// hostages lose claim, a child may be born.
+fn heirs_year(d: &Data, w: &mut World, rng: &mut Rng) {
+    let r = &d.heirs;
+    let pct = |v: Fx| v.clamp(Fx(0), Fx::from_int(100));
+    let law = r.laws.iter().find(|l| w.flags.contains(&l.flag));
+    for (i, h) in w.heirs.iter_mut().enumerate() {
+        let (growth, claim) = match h.status {
+            HeirStatus::Home => (r.growth_home, Fx(0)),
+            HeirStatus::Studying(_) => (r.growth_studying, Fx(0)),
+            HeirStatus::Hostage(_) => (r.growth_hostage, r.hostage_claim),
+        };
+        if h.age < r.adult_age {
+            h.ability = pct(h.ability + growth);
+        }
+        if let Some(l) = law {
+            let base = if i == 0 { l.eldest } else { l.others };
+            let target = base + h.ability * l.ability_k;
+            h.claim = match h.claim < target {
+                true => (h.claim + r.claim_step).min(target),
+                false => (h.claim - r.claim_step).max(target),
+            };
+        }
+        h.claim = pct(h.claim + claim);
+    }
+    let married = w.flags.contains(&r.married_flag);
+    let factor = if married {
+        Fx::from_int(1)
+    } else {
+        r.unmarried
+    };
+    let chance = by_age(&r.birth, w.ruler.age) * factor;
+    if rng.range(0, Fx::from_int(100).0) < chance.0 {
+        w.heirs.push(d.new_heir.clone());
+    }
+}
+
+fn cooling(e: &Event, w: &World) -> bool {
+    let cooldown = e.cooldown_years.ticks(w.time_unit).0;
+    (w.last_fired.get(&e.id)).is_some_and(|t| w.tick.0 < t.0 + cooldown)
+}
+
 fn find_event<'a>(data: &'a Data, id: &str) -> Option<&'a Event> {
     data.events.iter().find(|e| e.id == id)
 }
@@ -378,11 +531,17 @@ fn candidates(target: &EventTarget, w: &World) -> Option<Vec<Target>> {
                 .map(|n| Target::Neighbour(n.clone()))
                 .collect(),
         ),
+        EventTarget::Heir(lo, hi) => Some(
+            (0..w.heirs.len() as u32)
+                .filter(|&i| (*lo..=*hi).contains(&w.heirs[i as usize].age))
+                .map(Target::Heir)
+                .collect(),
+        ),
     }
 }
 
-/// At most one event per tick. Neighbour events go first, in order, keeping their target;
-/// then due deferred events, earliest due first. Either kind is dropped when its `when` is
+/// At most one event per tick. Due deferred events go first, earliest due first; then
+/// neighbour events, in order, keeping their target. Either kind is dropped when its `when` is
 /// false, it already fired `once`, or it has no target. Otherwise a weighted pick over
 /// ready events off cooldown, with `quiet_weight` for no event.
 fn pick_event(
@@ -390,7 +549,7 @@ fn pick_event(
     w: &World,
     rng: &mut Rng,
     queue: &mut Vec<(Tick, String)>,
-    neighbour_events: &mut Vec<PendingEvent>,
+    neighbour_events: &mut Vec<(NeighbourId, PendingEvent)>,
 ) -> Option<PendingEvent> {
     let ready = |e: &Event| {
         let fired = w.last_fired.get(&e.id);
@@ -406,13 +565,6 @@ fn pick_event(
         })
     };
 
-    while !neighbour_events.is_empty() {
-        let p = neighbour_events.remove(0);
-        if find_event(data, &p.event_id).is_some_and(ready) {
-            return Some(p);
-        }
-    }
-
     let due = |q: &Vec<(Tick, String)>| {
         (0..q.len())
             .filter(|&i| q[i].0 <= w.tick)
@@ -425,14 +577,15 @@ fn pick_event(
         }
     }
 
-    let cooling = |e: &Event| {
-        let cooldown = e.cooldown_years.ticks(w.time_unit).0;
-        w.last_fired
-            .get(&e.id)
-            .is_some_and(|t| w.tick.0 < t.0 + cooldown)
-    };
+    while !neighbour_events.is_empty() {
+        let (_, p) = neighbour_events.remove(0);
+        if find_event(data, &p.event_id).is_some_and(ready) {
+            return Some(p);
+        }
+    }
+
     let pool: Vec<&Event> = (data.events.iter())
-        .filter(|e| e.weight > 0 && !cooling(e) && ready(e))
+        .filter(|e| e.weight > 0 && !cooling(e, w) && ready(e))
         .collect();
     let total: u32 = data.quiet_weight + pool.iter().map(|e| e.weight).sum::<u32>();
     if total == 0 {

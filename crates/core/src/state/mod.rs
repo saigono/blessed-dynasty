@@ -166,7 +166,7 @@ impl World {
             heirs: preset.heirs.clone(),
             neighbours: by_id(&preset.neighbours, |n| n.id.clone()),
             active_actions: Vec::new(),
-            flags: BTreeSet::new(),
+            flags: preset.flags.clone(),
             last_fired: BTreeMap::new(),
             crown_modifiers: BTreeMap::new(),
         };

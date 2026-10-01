@@ -33,6 +33,10 @@ pub enum Predicate {
     /// Inclusive range.
     RulerAge(u32, u32),
     AtWar,
+    /// Age of the heir at this index within an inclusive range; false without that heir.
+    HeirAge(u32, u32, u32),
+    /// Claims of heirs 0 and 1 differ by less than this; false with fewer than two heirs.
+    ClaimGapBelow(Fx),
     /// `All([])` is always true.
     All(Vec<Predicate>),
     Any(Vec<Predicate>),
@@ -51,13 +55,20 @@ impl Predicate {
             Predicate::RulerAge(lo, hi) => (*lo..=*hi).contains(&w.ruler.age),
             // There is no war state before stage 4.
             Predicate::AtWar => false,
+            Predicate::HeirAge(i, lo, hi) => {
+                (w.heirs.get(*i as usize)).is_some_and(|h| (*lo..=*hi).contains(&h.age))
+            }
+            Predicate::ClaimGapBelow(v) => match w.heirs.as_slice() {
+                [a, b, ..] => (a.claim - b.claim).max(b.claim - a.claim) < *v,
+                _ => false,
+            },
             Predicate::All(ps) => ps.iter().all(|p| p.eval(w)),
             Predicate::Any(ps) => ps.iter().any(|p| p.eval(w)),
             Predicate::Not(p) => !p.eval(w),
         }
     }
 
-    fn check(&self, data: &Data) -> Result<(), String> {
+    pub(crate) fn check(&self, data: &Data) -> Result<(), String> {
         match self {
             Predicate::AxisAbove(a, _) | Predicate::AxisBelow(a, _) => known_axis(data, a),
             Predicate::All(ps) | Predicate::Any(ps) => ps.iter().try_for_each(|p| p.check(data)),
@@ -133,6 +144,39 @@ pub enum Effect {
     Grant(ProvinceTarget),
     /// A vassal province goes back to the crown; otherwise a no-op.
     Revoke(ProvinceTarget),
+    /// Ends the reign with this cause. Applied by `Game`.
+    RulerDies(String),
+    /// Ends the reign, see `Data.abdication`. Applied by `Game`.
+    Abdicate,
+    /// Applies `then` or `otherwise` by a roll. Applied by `Game`, which owns the rng.
+    Chance(Chance),
+}
+
+/// Success chance in percent: `percent + sum(axis * k) + bonus of every predicate that holds`,
+/// clamped to 0..=100.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Chance {
+    pub percent: Fx,
+    #[serde(default)]
+    pub axes: Vec<(AxisId, Fx)>,
+    #[serde(default)]
+    pub bonus: Vec<(Predicate, Fx)>,
+    pub then: Vec<Effect>,
+    #[serde(default)]
+    pub otherwise: Vec<Effect>,
+}
+
+impl Chance {
+    pub fn percent(&self, w: &World) -> Fx {
+        let axes = self.axes.iter().map(|(a, k)| w.axes[a] * *k);
+        let bonus = self
+            .bonus
+            .iter()
+            .filter(|(p, _)| p.eval(w))
+            .map(|(_, b)| *b);
+        let p = axes.chain(bonus).fold(self.percent, |sum, v| sum + v);
+        p.clamp(Fx(0), PERCENT)
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -166,6 +210,12 @@ pub enum HeirOp {
     Remove(u32),
     SetStatus(u32, HeirStatus),
     Ability(u32, Fx),
+    Claim(u32, Fx),
+    /// The same on the heir of the event or action; no-op if it has none.
+    TargetStatus(HeirStatus),
+    TargetAbility(Fx),
+    TargetClaim(Fx),
+    TargetRemove,
 }
 
 /// What an effect may touch besides the world.
@@ -224,7 +274,19 @@ impl Effect {
             }
             Effect::HeirOp(op) => {
                 let heir = |i: &u32| *i as usize;
-                match op {
+                // Out of range, so a no-op, when there is no target heir.
+                let t = match ctx.target {
+                    Some(Target::Heir(i)) => *i,
+                    _ => u32::MAX,
+                };
+                let op = match op.clone() {
+                    HeirOp::TargetStatus(s) => HeirOp::SetStatus(t, s),
+                    HeirOp::TargetAbility(d) => HeirOp::Ability(t, d),
+                    HeirOp::TargetClaim(d) => HeirOp::Claim(t, d),
+                    HeirOp::TargetRemove => HeirOp::Remove(t),
+                    op => op,
+                };
+                match &op {
                     HeirOp::Add => w.heirs.push(ctx.data.new_heir.clone()),
                     HeirOp::Remove(i) if heir(i) < w.heirs.len() => {
                         w.heirs.remove(heir(i));
@@ -239,8 +301,22 @@ impl Effect {
                             h.ability = pct(h.ability + *d);
                         }
                     }
+                    HeirOp::Claim(i, d) => {
+                        if let Some(h) = w.heirs.get_mut(heir(i)) {
+                            h.claim = pct(h.claim + *d);
+                        }
+                    }
                     HeirOp::Remove(_) => {}
+                    HeirOp::TargetStatus(_)
+                    | HeirOp::TargetAbility(_)
+                    | HeirOp::TargetClaim(_)
+                    | HeirOp::TargetRemove => {
+                        unreachable!("resolved above")
+                    }
                 }
+            }
+            Effect::RulerDies(_) | Effect::Abdicate | Effect::Chance(_) => {
+                unreachable!("Game applies these")
             }
             Effect::Build(t, b) => {
                 let id = t.resolve(w, ctx.target);
@@ -295,6 +371,14 @@ impl Effect {
                 Err(format!("axis {} is derived, effects cannot write it", a.0))
             }
             Effect::Axis(a, _) => known_axis(data, a),
+            Effect::Chance(c) => {
+                c.axes.iter().try_for_each(|(a, _)| known_axis(data, a))?;
+                c.bonus.iter().try_for_each(|(p, _)| p.check(data))?;
+                c.then
+                    .iter()
+                    .chain(&c.otherwise)
+                    .try_for_each(|e| e.check(data))
+            }
             _ => Ok(()),
         }
     }
@@ -329,7 +413,7 @@ fn known_axis(data: &Data, a: &AxisId) -> Result<(), String> {
     }
 }
 
-/// Texts may contain `{province}`, `{neighbour}`, `{ruler}`; `Game` fills them in for display.
+/// Texts may contain `{province}`, `{neighbour}`, `{heir}`, `{ruler}`; `Game` fills them in for display.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Event {
     pub id: String,
@@ -361,6 +445,8 @@ pub enum EventTarget {
     /// The event cannot fire while no province matches.
     RandomProvince(ProvinceFilter),
     Neighbour,
+    /// A random heir aged within this inclusive range; cannot fire while there is none.
+    Heir(u32, u32),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

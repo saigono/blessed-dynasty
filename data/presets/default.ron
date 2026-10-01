@@ -29,4 +29,6 @@
         (id: "purpur", name: "Пурпуляндия", relation: 0, strength: 50, stance: Wait),
         (id: "vestrum", name: "Веструм", relation: 30, strength: 30, stance: Wait),
     ],
+    // The succession law and the ruler's marriage.
+    flags: ["law_primogeniture", "married"],
 )

@@ -1,5 +1,40 @@
 // Map actions (stage 3) and the stage 2 test action. Stage 9 adds the rest.
 [
+    // The succession law is a flag; one action per law, since ActionTarget has no law
+    // target. Claims follow the law year by year (rules.ron `heirs.laws`).
+    (
+        id: "change_succession_law_primogeniture",
+        name: "Закон: престол старшему",
+        duration_years: 2,
+        cost: 30,
+        requires: NotFlag("law_primogeniture"),
+        min_crown_power: 40,
+        target: None,
+        on_complete: [ClearFlag("law_elective"), ClearFlag("law_none"), SetFlag("law_primogeniture"), Axis("loyalty_church", 3), Axis("loyalty_nobles", -3)],
+        cause_tag: "succession_law_primogeniture",
+    ),
+    (
+        id: "change_succession_law_elective",
+        name: "Закон: наследника избирает совет",
+        duration_years: 2,
+        cost: 30,
+        requires: NotFlag("law_elective"),
+        min_crown_power: 40,
+        target: None,
+        on_complete: [ClearFlag("law_primogeniture"), ClearFlag("law_none"), SetFlag("law_elective"), Axis("loyalty_nobles", 5), Axis("legitimacy", -3)],
+        cause_tag: "succession_law_elective",
+    ),
+    (
+        id: "change_succession_law_none",
+        name: "Закон: наследник по воле государя",
+        duration_years: 2,
+        cost: 30,
+        requires: NotFlag("law_none"),
+        min_crown_power: 40,
+        target: None,
+        on_complete: [ClearFlag("law_primogeniture"), ClearFlag("law_elective"), SetFlag("law_none"), Axis("stability", -5), Axis("loyalty_nobles", -3)],
+        cause_tag: "succession_law_none",
+    ),
     (
         id: "build_fort",
         name: "Построить крепость",

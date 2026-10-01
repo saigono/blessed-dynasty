@@ -1,7 +1,7 @@
 use super::{Axes, Capital, Heir, Holder, Neighbour, Province, ProvinceId, Ruler, Vassal};
 use crate::data::{Data, DataError};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// A starting position: everything `World::from_preset` needs besides `rules.ron`.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -17,6 +17,10 @@ pub struct Preset {
     pub ruler: Ruler,
     pub heirs: Vec<Heir>,
     pub neighbours: Vec<Neighbour>,
+    /// Flags the world starts with: the succession law (`law_primogeniture`, `law_elective`,
+    /// `law_none`), `married`.
+    #[serde(default)]
+    pub flags: BTreeSet<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]

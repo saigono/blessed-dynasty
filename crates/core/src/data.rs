@@ -1,6 +1,6 @@
 use crate::fx::Fx;
-use crate::rules::{Action, Event};
-use crate::state::{AxisId, Heir, World};
+use crate::rules::{Action, Event, Predicate};
+use crate::state::{AxisId, Heir, Stance, Vassal, World};
 use crate::time::TimeUnit;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -22,6 +22,11 @@ pub struct Data {
     pub quiet_weight: u32,
     /// What `HeirOp::Add` pushes.
     pub new_heir: Heir,
+    pub death: Death,
+    pub abdication: Abdication,
+    pub heirs: HeirRules,
+    pub neighbour_ai: NeighbourAi,
+    pub grant: GrantRules,
     /// From `add_events`, not from `rules.ron`.
     #[serde(default)]
     pub events: Vec<Event>,
@@ -109,6 +114,75 @@ fn invalid(id: &str, m: String) -> DataError {
     DataError::Invalid(format!("{id}: {m}"))
 }
 
+/// Yearly ruler death risk in per mille: the `base` row of the largest `age_from <= age`,
+/// plus `(100 - health) * health_k`, plus every risk whose `when` holds. A hit spawns a
+/// death event; while that event is on cooldown, its risk does not count.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Death {
+    pub base: Vec<(u32, Fx)>,
+    pub health_k: Fx,
+    /// The event for the base and health risk.
+    pub event: String,
+    pub risks: Vec<Risk>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Risk {
+    pub when: Predicate,
+    pub per_mille: Fx,
+    pub event: String,
+}
+
+/// `Game::abdicate` fires `event`. Its `Effect::Abdicate` ends the reign; unless the
+/// `institutions` axis and the first heir's ability are above their thresholds, it also
+/// takes `claim_drop` off the first heir's claim and sets `contested_flag`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Abdication {
+    pub event: String,
+    pub institutions: (AxisId, Fx),
+    pub heir_ability: Fx,
+    pub claim_drop: Fx,
+    pub contested_flag: String,
+}
+
+/// Yearly heir rules.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct HeirRules {
+    /// Ability grows by status until this age.
+    pub adult_age: u32,
+    pub growth_home: Fx,
+    pub growth_studying: Fx,
+    pub growth_hostage: Fx,
+    /// Claim change of a hostage, on top of the law.
+    pub hostage_claim: Fx,
+    /// Claims move by `claim_step` toward the target of the law whose flag is set.
+    pub claim_step: Fx,
+    pub laws: Vec<Law>,
+    /// A claim below this means a succession crisis.
+    pub crisis_claim: Fx,
+    /// Birth chance in percent: the row of the largest `age_from <= ruler age`,
+    /// times `unmarried` without `married_flag`.
+    pub birth: Vec<(u32, Fx)>,
+    pub married_flag: String,
+    pub unmarried: Fx,
+}
+
+/// Claim target: `eldest` for heir 0, `others` for the rest, plus `ability * ability_k`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Law {
+    pub flag: String,
+    pub eldest: Fx,
+    pub others: Fx,
+    pub ability_k: Fx,
+}
+
+/// The row of the largest `from <= at`; 0 below the first row.
+pub fn by_age(table: &[(u32, Fx)], at: u32) -> Fx {
+    let rows = table.iter().filter(|(from, _)| *from <= at);
+    rows.max_by_key(|(from, _)| *from)
+        .map_or(Fx(0), |(_, v)| *v)
+}
+
 /// A faction's loyalty lives in its `axis`; `weight` is its share in `loyalty_axis`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Faction {
@@ -145,6 +219,49 @@ pub struct CrownPowerRules {
 pub struct HolderBase {
     pub crown: Fx,
     pub vassal: Fx,
+}
+
+/// Yearly neighbour behaviour, see `neighbour::neighbour_tick`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct NeighbourAi {
+    /// Relation below this is hostile: Expand or Defend.
+    pub hostile_below: Fx,
+    /// Relation above this: Trade. In between: Wait.
+    pub friendly_above: Fx,
+    /// Expand needs strength >= the weakest border crown power + this.
+    pub expand_margin: Fx,
+    pub expand: StanceRules,
+    pub defend: StanceRules,
+    pub trade: StanceRules,
+    pub wait: StanceRules,
+}
+
+impl NeighbourAi {
+    pub fn stance(&self, s: &Stance) -> &StanceRules {
+        match s {
+            Stance::Expand => &self.expand,
+            Stance::Defend => &self.defend,
+            Stance::Trade => &self.trade,
+            Stance::Wait => &self.wait,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct StanceRules {
+    /// Added to the relation every year.
+    pub relation: Fx,
+    /// `(event id, chance in percent per year)`; at most one fires, chances sum to <= 100.
+    pub events: Vec<(String, u32)>,
+}
+
+/// Who gets a province from `Effect::Grant`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct GrantRules {
+    /// The nearest vassal within this many border crossings takes the province.
+    pub max_distance: u32,
+    /// Otherwise the first of these not yet in the world is founded.
+    pub new_vassals: Vec<Vassal>,
 }
 
 #[derive(Debug)]
@@ -195,6 +312,22 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
     }
     if data.is_derived(&data.economy.treasury) {
         return Err(DataError::Invalid("economy.treasury is derived".into()));
+    }
+    for r in &data.death.risks {
+        r.when.check(&data).map_err(|m| invalid("death.risks", m))?;
+    }
+    if !is_axis(&data.abdication.institutions.0) {
+        return Err(DataError::Invalid(
+            "abdication.institutions: unknown axis".into(),
+        ));
+    }
+    let ai = &data.neighbour_ai;
+    for s in [&ai.expand, &ai.defend, &ai.trade, &ai.wait] {
+        if s.events.iter().map(|(_, c)| c).sum::<u32>() > 100 {
+            return Err(DataError::Invalid(
+                "neighbour_ai: chances sum over 100".into(),
+            ));
+        }
     }
     Ok(data)
 }
@@ -253,6 +386,11 @@ mod tests {
                 "{to}"
             );
         }
+        assert!(matches!(
+            broken(r#"("neighbour_raid", 25)"#, r#"("neighbour_raid", 86)"#),
+            Err(DataError::Invalid(_))
+        ));
+        assert!(broken(r#"("neighbour_raid", 25)"#, r#"("neighbour_raid", 85)"#).is_ok());
         let no_weight = RULES
             .replace("weight: 2", "weight: 0")
             .replace("weight: 1", "weight: 0");
@@ -261,14 +399,16 @@ mod tests {
 
     const EVENTS: &str = include_str!("../../../data/events/test.ron");
     const ACTIONS: &str = include_str!("../../../data/actions.ron");
+    const NEIGHBOUR_EVENTS: &str = include_str!("../../../data/events/neighbours.ron");
 
     #[test]
     fn content_loads() {
         let mut data = load(RULES).unwrap();
         data.add_events(EVENTS).unwrap();
+        data.add_events(NEIGHBOUR_EVENTS).unwrap();
         data.add_actions(ACTIONS).unwrap();
-        assert_eq!(data.events.len(), 5);
-        assert_eq!(data.actions.len(), 2);
+        assert_eq!(data.events.len(), 8);
+        assert_eq!(data.actions.len(), 10);
         // Ids must be unique across files.
         assert!(matches!(
             data.add_events(EVENTS),
@@ -278,7 +418,7 @@ mod tests {
             data.add_actions(ACTIONS),
             Err(DataError::Invalid(_))
         ));
-        assert_eq!(data.events.len(), 5);
+        assert_eq!(data.events.len(), 8);
     }
 
     #[test]

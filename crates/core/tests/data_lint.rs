@@ -115,7 +115,11 @@ fn every_event_named_by_the_rules_exists() {
     let stances = [&ai.expand, &ai.defend, &ai.trade, &ai.wait];
     let named = (stances.iter().flat_map(|s| &s.events)).map(|(id, _)| id);
     let death = data.death.risks.iter().map(|r| &r.event);
-    let fixed = [&data.war.start_event, &data.death.event, &data.abdication.event];
+    let fixed = [
+        &data.war.start_event,
+        &data.death.event,
+        &data.abdication.event,
+    ];
     let missing: BTreeSet<_> = (named.chain(death).chain(fixed))
         .filter(|id| !data.events.iter().any(|e| e.id == **id))
         .collect();

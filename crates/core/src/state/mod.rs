@@ -375,6 +375,14 @@ mod tests {
         w.flags.insert("married".into());
         w.last_fired.insert("plague".into(), Tick(3));
         w.crown_modifiers.insert(pid("holm"), Fx(-500));
+        w.war = Some(War {
+            enemy: NeighbourId("nordmark".into()),
+            stage: crate::war::WarStage::Peace,
+            our_strength: Fx(60_500),
+            their_strength: Fx::from_int(40),
+            war_score: Fx(-12_250),
+            started: Tick(2),
+        });
         w.axes.insert(AxisId("treasury".into()), Fx(-1_250));
         for (i, stance) in [Stance::Expand, Stance::Defend, Stance::Trade, Stance::Wait]
             .into_iter()

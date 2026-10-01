@@ -394,7 +394,7 @@ fn death_roll() {
         first_death_event(plot, plotted).as_deref(),
         Some("assassination")
     );
-    // War wounds need a war: before stage 4 the risk never applies.
+    // War wounds need a war under way: without one the risk never applies.
     let war = |d: &mut Data| d.death.risks[0].per_mille = Fx::from_int(1000);
     assert_eq!(first_death_event(war, none), None);
 }

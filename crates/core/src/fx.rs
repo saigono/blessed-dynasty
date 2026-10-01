@@ -1,13 +1,10 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::ops::{Add, Div, Mul, Sub};
 
 /// Fixed point with scale 1000: `Fx(1500)` is 1.5.
-/// Serialized as the raw milli integer. `clamp` comes from `Ord`.
-#[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-)]
-#[serde(transparent)]
+/// In data and serde it is a plain decimal: `1.5` is `Fx(1500)`. `clamp` comes from `Ord`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Fx(pub i64);
 
 impl Fx {
@@ -49,6 +46,37 @@ impl Div for Fx {
     type Output = Fx;
     fn div(self, o: Fx) -> Fx {
         Fx((self.0 as i128 * Self::SCALE as i128 / o.0 as i128) as i64)
+    }
+}
+
+// f64 is allowed here and only here: as the serde bridge to decimal text in RON.
+// Parsing, `* 1000.0`, `round` and `/ 1000.0` are correctly rounded IEEE operations,
+// so the result is identical on every platform. Rules never see a float.
+
+/// Whole values are written as integers (`45`), others as decimals (`1.5`). Lossless
+/// while |value| stays below ~10^12, far above anything the game uses.
+impl Serialize for Fx {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        if self.0 % Self::SCALE == 0 {
+            s.serialize_i64(self.0 / Self::SCALE)
+        } else {
+            s.serialize_f64(self.0 as f64 / Self::SCALE as f64)
+        }
+    }
+}
+
+/// Accepts `45`, `0.5`, `-1.25`. More than three decimals, overflow, NaN and inf are errors.
+impl<'de> Deserialize<'de> for Fx {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Fx, D::Error> {
+        let x = f64::deserialize(d)?;
+        let milli = (x * Self::SCALE as f64).round();
+        // Exact iff `x` is the double nearest to a number with at most 3 decimals.
+        if milli / Self::SCALE as f64 != x || milli.abs() >= i64::MAX as f64 {
+            return Err(serde::de::Error::custom(format!(
+                "Fx {x} needs at most 3 decimals and must fit in i64"
+            )));
+        }
+        Ok(Fx(milli as i64))
     }
 }
 
@@ -115,8 +143,29 @@ mod tests {
     }
 
     #[test]
-    fn serde_as_number() {
-        assert_eq!(ron::to_string(&Fx::from_milli(-1500)).unwrap(), "-1500");
-        assert_eq!(ron::from_str::<Fx>("2500").unwrap(), Fx::from_milli(2500));
+    fn serde_decimal() {
+        let load = |t: &str| ron::from_str::<Fx>(t);
+        assert_eq!(load("45").unwrap(), Fx(45_000));
+        assert_eq!(load("0.5").unwrap(), Fx(500));
+        assert_eq!(load("-1.25").unwrap(), Fx(-1_250));
+        assert_eq!(load("0.001").unwrap(), Fx(1));
+        assert!(load("0.0005").is_err());
+        assert!(load("1e300").is_err());
+        assert!(load("10000000000000000").is_err()); // 1e16 units overflow i64 milli
+        assert_eq!(ron::to_string(&Fx(45_000)).unwrap(), "45");
+        assert_eq!(ron::to_string(&Fx(1_500)).unwrap(), "1.5");
+        assert_eq!(ron::to_string(&Fx(-250)).unwrap(), "-0.25");
+        for v in [
+            1_500,
+            -250,
+            1,
+            -1,
+            999,
+            123_456_789_012_345,
+            -987_654_321_098_765,
+        ] {
+            let text = ron::to_string(&Fx(v)).unwrap();
+            assert_eq!(load(&text).unwrap(), Fx(v), "{text}");
+        }
     }
 }

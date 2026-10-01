@@ -1,0 +1,16 @@
+// Script for `cli run --script`. Steps run in order:
+//   Wait(n)            up to n ticks, stops early when an event fires
+//   Action(id, target) starts an action; target: None, Province("id"), Neighbour("id"), Heir(i)
+//   Choose(idx)        picks a choice of the pending event
+//   ChooseByTag(tag)   the first choice with this cause tag, else choice 0
+//   Abdicate           unavailable until stage 5
+// A Wait or an Action while an event waits for a choice is an error.
+[
+    Action("royal_progress", None),
+    Wait(10),
+    ChooseByTag("feast_prayer"),
+    Wait(10),
+    ChooseByTag("envoy_welcome"),
+    Wait(10),
+    ChooseByTag("unrest_force"),
+]

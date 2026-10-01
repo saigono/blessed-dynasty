@@ -25,10 +25,18 @@
 
 ## Запуск
 
+Статусы живут в трекере: https://claude.ai/artifact/SmCxHTyYecE3DouTDo2K5Q
+
+Из Claude Code в корне репозитория:
+
+- «работай над следующей задачей» или «работай над задачей 3»: скилл `work-task` создаёт worktree `../bd-stage-NN` на ветке `stage/NN`, ставит статус «в работе», запускает агента в фоне, по завершении гоняет тесты и ставит «на приёмке».
+- «прими задачу 3»: merge в main, тесты, удаление worktree, статус «готово».
+- «статус задач»: сводка из трекера.
+
+Вручную то же самое:
+
 ```
-git worktree add ../bd-stage-00 -b stage/00
+git worktree add ../bd-stage-00 -b stage/00 main
 cd ../bd-stage-00
 claude "$(cat tasks/00-skeleton.md)"
 ```
-
-После приёмки: merge в main, worktree удалить, следующий этап стартует от нового main.

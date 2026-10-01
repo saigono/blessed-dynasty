@@ -1,0 +1,4 @@
+(
+    // 1 = year, 4 = seasons, 12 = months. Durations in data are always in years.
+    time_unit: (ticks_per_year: 1),
+)

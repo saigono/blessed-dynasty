@@ -66,20 +66,21 @@ pub struct ReignEnd {
     pub world: World,
 }
 
+/// Errors of `start_action`, `wait` and `choose`.
 #[derive(Debug, PartialEq)]
-pub enum ActionError {
+pub enum GameError {
+    /// No such action.
     Unknown,
     /// Not in `available_actions` with this target.
     Unavailable,
     NoSlot,
     /// An event waits for `choose`.
     EventPending,
-}
-
-#[derive(Debug, PartialEq)]
-pub enum ChooseError {
+    /// `choose` without a pending event.
     NoEvent,
     BadChoice,
+    /// The reign is over; returned from stage 5 on.
+    ReignEnded,
 }
 
 #[derive(Clone, Debug)]
@@ -142,12 +143,12 @@ impl Game {
             .collect()
     }
 
-    pub fn start_action(&mut self, id: &str, target: Option<Target>) -> Result<(), ActionError> {
+    pub fn start_action(&mut self, id: &str, target: Option<Target>) -> Result<(), GameError> {
         if self.pending_event.is_some() {
-            return Err(ActionError::EventPending);
+            return Err(GameError::EventPending);
         }
         let Some(action) = self.data.actions.iter().find(|a| a.id == id) else {
-            return Err(ActionError::Unknown);
+            return Err(GameError::Unknown);
         };
         let available = self.available_actions().into_iter().any(|(a, targets)| {
             a == id
@@ -157,11 +158,11 @@ impl Game {
                 }
         });
         if !available {
-            return Err(ActionError::Unavailable);
+            return Err(GameError::Unavailable);
         }
         let w = &mut self.world;
         if w.active_actions.len() as u32 >= self.data.action_slots.slots(w) {
-            return Err(ActionError::NoSlot);
+            return Err(GameError::NoSlot);
         }
         add_axis(
             w,
@@ -186,9 +187,9 @@ impl Game {
     }
 
     /// Advances one tick, or repeats the pending event without advancing.
-    pub fn wait(&mut self) -> Step {
+    pub fn wait(&mut self) -> Result<Step, GameError> {
         if let Some(p) = &self.pending_event {
-            return Step::Event(self.view(p));
+            return Ok(Step::Event(self.view(p)));
         }
         self.world.tick.0 += 1;
         self.passive();
@@ -197,20 +198,20 @@ impl Game {
         self.world.recompute_crown_power(&self.data);
         let picked = pick_event(&self.data, &self.world, &mut self.rng, &mut self.queue);
         let Some(p) = picked else {
-            return Step::Idle;
+            return Ok(Step::Idle);
         };
         self.world
             .last_fired
             .insert(p.event_id.clone(), self.world.tick);
         let view = self.view(&p);
         self.pending_event = Some(p);
-        Step::Event(view)
+        Ok(Step::Event(view))
     }
 
-    pub fn choose(&mut self, idx: usize) -> Result<(), ChooseError> {
-        let p = self.pending_event.as_ref().ok_or(ChooseError::NoEvent)?;
+    pub fn choose(&mut self, idx: usize) -> Result<(), GameError> {
+        let p = self.pending_event.as_ref().ok_or(GameError::NoEvent)?;
         let event = find_event(&self.data, &p.event_id).expect("pending events exist");
-        let choice = event.choices.get(idx).ok_or(ChooseError::BadChoice)?;
+        let choice = event.choices.get(idx).ok_or(GameError::BadChoice)?;
         let mut ctx = Ctx {
             data: &self.data,
             queue: &mut self.queue,
@@ -422,7 +423,9 @@ fn pick_event(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rules::{Action, Effect, Predicate, ProvinceField, ProvinceFilter, ProvinceTarget};
+    use crate::rules::{
+        Action, Effect, Predicate, ProvinceField, ProvinceFilter, ProvinceTarget, Sign,
+    };
     use crate::state::AxisId;
     use crate::time::{TimeUnit, Years};
 
@@ -460,6 +463,7 @@ mod tests {
             once: false,
             cooldown_years: Years(0),
             importance: 1,
+            sign: Sign::Bad,
             target: EventTarget::None,
             choices: vec![Choice {
                 text: id.into(),
@@ -511,7 +515,7 @@ mod tests {
             if let Some((id, targets)) = g.available_actions().into_iter().next() {
                 let _ = g.start_action(&id, targets.first().cloned());
             }
-            if let Step::Event(v) = g.wait() {
+            if let Step::Event(v) = g.wait().unwrap() {
                 g.choose(i % v.choices.len()).unwrap();
             }
         }
@@ -554,11 +558,8 @@ mod tests {
             [("tax".into(), vec![capital]), ("edict".into(), vec![])]
         );
         let holm = Some(Target::Province(pid("holm")));
-        assert_eq!(g.start_action("tax", holm), Err(ActionError::Unavailable));
-        assert_eq!(
-            g.start_action("decree", None),
-            Err(ActionError::Unavailable)
-        );
+        assert_eq!(g.start_action("tax", holm), Err(GameError::Unavailable));
+        assert_eq!(g.start_action("decree", None), Err(GameError::Unavailable));
     }
 
     #[test]
@@ -572,7 +573,7 @@ mod tests {
         // Bureaucracy 20: one slot.
         let mut g = game(data.clone(), 1);
         assert_eq!(g.start_action("a", None), Ok(()));
-        assert_eq!(g.start_action("b", None), Err(ActionError::NoSlot));
+        assert_eq!(g.start_action("b", None), Err(GameError::NoSlot));
         // Bureaucracy 40: two slots.
         let mut g = game(data, 1);
         g.world.axes.insert(ax("bureaucracy"), Fx::from_int(40));
@@ -605,15 +606,12 @@ mod tests {
                 ("tutor".into(), vec![Target::Heir(0), Target::Heir(1)]),
             ]
         );
-        assert_eq!(g.start_action("nothing", None), Err(ActionError::Unknown));
-        assert_eq!(
-            g.start_action("barred", None),
-            Err(ActionError::Unavailable)
-        );
-        assert_eq!(g.start_action("envoy", None), Err(ActionError::Unavailable));
+        assert_eq!(g.start_action("nothing", None), Err(GameError::Unknown));
+        assert_eq!(g.start_action("barred", None), Err(GameError::Unavailable));
+        assert_eq!(g.start_action("envoy", None), Err(GameError::Unavailable));
         assert_eq!(
             g.start_action("costly", Some(nordmark.clone())),
-            Err(ActionError::Unavailable)
+            Err(GameError::Unavailable)
         );
         g.start_action("costly", None).unwrap();
         assert_eq!(g.world.axes[&ax("treasury")], Fx::from_int(50));
@@ -639,7 +637,7 @@ mod tests {
         });
         assert_eq!(
             g.start_action("envoy", Some(nordmark)),
-            Err(ActionError::EventPending)
+            Err(GameError::EventPending)
         );
     }
 
@@ -664,10 +662,10 @@ mod tests {
         g.start_action("build", Some(Target::Province(pid("holm"))))
             .unwrap();
         assert_eq!(g.world.active_actions[0].ends_at, Tick(2));
-        g.wait();
+        g.wait().unwrap();
         assert_eq!(g.world.axes[&ax("legitimacy")], Fx::from_int(60));
         assert_eq!(g.world.provinces[&pid("holm")].income, Fx::from_int(6));
-        g.wait();
+        g.wait().unwrap();
         assert_eq!(g.world.tick, Tick(2));
         assert_eq!(g.world.axes[&ax("legitimacy")], Fx::from_int(65));
         assert_eq!(g.world.provinces[&pid("holm")].income, Fx::from_int(9));
@@ -681,12 +679,12 @@ mod tests {
         let spawn = Effect::SpawnEvent("next".into(), Years(2));
         data.events = vec![event("first", vec![spawn]), event("next", vec![])];
         let mut g = game(data, 1);
-        g.wait();
+        g.wait().unwrap();
         force(&mut g, "first");
         for _ in 0..7 {
-            assert_eq!(g.wait(), Step::Idle);
+            assert_eq!(g.wait().unwrap(), Step::Idle);
         }
-        assert_eq!(fired(g.wait()).as_deref(), Some("next"));
+        assert_eq!(fired(g.wait().unwrap()).as_deref(), Some("next"));
         assert_eq!(g.world.tick, Tick(9));
     }
 
@@ -716,7 +714,7 @@ mod tests {
         // Deferred beat the pool; a not-ready or unknown one is dropped; one per tick;
         // the second `once` is dropped because the first fired.
         let mut next = || {
-            let id = fired(g.wait());
+            let id = fired(g.wait().unwrap());
             g.choose(0).unwrap();
             id.unwrap()
         };
@@ -733,10 +731,10 @@ mod tests {
         (e.weight, e.once) = (1, true);
         data.events = vec![e];
         let mut g = game(data, 1);
-        assert_eq!(fired(g.wait()).as_deref(), Some("once"));
+        assert_eq!(fired(g.wait().unwrap()).as_deref(), Some("once"));
         g.choose(0).unwrap();
         for _ in 0..20 {
-            assert_eq!(g.wait(), Step::Idle);
+            assert_eq!(g.wait().unwrap(), Step::Idle);
         }
     }
 
@@ -750,7 +748,7 @@ mod tests {
         let mut g = game(data, 1);
         let mut ticks = vec![];
         for _ in 0..12 {
-            if fired(g.wait()).is_some() {
+            if fired(g.wait().unwrap()).is_some() {
                 ticks.push(g.world.tick.0);
                 g.choose(0).unwrap();
             }
@@ -768,7 +766,7 @@ mod tests {
         let mut g = game(data.clone(), 1);
         let mut hits = 0;
         for _ in 0..200 {
-            if fired(g.wait()).is_some() {
+            if fired(g.wait().unwrap()).is_some() {
                 hits += 1;
                 g.choose(0).unwrap();
             }
@@ -776,7 +774,7 @@ mod tests {
         assert!((70..130).contains(&hits), "{hits}");
         data.quiet_weight = 0;
         let mut g = game(data, 1);
-        assert!(fired(g.wait()).is_some());
+        assert!(fired(g.wait().unwrap()).is_some());
     }
 
     #[test]
@@ -800,7 +798,9 @@ mod tests {
         envoy.target = EventTarget::Neighbour;
         data.events = vec![local, envoy];
         let mut g = game(data, 1);
-        let Step::Event(v) = g.wait() else { panic!() };
+        let Step::Event(v) = g.wait().unwrap() else {
+            panic!()
+        };
         assert_eq!(v.title, "Ульрих: Хольм");
         assert_eq!(v.choices[0].hint.as_deref(), Some("Хольм, {neighbour}"));
         assert_eq!(v.target, Some(Target::Province(pid("holm"))));
@@ -812,13 +812,15 @@ mod tests {
             event_id: "envoy".into(),
             target: Some(Target::Neighbour(NeighbourId("nordmark".into()))),
         });
-        let Step::Event(v) = g.wait() else { panic!() };
+        let Step::Event(v) = g.wait().unwrap() else {
+            panic!()
+        };
         assert_eq!(v.text, "Посол Нордмарк");
 
         // No vassal province left: the event cannot fire.
         let mut g = game(g.data.clone(), 1);
         g.world.provinces.get_mut(&pid("holm")).unwrap().holder = Holder::Crown;
-        assert_eq!(g.wait(), Step::Idle);
+        assert_eq!(g.wait().unwrap(), Step::Idle);
     }
 
     #[test]
@@ -828,13 +830,13 @@ mod tests {
         e.weight = 1;
         data.events = vec![e];
         let mut g = game(data, 1);
-        assert_eq!(g.choose(0), Err(ChooseError::NoEvent));
-        let step = g.wait();
+        assert_eq!(g.choose(0), Err(GameError::NoEvent));
+        let step = g.wait().unwrap();
         assert!(fired(step.clone()).is_some());
         // While an event waits, `wait` repeats it and time stands still.
-        assert_eq!(g.wait(), step);
+        assert_eq!(g.wait().unwrap(), step);
         assert_eq!(g.world.tick, Tick(1));
-        assert_eq!(g.choose(1), Err(ChooseError::BadChoice));
+        assert_eq!(g.choose(1), Err(GameError::BadChoice));
         assert_eq!(g.choose(0), Ok(()));
         assert!(g.world.flags.contains("chosen"));
         assert_eq!(g.world.last_fired["e"], Tick(1));
@@ -850,7 +852,7 @@ mod tests {
                 cause_tag: "e".into(),
             }]
         );
-        assert_eq!(g.choose(0), Err(ChooseError::NoEvent));
+        assert_eq!(g.choose(0), Err(GameError::NoEvent));
     }
 
     #[test]
@@ -862,13 +864,13 @@ mod tests {
         data.drift.province_loyalty = Fx::from_int(50);
         let mut g = game(data, 1);
         g.world.crown_modifiers.insert(pid("holm"), Fx(500));
-        g.wait();
+        g.wait().unwrap();
         assert_eq!(g.world.crown_modifiers[&pid("holm")], Fx(250));
-        g.wait();
-        g.wait();
+        g.wait().unwrap();
+        g.wait().unwrap();
         assert!(g.world.crown_modifiers.is_empty());
         assert_eq!(g.world.ruler.age, 30);
-        g.wait();
+        g.wait().unwrap();
         let w = &g.world;
         // Per year: capital income 12 + income 10 - army 50 * 0.1 = 17, in quarters.
         assert_eq!(w.axes[&ax("treasury")], Fx::from_int(167));

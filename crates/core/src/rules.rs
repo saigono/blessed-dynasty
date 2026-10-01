@@ -288,8 +288,18 @@ pub struct Event {
     pub once: bool,
     pub cooldown_years: Years,
     pub importance: u32,
+    /// Good or bad for the dynasty; the score reads it. Defaults to `Bad`.
+    #[serde(default)]
+    pub sign: Sign,
     pub target: EventTarget,
     pub choices: Vec<Choice>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Default)]
+pub enum Sign {
+    Good,
+    #[default]
+    Bad,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -502,5 +512,19 @@ mod tests {
         run(&mut w, r#"SpawnEvent("next", 2)"#, None);
         drop(run);
         assert_eq!(queue, [(Tick(5), "next".to_string())]);
+    }
+
+    #[test]
+    fn sign_defaults_to_bad() {
+        let event = |sign: &str| {
+            let text = format!(
+                r#"(id: "e", title: "", text: "", when: All([]), weight: 1, once: false,
+                cooldown_years: 0, importance: 0, {sign} target: None, choices: [])"#
+            );
+            crate::data::parse::<Event>(&text).unwrap().sign
+        };
+        assert_eq!(event(""), Sign::Bad);
+        assert_eq!(event("sign: Good,"), Sign::Good);
+        assert_eq!(event("sign: Bad,"), Sign::Bad);
     }
 }

@@ -1,13 +1,10 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::ops::{Add, Div, Mul, Sub};
 
 /// Fixed point with scale 1000: `Fx(1500)` is 1.5.
-/// Serialized as the raw milli integer. `clamp` comes from `Ord`.
-#[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-)]
-#[serde(transparent)]
+/// In data and serde it is written in whole units: `45` is `Fx(45000)`. `clamp` comes from `Ord`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Fx(pub i64);
 
 impl Fx {
@@ -49,6 +46,27 @@ impl Div for Fx {
     type Output = Fx;
     fn div(self, o: Fx) -> Fx {
         Fx((self.0 as i128 * Self::SCALE as i128 / o.0 as i128) as i64)
+    }
+}
+
+/// A fractional value is refused instead of being silently truncated.
+impl Serialize for Fx {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        if self.0 % Self::SCALE != 0 {
+            return Err(serde::ser::Error::custom(format!(
+                "Fx {self} is not a whole number"
+            )));
+        }
+        s.serialize_i64(self.0 / Self::SCALE)
+    }
+}
+
+impl<'de> Deserialize<'de> for Fx {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Fx, D::Error> {
+        let v = i64::deserialize(d)?;
+        v.checked_mul(Self::SCALE)
+            .map(Fx)
+            .ok_or_else(|| serde::de::Error::custom(format!("Fx {v} out of range")))
     }
 }
 
@@ -115,8 +133,11 @@ mod tests {
     }
 
     #[test]
-    fn serde_as_number() {
-        assert_eq!(ron::to_string(&Fx::from_milli(-1500)).unwrap(), "-1500");
-        assert_eq!(ron::from_str::<Fx>("2500").unwrap(), Fx::from_milli(2500));
+    fn serde_in_whole_units() {
+        assert_eq!(ron::to_string(&Fx::from_int(-15)).unwrap(), "-15");
+        assert_eq!(ron::from_str::<Fx>("45").unwrap(), Fx::from_milli(45_000));
+        assert!(ron::to_string(&Fx::from_milli(1500)).is_err());
+        assert!(ron::from_str::<Fx>("1.5").is_err());
+        assert!(ron::from_str::<Fx>(&i64::MAX.to_string()).is_err());
     }
 }

@@ -21,11 +21,8 @@ enum Cmd {
     Run {
         #[arg(long)]
         seed: u64,
-        #[arg(long, default_value = "data/presets/default.ron")]
-        preset: PathBuf,
-        /// Holds rules.ron, actions.ron and events/*.ron.
-        #[arg(long, default_value = "data")]
-        data: PathBuf,
+        #[command(flatten)]
+        files: Files,
         /// A list of `ScriptStep` in RON, see data/scripts/.
         #[arg(long, conflicts_with = "strategy")]
         script: Option<PathBuf>,
@@ -38,13 +35,22 @@ enum Cmd {
     Replay {
         #[arg(long)]
         seed: u64,
-        #[arg(long, default_value = "data/presets/default.ron")]
-        preset: PathBuf,
-        #[arg(long, default_value = "data")]
-        data: PathBuf,
+        #[command(flatten)]
+        files: Files,
         #[arg(long)]
         decisions: PathBuf,
     },
+}
+
+#[derive(clap::Args)]
+struct Files {
+    #[arg(long, default_value = "data/presets/default.ron")]
+    preset: PathBuf,
+    #[arg(long, default_value = "data/maps/default.ron")]
+    map: PathBuf,
+    /// Holds rules.ron, actions.ron and events/*.ron (not subdirectories).
+    #[arg(long, default_value = "data")]
+    data: PathBuf,
 }
 
 /// Stage 8b adds the rest on top of `AutoChooser`.
@@ -72,7 +78,7 @@ struct Journal {
     tick: Tick,
 }
 
-/// Until stage 5 ends reigns, the neutral strategy stops here.
+/// A safety cap for the neutral strategy; the ruler dies long before.
 const MAX_YEARS: Years = Years(100);
 
 fn main() {
@@ -86,13 +92,12 @@ fn run(cli: Cli) -> Result<(), String> {
     match cli.cmd {
         Cmd::Run {
             seed,
-            preset,
-            data,
+            files,
             script,
             strategy: Strategy::Neutral,
             json,
         } => {
-            let mut g = load(&data, &preset, seed)?;
+            let mut g = load(&files, seed)?;
             match script {
                 Some(path) => play_script(&mut g, &parse(&read(&path)?)?)?,
                 None => play_neutral(&mut g)?,
@@ -105,6 +110,7 @@ fn run(cli: Cli) -> Result<(), String> {
                     "tick": w.tick,
                     "date": date,
                     "world_hash": hash,
+                    "reign_end": g.ended,
                     "decisions": g.decisions,
                     "chronicle": null,
                     "score": null,
@@ -118,17 +124,20 @@ fn run(cli: Cli) -> Result<(), String> {
                 println!("  {}", describe(&g, d));
             }
             println!("Итог: {date} (тик {}), хэш мира {hash}", w.tick.0);
+            match &g.ended {
+                Some(cause) => println!("Конец правления: {cause}"),
+                None => println!("Правление продолжается"),
+            }
             println!("Хроника: недоступно (нужен этап 6)");
             println!("Счёт: недоступно (нужен этап 7)");
             Ok(())
         }
         Cmd::Replay {
             seed,
-            preset,
-            data,
+            files,
             decisions,
         } => {
-            let mut g = load(&data, &preset, seed)?;
+            let mut g = load(&files, seed)?;
             let text = read(&decisions)?;
             let j: Journal = serde_json::from_str(&text).map_err(|e| format!("журнал: {e}"))?;
             replay(&mut g, &j.decisions, j.tick)?;
@@ -149,7 +158,8 @@ fn parse(text: &str) -> Result<Vec<ScriptStep>, String> {
     options.from_str(text).map_err(|e| format!("скрипт: {e}"))
 }
 
-fn load(dir: &Path, preset: &Path, seed: u64) -> Result<Game, String> {
+fn load(f: &Files, seed: u64) -> Result<Game, String> {
+    let dir = &f.data;
     let rules = read(&dir.join("rules.ron"))?;
     let mut data = bd_core::data::load(&rules).map_err(|e| format!("rules.ron: {e:?}"))?;
     let events = fs::read_dir(dir.join("events")).map_err(|e| format!("events: {e}"))?;
@@ -163,12 +173,17 @@ fn load(dir: &Path, preset: &Path, seed: u64) -> Result<Game, String> {
     }
     let res = data.add_actions(&read(&dir.join("actions.ron"))?);
     res.map_err(|e| format!("actions.ron: {e:?}"))?;
-    let preset = Preset::load(&read(preset)?, &data).map_err(|e| format!("пресет: {e:?}"))?;
+    let preset = Preset::load_with_map(&read(&f.preset)?, &read(&f.map)?, &data);
+    let preset = preset.map_err(|e| format!("пресет: {e:?}"))?;
     Ok(Game::new(data, &preset, seed))
 }
 
 fn play_script(g: &mut Game, script: &[ScriptStep]) -> Result<(), String> {
     for (i, step) in script.iter().enumerate() {
+        // The rest of the script has no reign to act in.
+        if g.ended.is_some() {
+            break;
+        }
         let res = match step {
             ScriptStep::Wait(_) if g.pending_event.is_some() => Err("событие ждёт выбора".into()),
             ScriptStep::Wait(n) => wait(g, *n),
@@ -181,7 +196,7 @@ fn play_script(g: &mut Game, script: &[ScriptStep]) -> Result<(), String> {
                 }
                 None => Err("нет события".into()),
             },
-            ScriptStep::Abdicate => Err("отречение недоступно (нужен этап 5)".into()),
+            ScriptStep::Abdicate => g.abdicate().map_err(err),
         };
         res.map_err(|e| format!("шаг {} {step:?}: {e}", i + 1))?;
     }
@@ -218,6 +233,7 @@ fn replay(g: &mut Game, decisions: &[Decision], end: Tick) -> Result<(), String>
             DecisionKind::ActionStarted { action_id, target } => {
                 g.start_action(action_id, target.clone()).map_err(err)
             }
+            DecisionKind::Abdicate => g.abdicate().map_err(err),
             DecisionKind::EventChoice {
                 event_id,
                 choice_idx,
@@ -284,6 +300,7 @@ fn describe(g: &Game, d: &Decision) -> String {
             action_id,
             target: t,
         } => format!("действие {action_id}{}", target(t)),
+        DecisionKind::Abdicate => "отречение".into(),
     };
     format!("{date} {what} [{}]", d.cause_tag)
 }
@@ -294,6 +311,7 @@ mod tests {
 
     const RULES: &str = include_str!("../../../data/rules.ron");
     const PRESET: &str = include_str!("../../../data/presets/default.ron");
+    const MAP: &str = include_str!("../../../data/maps/default.ron");
 
     /// An event every tick, with tags "a", "b", "c"; one free action "act".
     fn game() -> Game {
@@ -311,7 +329,7 @@ mod tests {
              min_crown_power: 0, target: None, on_complete: [], cause_tag: \"act\")]",
         )
         .unwrap();
-        let preset = Preset::load(PRESET, &data).unwrap();
+        let preset = Preset::load_with_map(PRESET, MAP, &data).unwrap();
         Game::new(data, &preset, 7)
     }
 
@@ -353,7 +371,7 @@ mod tests {
         assert!(fails("[Wait(1), Wait(1)]").contains("событие ждёт выбора"));
         assert!(fails("[Wait(1), Choose(3)]").contains("BadChoice"));
         assert!(fails("[Action(\"nope\", None)]").contains("Unknown"));
-        assert!(fails("[Abdicate]").contains("недоступно"));
+        assert!(fails("[Wait(1), Abdicate]").contains("EventPending"));
         assert!(parse("[Jump]").is_err());
     }
 

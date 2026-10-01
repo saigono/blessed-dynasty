@@ -1,0 +1,25 @@
+// Test actions for stage 2. Stage 3 adds the map actions, stage 9 the rest.
+[
+    (
+        id: "build_road",
+        name: "Проложить дорогу",
+        duration_years: 2,
+        cost: 40,
+        requires: All([]),
+        min_crown_power: 20,
+        target: Province((holder: Crown, without_building: "road")),
+        on_complete: [Province(EventTarget, Income, 2), CrownPower(EventTarget, 5)],
+        cause_tag: "road_built",
+    ),
+    (
+        id: "royal_progress",
+        name: "Объехать владения",
+        duration_years: 1,
+        cost: 20,
+        requires: AxisBelow("legitimacy", 90),
+        min_crown_power: 0,
+        target: None,
+        on_complete: [Axis("legitimacy", 3), Axis("loyalty_nobles", 2)],
+        cause_tag: "royal_progress",
+    ),
+]

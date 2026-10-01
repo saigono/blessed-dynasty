@@ -369,6 +369,16 @@ impl Game {
                     self.apply(if hit { &c.then } else { &c.otherwise }, target, nb);
                 }
                 Effect::Clash => crate::war::clash(&mut self.world, &self.data, &mut self.rng),
+                Effect::IfFriendly(es) => {
+                    let n = match target {
+                        Some(Target::Neighbour(n)) => Some(n),
+                        _ => nb,
+                    };
+                    let n = n.and_then(|n| self.world.neighbours.get(n));
+                    if n.is_some_and(|n| n.relation > self.data.neighbour_ai.friendly_above) {
+                        self.apply(es, target, nb);
+                    }
+                }
                 Effect::RulerDies(cause) => self.ended = Some(cause.clone()),
                 Effect::Abdicate => {
                     let (a, w) = (&self.data.abdication, &mut self.world);

@@ -130,7 +130,14 @@
         requires: Not(AtWar),
         min_crown_power: 0,
         target: Neighbour,
-        on_complete: [StartWar(EventTarget), Relation(EventTarget, -30), Axis("loyalty_people", -3)],
+        // War on a friend (relation above neighbour_ai.friendly_above) earns a name for
+        // treachery: prestige and every other neighbour's trust drop.
+        on_complete: [
+            IfFriendly([Axis("prestige", -15), OtherRelations(-10)]),
+            StartWar(EventTarget),
+            Relation(EventTarget, -30),
+            Axis("loyalty_people", -3),
+        ],
         cause_tag: "war_declared_by_crown",
     ),
 ]

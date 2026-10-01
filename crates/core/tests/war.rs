@@ -190,3 +190,37 @@ fn every_war_ends_within_six_years() {
     eprintln!("{wars} wars, the longest ran {longest} ticks");
     assert!(wars > 1000, "{wars}");
 }
+
+/// Prestige and the relations with Nordmark and the others a tick after declaring war on
+/// `enemy`, minus the same in a game that only waited.
+fn treachery(enemy: &str) -> (Fx, Vec<Fx>) {
+    let at = |g: &Game| {
+        let prestige = g.world.axes[&bd_core::state::AxisId("prestige".into())];
+        let others = g.world.neighbours.values().filter(|n| n.id.0 != enemy);
+        (prestige, others.map(|n| n.relation).collect::<Vec<_>>())
+    };
+    // Prestige starts at its floor of 0; give it room to fall.
+    let start = || {
+        let mut g = war_only(1);
+        let prestige = bd_core::state::AxisId("prestige".into());
+        g.world.axes.insert(prestige, Fx::from_int(50));
+        g
+    };
+    let mut base = start();
+    base.wait().unwrap();
+    let mut g = start();
+    let target = Target::Neighbour(NeighbourId(enemy.into()));
+    g.start_action("declare_war", Some(target)).unwrap();
+    g.wait().unwrap();
+    let ((p0, r0), (p1, r1)) = (at(&base), at(&g));
+    (p1 - p0, r1.iter().zip(&r0).map(|(a, b)| *a - *b).collect())
+}
+
+#[test]
+fn war_on_a_friend_costs_prestige_and_trust() {
+    // Vestrum is friendly (40), Purpur neutral (0).
+    let (prestige, others) = treachery("vestrum");
+    assert_eq!(prestige, Fx::from_int(-15));
+    assert_eq!(others, [Fx::from_int(-10); 2]);
+    assert_eq!(treachery("purpur"), (Fx(0), vec![Fx(0); 2]));
+}

@@ -174,6 +174,11 @@ pub enum Effect {
     EndWar(WarOutcome),
     /// Moves the current war to this stage; the chain's steps wait for their stage.
     SetWarStage(WarStage),
+    /// Applies these only while the neighbour of the event or action is friendly (relation
+    /// above `neighbour_ai.friendly_above`). Applied by `Game`.
+    IfFriendly(Vec<Effect>),
+    /// Relation change with every neighbour but the one of the event or action.
+    OtherRelations(Fx),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -373,7 +378,11 @@ impl Effect {
                     }
                 }
             }
-            Effect::RulerDies(_) | Effect::Abdicate | Effect::Chance(_) | Effect::Clash => {
+            Effect::RulerDies(_)
+            | Effect::Abdicate
+            | Effect::Chance(_)
+            | Effect::Clash
+            | Effect::IfFriendly(_) => {
                 unreachable!("Game applies these")
             }
             Effect::StartWar(t) => {
@@ -420,6 +429,12 @@ impl Effect {
                 let n = ctx.resolve(t).filter(|n| w.neighbours.contains_key(*n));
                 if let (Some(h), Some(n)) = (w.heirs.get_mut(*i as usize), n) {
                     h.status = HeirStatus::Hostage(n.clone());
+                }
+            }
+            Effect::OtherRelations(d) => {
+                let target = ctx.neighbour();
+                for n in w.neighbours.values_mut().filter(|n| Some(&n.id) != target) {
+                    n.relation = (n.relation + *d).clamp(Fx(0) - PERCENT, PERCENT);
                 }
             }
             Effect::SetWarStage(stage) => {
@@ -507,6 +522,7 @@ impl Effect {
                     .chain(&c.otherwise)
                     .try_for_each(|e| e.check(data))
             }
+            Effect::IfFriendly(es) => es.iter().try_for_each(|e| e.check(data)),
             _ => Ok(()),
         }
     }

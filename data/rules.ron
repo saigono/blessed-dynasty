@@ -71,7 +71,7 @@
     // death event; the ruler dies only if the choice says so. While a death event is on
     // its cooldown, its risk does not count.
     death: (
-        base: [(0, 4), (40, 8), (50, 20), (55, 40), (60, 60), (65, 90), (70, 140), (75, 200), (80, 300)],
+        base: [(0, 4), (40, 8), (50, 30), (55, 60), (60, 90), (65, 130), (70, 180), (80, 300)],
         health_k: 0.2,
         event: "illness",
         risks: [

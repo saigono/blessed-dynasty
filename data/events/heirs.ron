@@ -1,0 +1,176 @@
+// Heirs: upbringing, marriage, disputes, death. Heirs are addressed by index: heirs[0] is
+// the first heir (the eldest, newborns are appended), heirs[1] the second.
+[
+    (
+        id: "heir_tutor",
+        title: "Воспитатель наследника",
+        text: "Первенцу пора учиться. При дворе спорят, кому доверить его воспитание.",
+        when: HeirAge(0, 6, 12),
+        weight: 6,
+        once: true,
+        cooldown_years: 0,
+        importance: 3,
+        sign: Good,
+        target: None,
+        choices: [
+            (
+                text: "Отдать в монастырскую школу",
+                effects: [HeirOp(SetStatus(0, Studying("Монастырь"))), Axis("loyalty_church", 5)],
+                cause_tag: "tutor_church",
+                hint: "Монахи вырастят книжника, а не воина.",
+            ),
+            (
+                text: "Поручить старому рыцарю",
+                effects: [HeirOp(Ability(0, 5)), Axis("loyalty_nobles", 5)],
+                cause_tag: "tutor_knight",
+                hint: "Знать увидит в наследнике своего.",
+            ),
+            (
+                text: "Пригласить учёного из-за моря",
+                effects: [HeirOp(Ability(0, 10)), Axis("treasury", -40), Axis("loyalty_church", -3)],
+                cause_tag: "tutor_scholar",
+            ),
+        ],
+    ),
+    (
+        id: "heir_marriage",
+        title: "Невеста для наследника",
+        text: "Наследник вошёл в возраст. Послы {neighbour} намекают на союз через брак.",
+        when: All([HeirAge(0, 16, 30), NotFlag("heir_married")]),
+        weight: 5,
+        once: false,
+        cooldown_years: 3,
+        importance: 3,
+        sign: Good,
+        target: Neighbour,
+        choices: [
+            (
+                text: "Женить на дочери {neighbour}",
+                effects: [SetFlag("heir_married"), Relation(EventTarget, 20), Axis("loyalty_nobles", -3)],
+                cause_tag: "heir_married_foreign",
+                hint: "Чужая невеста приводит с собой чужих советников.",
+            ),
+            (
+                text: "Выбрать невесту из своих баронов",
+                effects: [SetFlag("heir_married"), Axis("loyalty_nobles", 5), HeirOp(Claim(0, 5))],
+                cause_tag: "heir_married_noble",
+                hint: "Род, породнившийся с короной, захочет большего.",
+            ),
+            (
+                text: "Повременить со свадьбой",
+                effects: [Relation(EventTarget, -5)],
+                cause_tag: "heir_marriage_delayed",
+            ),
+        ],
+    ),
+    (
+        // Fires when the claims of the first two heirs are close: rare under primogeniture,
+        // frequent without a law.
+        id: "heir_dispute",
+        title: "Спор наследников",
+        text: "Двое детей {ruler} не уступают друг другу, у каждого свои сторонники при дворе.",
+        when: All([HeirAge(1, 14, 99), ClaimGapBelow(15)]),
+        weight: 8,
+        once: false,
+        cooldown_years: 5,
+        importance: 4,
+        target: None,
+        choices: [
+            (
+                text: "Назначить старшего",
+                effects: [HeirOp(Claim(0, 20)), HeirOp(Claim(1, -15)), Axis("loyalty_nobles", 3)],
+                cause_tag: "dispute_elder",
+                hint: "Обойдённый не забывает обиды.",
+            ),
+            (
+                text: "Назначить младшего",
+                effects: [
+                    HeirOp(Claim(1, 25)),
+                    HeirOp(Claim(0, -20)),
+                    Axis("legitimacy", -5),
+                    Axis("loyalty_nobles", -5),
+                ],
+                cause_tag: "dispute_younger",
+                hint: "Нарушенный обычай отзывается смутой.",
+            ),
+            (
+                text: "Созвать собор",
+                effects: [
+                    Axis("treasury", -30),
+                    Axis("loyalty_church", 5),
+                    Axis("stability", -3),
+                    HeirOp(Claim(0, 10)),
+                ],
+                cause_tag: "dispute_council",
+                hint: "Решение собора крепче воли одного человека.",
+            ),
+        ],
+    ),
+    (
+        id: "heir_death",
+        title: "Беда с наследником",
+        text: "Наследник упал с коня на охоте и слёг в горячке. Лекари не ручаются за его жизнь.",
+        when: HeirCount(1, 99),
+        weight: 3,
+        once: false,
+        cooldown_years: 5,
+        importance: 4,
+        target: None,
+        choices: [
+            (
+                text: "Позвать лучших лекарей",
+                effects: [
+                    Axis("treasury", -40),
+                    Chance((percent: 60, then: [HeirOp(Ability(0, -3))], otherwise: [HeirOp(Remove(0))])),
+                ],
+                cause_tag: "heir_doctors",
+            ),
+            (
+                text: "Молиться",
+                effects: [
+                    Axis("loyalty_church", 3),
+                    Chance((percent: 40, then: [HeirOp(Ability(0, -3))], otherwise: [HeirOp(Remove(0))])),
+                ],
+                cause_tag: "heir_prayer",
+            ),
+            (
+                text: "Положиться на крепость юности",
+                effects: [
+                    Chance((percent: 25, then: [HeirOp(Ability(0, 3))], otherwise: [HeirOp(Remove(0))])),
+                ],
+                cause_tag: "heir_left_alone",
+                hint: "Наследник, выживший сам, не будет обязан ни лекарям, ни монахам.",
+            ),
+        ],
+    ),
+    (
+        // After a contested abdication (rules.ron `abdication`); fires in the simulation.
+        id: "succession_dispute",
+        title: "Спор о короне",
+        text: "Корона сложена до срока. Бароны не признают наследника и называют своих претендентов.",
+        when: Flag("succession_contested"),
+        weight: 100,
+        once: true,
+        cooldown_years: 0,
+        importance: 5,
+        target: None,
+        choices: [
+            (
+                text: "Купить верность баронов",
+                effects: [Axis("treasury", -100), Axis("loyalty_nobles", 5), HeirOp(Claim(0, 10))],
+                cause_tag: "succession_bought",
+            ),
+            (
+                text: "Опереться на церковь",
+                effects: [Axis("loyalty_church", 5), Axis("loyalty_nobles", -10), HeirOp(Claim(0, 5))],
+                cause_tag: "succession_church",
+            ),
+            (
+                text: "Уступить совету баронов",
+                effects: [Axis("legitimacy", -10), Axis("loyalty_nobles", 10), ClearFlag("law_primogeniture"), ClearFlag("law_none"), SetFlag("law_elective")],
+                cause_tag: "succession_yielded",
+                hint: "Однажды уступив выбор знати, корона его не вернёт.",
+            ),
+        ],
+    ),
+]

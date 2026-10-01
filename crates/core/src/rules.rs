@@ -55,8 +55,9 @@ impl Predicate {
             Predicate::RulerAge(lo, hi) => (*lo..=*hi).contains(&w.ruler.age),
             // There is no war state before stage 4.
             Predicate::AtWar => false,
-            Predicate::HeirAge(i, lo, hi) => (w.heirs.get(*i as usize))
-                .is_some_and(|h| (*lo..=*hi).contains(&h.age)),
+            Predicate::HeirAge(i, lo, hi) => {
+                (w.heirs.get(*i as usize)).is_some_and(|h| (*lo..=*hi).contains(&h.age))
+            }
             Predicate::ClaimGapBelow(v) => match w.heirs.as_slice() {
                 [a, b, ..] => (a.claim - b.claim).max(b.claim - a.claim) < *v,
                 _ => false,
@@ -159,7 +160,11 @@ pub struct Chance {
 impl Chance {
     pub fn percent(&self, w: &World) -> Fx {
         let axes = self.axes.iter().map(|(a, k)| w.axes[a] * *k);
-        let bonus = self.bonus.iter().filter(|(p, _)| p.eval(w)).map(|(_, b)| *b);
+        let bonus = self
+            .bonus
+            .iter()
+            .filter(|(p, _)| p.eval(w))
+            .map(|(_, b)| *b);
         let p = axes.chain(bonus).fold(self.percent, |sum, v| sum + v);
         p.clamp(Fx(0), PERCENT)
     }
@@ -311,7 +316,10 @@ impl Effect {
             Effect::Chance(c) => {
                 c.axes.iter().try_for_each(|(a, _)| known_axis(data, a))?;
                 c.bonus.iter().try_for_each(|(p, _)| p.check(data))?;
-                c.then.iter().chain(&c.otherwise).try_for_each(|e| e.check(data))
+                c.then
+                    .iter()
+                    .chain(&c.otherwise)
+                    .try_for_each(|e| e.check(data))
             }
             _ => Ok(()),
         }

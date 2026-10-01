@@ -179,7 +179,8 @@ pub struct Law {
 /// The row of the largest `from <= at`; 0 below the first row.
 pub fn by_age(table: &[(u32, Fx)], at: u32) -> Fx {
     let rows = table.iter().filter(|(from, _)| *from <= at);
-    rows.max_by_key(|(from, _)| *from).map_or(Fx(0), |(_, v)| *v)
+    rows.max_by_key(|(from, _)| *from)
+        .map_or(Fx(0), |(_, v)| *v)
 }
 
 /// A faction's loyalty lives in its `axis`; `weight` is its share in `loyalty_axis`.
@@ -273,7 +274,9 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
         r.when.check(&data).map_err(|m| invalid("death.risks", m))?;
     }
     if !is_axis(&data.abdication.institutions.0) {
-        return Err(DataError::Invalid("abdication.institutions: unknown axis".into()));
+        return Err(DataError::Invalid(
+            "abdication.institutions: unknown axis".into(),
+        ));
     }
     Ok(data)
 }
@@ -347,7 +350,7 @@ mod tests {
         data.add_events(EVENTS).unwrap();
         data.add_actions(ACTIONS).unwrap();
         assert_eq!(data.events.len(), 5);
-        assert_eq!(data.actions.len(), 2);
+        assert_eq!(data.actions.len(), 5);
         // Ids must be unique across files.
         assert!(matches!(
             data.add_events(EVENTS),

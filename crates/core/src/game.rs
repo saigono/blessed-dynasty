@@ -457,7 +457,12 @@ fn heirs_year(d: &Data, w: &mut World, rng: &mut Rng) {
         h.claim = pct(h.claim + claim);
     }
     let married = w.flags.contains(&r.married_flag);
-    let chance = by_age(&r.birth, w.ruler.age) * if married { Fx::from_int(1) } else { r.unmarried };
+    let factor = if married {
+        Fx::from_int(1)
+    } else {
+        r.unmarried
+    };
+    let chance = by_age(&r.birth, w.ruler.age) * factor;
     if rng.range(0, Fx::from_int(100).0) < chance.0 {
         w.heirs.push(d.new_heir.clone());
     }

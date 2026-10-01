@@ -91,6 +91,20 @@ mod tests {
     const MAP: &str = include_str!("../../../../data/maps/default.ron");
 
     #[test]
+    fn every_province_has_an_outline_on_the_map() {
+        let data = crate::data::load(include_str!("../../../../data/rules.ron")).unwrap();
+        let map = Preset::load_with_map(PRESET, MAP, &data).unwrap().map;
+        let ids: Vec<_> = map.provinces.iter().map(|p| &p.id).collect();
+        assert_eq!(map.polygons.len(), ids.len());
+        for id in ids {
+            let poly = &map.polygons[id];
+            assert!(poly.len() >= 3, "{}", id.0);
+            let inside = |&(x, y): &(i32, i32)| (0..=400).contains(&x) && (0..=300).contains(&y);
+            assert!(poly.iter().all(inside), "{}", id.0);
+        }
+    }
+
+    #[test]
     fn broken_presets_are_rejected() {
         let data = crate::data::load(include_str!("../../../../data/rules.ron")).unwrap();
         assert!(Preset::load_with_map(PRESET, MAP, &data).is_ok());
@@ -111,7 +125,10 @@ mod tests {
             (r#""legitimacy": 60"#, r#""legitimacy": 101"#),
             (r#""legitimacy": 60"#, r#""no_such_axis": 60"#),
             (r#"province: "capital""#, r#"province: "nowhere""#),
-            (r#""gart", "frostad", "nordheim"]"#, r#""gart", "nordheim"]"#),
+            (
+                r#""gart", "frostad", "nordheim"]"#,
+                r#""gart", "nordheim"]"#,
+            ),
             (r#"Vassal("weir")"#, r#"Vassal("nobody")"#),
             (r#"Foreign("nordmark")"#, r#"Foreign("nobody")"#),
             (r#""legitimacy": 60"#, r#""loyalty": 60"#),

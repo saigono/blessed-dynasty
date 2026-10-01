@@ -354,6 +354,54 @@ mod tests {
     }
 
     #[test]
+    fn default_map_is_connected() {
+        let (_, w) = world();
+        let id = |p: &Province| p.id.0.clone();
+        let foreign = |n: &str| {
+            let of = |p: &&Province| p.holder == Holder::Foreign(NeighbourId(n.into()));
+            w.provinces.values().filter(of).count()
+        };
+        assert_eq!(
+            (foreign("nordmark"), foreign("purpur"), foreign("vestrum")),
+            (3, 4, 3)
+        );
+        // The whole graph is reachable; the cached distance is the BFS one.
+        let hops = w.hops(&w.capital.province);
+        assert_eq!(hops.len(), 20);
+        for p in w.provinces.values() {
+            assert_eq!(p.distance_to_capital, hops[&p.id], "{}", id(p));
+        }
+        assert_eq!(w.provinces[&pid("capital")].distance_to_capital, 0);
+        assert_eq!(w.provinces[&pid("gart")].distance_to_capital, 2);
+        // Every province of the kingdom reaches the capital over its own land.
+        let mut own = w.clone();
+        own.provinces
+            .retain(|_, p| !matches!(p.holder, Holder::Foreign(_)));
+        assert_eq!(own.provinces.len(), 10);
+        let reach = own.hops(&w.capital.province);
+        assert_eq!(reach.len(), 10);
+    }
+
+    #[test]
+    fn unreachable_province_is_infinitely_far() {
+        let data = data();
+        let mut preset = Preset::load_with_map(
+            include_str!("../../../../data/presets/default.ron"),
+            include_str!("../../../../data/maps/default.ron"),
+            &data,
+        )
+        .unwrap();
+        for p in &mut preset.map.provinces {
+            p.neighbours.retain(|n| n.0 != "kirm");
+            if p.id.0 == "kirm" {
+                p.neighbours.clear();
+            }
+        }
+        let w = World::from_preset(&data, &preset);
+        assert_eq!(w.provinces[&pid("kirm")].distance_to_capital, u32::MAX);
+    }
+
+    #[test]
     fn loyalty_follows_faction_axes() {
         let (data, mut w) = world();
         let mut with_nobles = |v: Fx| {

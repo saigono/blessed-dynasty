@@ -244,7 +244,9 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
     let ai = &data.neighbour_ai;
     for s in [&ai.expand, &ai.defend, &ai.trade, &ai.wait] {
         if s.events.iter().map(|(_, c)| c).sum::<u32>() > 100 {
-            return Err(DataError::Invalid("neighbour_ai: chances sum over 100".into()));
+            return Err(DataError::Invalid(
+                "neighbour_ai: chances sum over 100".into(),
+            ));
         }
     }
     Ok(data)
@@ -304,6 +306,11 @@ mod tests {
                 "{to}"
             );
         }
+        assert!(matches!(
+            broken(r#"("neighbour_raid", 25)"#, r#"("neighbour_raid", 86)"#),
+            Err(DataError::Invalid(_))
+        ));
+        assert!(broken(r#"("neighbour_raid", 25)"#, r#"("neighbour_raid", 85)"#).is_ok());
         let no_weight = RULES
             .replace("weight: 2", "weight: 0")
             .replace("weight: 1", "weight: 0");

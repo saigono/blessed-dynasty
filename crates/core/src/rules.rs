@@ -252,7 +252,10 @@ impl Effect {
                 let Some(id) = t.resolve(w, ctx.target) else {
                     return;
                 };
-                if w.provinces.get(&id).is_none_or(|p| p.holder != Holder::Crown) {
+                if w.provinces
+                    .get(&id)
+                    .is_none_or(|p| p.holder != Holder::Crown)
+                {
                     return;
                 }
                 let g = &ctx.data.grant;
@@ -412,7 +415,7 @@ impl Action {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::Preset;
+    use crate::state::{Preset, VassalId};
 
     fn world() -> (Data, World) {
         let data = crate::data::load(include_str!("../../../data/rules.ron")).unwrap();
@@ -480,10 +483,17 @@ mod tests {
         // Own border provinces, plus skala and porfir: Nordmark and Purpur touch there.
         assert_eq!(
             matching("(borders_foreign: true)"),
-            ["berg", "gart", "holm", "lugovo", "mar", "ostwick", "porfir", "skala", "sol", "weir"]
+            [
+                "berg", "gart", "holm", "lugovo", "mar", "ostwick", "porfir", "skala", "sol",
+                "weir"
+            ]
         );
         let inner = matching("(borders_foreign: false)");
-        assert!(["arden", "capital", "nordheim"].iter().all(|p| inner.contains(p)));
+        assert!(
+            ["arden", "capital", "nordheim"]
+                .iter()
+                .all(|p| inner.contains(p))
+        );
         assert_eq!(matching("(capital: true)"), ["capital"]);
         assert_eq!(matching("(capital: false)").len(), 19);
     }
@@ -567,6 +577,69 @@ mod tests {
         run(&mut w, r#"SpawnEvent("next", 2)"#, None);
         drop(run);
         assert_eq!(queue, [(Tick(5), "next".to_string())]);
+    }
+
+    #[test]
+    fn map_effects() {
+        let (mut data, mut w) = world();
+        let run = |w: &mut World, data: &Data, text: &str, province: &str| {
+            let e: Effect = crate::data::parse(text).unwrap();
+            let target = Target::Province(pid(province));
+            let mut queue = Vec::new();
+            let mut ctx = Ctx {
+                data,
+                queue: &mut queue,
+                target: Some(&target),
+            };
+            e.apply(w, &mut ctx);
+        };
+        let holder = |w: &World, p: &str| w.provinces[&pid(p)].holder.clone();
+        let vassal = |v: &str| Holder::Vassal(VassalId(v.into()));
+
+        run(&mut w, &data, r#"Build(EventTarget, "market")"#, "berg");
+        assert!(w.provinces[&pid("berg")].buildings.contains("market"));
+
+        // Next to holm (weir) at one crossing.
+        run(&mut w, &data, "Grant(EventTarget)", "gart");
+        assert_eq!(holder(&w, "gart"), vassal("weir"));
+        // Arden and Weir both border the capital: the smaller id wins the tie.
+        run(&mut w, &data, "Grant(ById(\"capital\"))", "gart");
+        assert_eq!(holder(&w, "capital"), vassal("arden"));
+        // Not a crown province: no-op.
+        run(&mut w, &data, "Grant(EventTarget)", "nordheim");
+        assert_eq!(
+            holder(&w, "nordheim"),
+            Holder::Foreign(NeighbourId("nordmark".into()))
+        );
+
+        // Nobody close enough: a new house from the list, then the next one.
+        data.grant.max_distance = 0;
+        run(&mut w, &data, "Grant(EventTarget)", "sol");
+        assert_eq!(holder(&w, "sol"), vassal("rosten"));
+        assert_eq!(w.vassals[&VassalId("rosten".into())].name, "Ростен");
+        run(&mut w, &data, "Grant(EventTarget)", "berg");
+        assert_eq!(holder(&w, "berg"), vassal("olbek"));
+        // The list is used up: the nearest vassal at any distance.
+        data.grant.new_vassals.clear();
+        run(&mut w, &data, "Grant(EventTarget)", "lugovo");
+        assert_eq!(holder(&w, "lugovo"), vassal("arden")); // capital and arden at 1
+        // No vassal anywhere: no-op.
+        for p in w.provinces.values_mut() {
+            if matches!(p.holder, Holder::Vassal(_)) {
+                p.holder = Holder::Crown;
+            }
+        }
+        run(&mut w, &data, "Grant(EventTarget)", "ostwick");
+        assert_eq!(holder(&w, "ostwick"), Holder::Crown);
+
+        w.provinces.get_mut(&pid("holm")).unwrap().holder = vassal("weir");
+        run(&mut w, &data, "Revoke(EventTarget)", "holm");
+        assert_eq!(holder(&w, "holm"), Holder::Crown);
+        run(&mut w, &data, "Revoke(EventTarget)", "nordheim");
+        assert_eq!(
+            holder(&w, "nordheim"),
+            Holder::Foreign(NeighbourId("nordmark".into()))
+        );
     }
 
     #[test]

@@ -200,7 +200,7 @@ impl Game {
         self.complete_actions();
         self.world.recompute_loyalty(&self.data);
         self.world.recompute_crown_power(&self.data);
-        if self.world.tick.0 % self.data.time_unit.ticks_per_year == 0 {
+        if (self.world.tick.0).is_multiple_of(self.data.time_unit.ticks_per_year) {
             let ids: Vec<_> = self.world.neighbours.keys().cloned().collect();
             for id in ids {
                 let e = neighbour_tick(&mut self.world, &self.data, &mut self.rng, id);
@@ -886,6 +886,122 @@ mod tests {
             }]
         );
         assert_eq!(g.choose(0), Err(GameError::NoEvent));
+    }
+
+    /// `bare()` plus the real actions and neighbour events.
+    fn map_game() -> Game {
+        let mut data = bare();
+        data.add_actions(include_str!("../../../data/actions.ron"))
+            .unwrap();
+        data.add_events(include_str!("../../../data/events/neighbours.ron"))
+            .unwrap();
+        data.neighbour_ai.wait.events.clear(); // quiet neighbours unless a test says otherwise
+        let mut g = game(data, 1);
+        g.world.axes.insert(ax("treasury"), Fx::from_int(1000));
+        g
+    }
+
+    fn targets(g: &Game, action: &str) -> Vec<Target> {
+        let all = g.available_actions().into_iter();
+        all.filter(|(id, _)| id == action)
+            .flat_map(|(_, t)| t)
+            .collect()
+    }
+
+    /// Runs `action` on `province` to completion next to an untouched game; returns
+    /// (crown power, loyalty_nobles) of both.
+    fn compare(action: &str, province: &str) -> ((Fx, Fx), (Fx, Fx)) {
+        let mut base = map_game();
+        let mut g = map_game();
+        g.start_action(action, Some(Target::Province(pid(province))))
+            .unwrap();
+        base.wait().unwrap();
+        g.wait().unwrap();
+        let at = |g: &Game| {
+            let power = g.world.provinces[&pid(province)].crown_power;
+            (power, g.world.axes[&ax("loyalty_nobles")])
+        };
+        (at(&base), at(&g))
+    }
+
+    #[test]
+    fn grant_and_revoke_province() {
+        let ((power, nobles), (granted_power, granted_nobles)) = compare("grant_province", "berg");
+        assert!(granted_power < power, "{granted_power} vs {power}");
+        assert!(granted_nobles > nobles, "{granted_nobles} vs {nobles}");
+        let ((power, nobles), (revoked_power, revoked_nobles)) = compare("revoke_province", "holm");
+        assert!(revoked_power > power, "{revoked_power} vs {power}");
+        assert!(revoked_nobles < nobles, "{revoked_nobles} vs {nobles}");
+        // Grant goes to crown provinces but the capital, revoke to vassal ones.
+        let g = map_game();
+        let grant = targets(&g, "grant_province");
+        assert!(grant.contains(&Target::Province(pid("berg"))));
+        assert!(!grant.contains(&Target::Province(pid("capital"))));
+        assert!(!grant.contains(&Target::Province(pid("holm"))));
+        assert!(targets(&g, "revoke_province").contains(&Target::Province(pid("holm"))));
+    }
+
+    #[test]
+    fn build_fort_only_on_crown_land() {
+        let mut g = map_game();
+        let forts = targets(&g, "build_fort");
+        assert!(forts.contains(&Target::Province(pid("berg"))));
+        for vassal in ["holm", "weir", "arden", "mar"] {
+            assert!(!forts.contains(&Target::Province(pid(vassal))), "{vassal}");
+        }
+        let holm = Some(Target::Province(pid("holm")));
+        assert_eq!(
+            g.start_action("build_fort", holm),
+            Err(GameError::Unavailable)
+        );
+        // Four years later the fort stands and adds its crown power.
+        let before = g.world.provinces[&pid("berg")].crown_power;
+        g.start_action("build_fort", Some(Target::Province(pid("berg"))))
+            .unwrap();
+        for _ in 0..4 {
+            g.wait().unwrap();
+        }
+        let berg = &g.world.provinces[&pid("berg")];
+        assert!(berg.buildings.contains("fort"));
+        assert_eq!(berg.crown_power, before + Fx::from_int(10));
+    }
+
+    #[test]
+    fn marriage_raises_relation_once() {
+        let mut g = map_game();
+        let vestrum = Target::Neighbour(NeighbourId("vestrum".into()));
+        g.start_action("marry_neighbour", Some(vestrum.clone()))
+            .unwrap();
+        g.wait().unwrap();
+        // 30 + 30 on completion; then Vestrum, friendly now, trades: +1.
+        let n = &g.world.neighbours[&NeighbourId("vestrum".into())];
+        assert_eq!(n.relation, Fx::from_int(61));
+        assert!(g.world.flags.contains("royal_marriage"));
+        assert!(targets(&g, "marry_neighbour").is_empty());
+    }
+
+    #[test]
+    fn neighbour_events_reach_the_player() {
+        let mut g = map_game();
+        let nordmark = NeighbourId("nordmark".into());
+        let n = g.world.neighbours.get_mut(&nordmark).unwrap();
+        (n.relation, n.strength) = (Fx::from_int(-80), Fx::from_int(100));
+        let mut seen = vec![];
+        for _ in 0..20 {
+            if let Step::Event(v) = g.wait().unwrap() {
+                seen.push((v.event_id, v.target));
+                g.choose(0).unwrap();
+            }
+        }
+        assert!(!seen.is_empty());
+        for (id, target) in seen {
+            let expected = match id.as_str() {
+                "neighbour_raid" => Target::Province(pid("weir")),
+                "neighbour_ultimatum" => Target::Neighbour(nordmark.clone()),
+                other => panic!("{other}"),
+            };
+            assert_eq!(target, Some(expected));
+        }
     }
 
     #[test]

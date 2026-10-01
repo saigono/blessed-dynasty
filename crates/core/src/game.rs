@@ -688,7 +688,7 @@ mod tests {
 
     fn play(seed: u64) -> Game {
         let mut data = crate::data::load(RULES).unwrap();
-        data.add_events(include_str!("../../../data/events/test.ron"))
+        data.add_events(include_str!("../../../data/events/reign.ron"))
             .unwrap();
         data.add_actions(include_str!("../../../data/actions.ron"))
             .unwrap();
@@ -789,7 +789,7 @@ mod tests {
             [
                 ("costly".into(), vec![]),
                 ("envoy".into(), neighbours.clone()),
-                ("tutor".into(), vec![Target::Heir(0), Target::Heir(1)]),
+                ("tutor".into(), vec![Target::Heir(0)]),
             ]
         );
         assert_eq!(g.start_action("nothing", None), Err(GameError::Unknown));
@@ -802,19 +802,13 @@ mod tests {
         g.start_action("costly", None).unwrap();
         assert_eq!(g.world.axes[&ax("treasury")], Fx::from_int(50));
         // Unaffordable now, and running on the same target anyway.
-        g.start_action("tutor", Some(Target::Heir(1))).unwrap();
-        assert_eq!(
-            g.available_actions(),
-            [
-                ("envoy".into(), neighbours),
-                ("tutor".into(), vec![Target::Heir(0)]),
-            ]
-        );
+        g.start_action("tutor", Some(Target::Heir(0))).unwrap();
+        assert_eq!(g.available_actions(), [("envoy".into(), neighbours)]);
         assert_eq!(
             g.decisions.last().unwrap().kind,
             DecisionKind::ActionStarted {
                 action_id: "tutor".into(),
-                target: Some(Target::Heir(1))
+                target: Some(Target::Heir(0))
             }
         );
         g.pending_event = Some(PendingEvent {
@@ -849,11 +843,11 @@ mod tests {
             .unwrap();
         assert_eq!(g.world.active_actions[0].ends_at, Tick(2));
         g.wait().unwrap();
-        assert_eq!(g.world.axes[&ax("legitimacy")], Fx::from_int(60));
+        assert_eq!(g.world.axes[&ax("legitimacy")], Fx::from_int(45));
         assert_eq!(g.world.provinces[&pid("holm")].income, Fx::from_int(6));
         g.wait().unwrap();
         assert_eq!(g.world.tick, Tick(2));
-        assert_eq!(g.world.axes[&ax("legitimacy")], Fx::from_int(65));
+        assert_eq!(g.world.axes[&ax("legitimacy")], Fx::from_int(50));
         assert_eq!(g.world.provinces[&pid("holm")].income, Fx::from_int(9));
         assert!(g.world.active_actions.is_empty());
     }
@@ -1048,9 +1042,14 @@ mod tests {
             .unwrap();
         data.add_events(include_str!("../../../data/events/neighbours.ron"))
             .unwrap();
-        data.neighbour_ai.wait.events.clear(); // quiet neighbours unless a test says otherwise
+        // Quiet neighbours unless a test says otherwise: hostile Nordmark made neutral,
+        // no events from neutral or trading ones.
+        data.neighbour_ai.wait.events.clear();
+        data.neighbour_ai.trade.events.clear();
         let mut g = game(data, 1);
         g.world.axes.insert(ax("treasury"), Fx::from_int(1000));
+        let nordmark = g.world.neighbours.get_mut(&NeighbourId("nordmark".into()));
+        nordmark.unwrap().relation = Fx(0);
         g
     }
 
@@ -1126,9 +1125,9 @@ mod tests {
         g.start_action("marry_neighbour", Some(vestrum.clone()))
             .unwrap();
         g.wait().unwrap();
-        // 30 + 30 on completion; then Vestrum, friendly now, trades: +1.
+        // 40 + 30 on completion; then Vestrum, friendly, trades: +1.
         let n = &g.world.neighbours[&NeighbourId("vestrum".into())];
-        assert_eq!(n.relation, Fx::from_int(61));
+        assert_eq!(n.relation, Fx::from_int(71));
         assert!(g.world.flags.contains("royal_marriage"));
         assert!(targets(&g, "marry_neighbour").is_empty());
     }
@@ -1171,16 +1170,16 @@ mod tests {
         g.wait().unwrap();
         g.wait().unwrap();
         assert!(g.world.crown_modifiers.is_empty());
-        assert_eq!(g.world.ruler.age, 30);
+        assert_eq!(g.world.ruler.age, 32);
         g.wait().unwrap();
         let w = &g.world;
         // Per year: crown provinces 12 + 7 + 5 + 8 + 6 + 6 + income 10 - army 50 * 0.1 = 49,
         // in quarters.
         assert_eq!(w.axes[&ax("treasury")], Fx::from_int(199));
-        assert_eq!((w.ruler.age, w.heirs[0].age), (31, 9));
+        assert_eq!((w.ruler.age, w.heirs[0].age), (33, 7));
         // Toward the axis default 50, toward province_loyalty 50, a year's step of 1.
         assert_eq!(w.axes[&ax("loyalty_nobles")], Fx::from_int(41));
-        assert_eq!(w.axes[&ax("loyalty")], Fx(45_500)); // recomputed: (82 + 50 + 50) / 4
+        assert_eq!(w.axes[&ax("loyalty")], Fx(47_750)); // recomputed: (82 + 59 + 50) / 4
         assert_eq!(w.provinces[&pid("holm")].loyalty, Fx::from_int(41));
         assert_eq!(w.provinces[&pid("capital")].loyalty, Fx::from_int(69));
         assert_eq!(w.provinces[&pid("nordheim")].loyalty, Fx::from_int(50));

@@ -2,7 +2,9 @@
 
 use crate::data::Data;
 use crate::fx::Fx;
-use crate::state::{AxisId, HeirStatus, Holder, NeighbourId, Province, ProvinceId, World};
+use crate::state::{
+    AxisId, HeirStatus, Holder, NeighbourId, Province, ProvinceId, Vassal, VassalId, World,
+};
 use crate::time::{Tick, Years};
 use serde::{Deserialize, Serialize};
 
@@ -342,12 +344,21 @@ impl Effect {
                         _ => None,
                     })
                     .min();
-                let fresh = (g.new_vassals.iter()).find(|v| !w.vassals.contains_key(&v.id));
+                let names = ctx.data.names.vassals.iter();
+                let fresh = names.map(|n| VassalId(n.clone())).find(|id| {
+                    !w.vassals.contains_key(id) && w.vassals.values().all(|v| v.name != id.0)
+                });
                 let vassal = match (nearest, fresh) {
                     (Some((d, v)), _) if d <= g.max_distance => v,
-                    (_, Some(v)) => {
-                        w.vassals.insert(v.id.clone(), v.clone());
-                        v.id.clone()
+                    (_, Some(id)) => {
+                        let v = Vassal {
+                            id: id.clone(),
+                            name: id.0.clone(),
+                            loyalty: g.new_loyalty,
+                            strength: g.new_strength,
+                        };
+                        w.vassals.insert(id.clone(), v);
+                        id
                     }
                     (Some((_, v)), None) => v,
                     (None, None) => return,
@@ -501,7 +512,7 @@ impl Action {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{Preset, VassalId};
+    use crate::state::Preset;
 
     fn world() -> (Data, World) {
         let data = crate::data::load(include_str!("../../../data/rules.ron")).unwrap();
@@ -529,18 +540,18 @@ mod tests {
         let (_, mut w) = world();
         w.flags.insert("married".into());
         let p = |text: &str| crate::data::parse::<Predicate>(text).unwrap().eval(&w);
-        // legitimacy is 60.
-        assert!(p(r#"AxisAbove("legitimacy", 59.999)"#));
-        assert!(!p(r#"AxisAbove("legitimacy", 60)"#));
-        assert!(p(r#"AxisBelow("legitimacy", 60.001)"#));
-        assert!(!p(r#"AxisBelow("legitimacy", 60)"#));
+        // legitimacy is 45.
+        assert!(p(r#"AxisAbove("legitimacy", 44.999)"#));
+        assert!(!p(r#"AxisAbove("legitimacy", 45)"#));
+        assert!(p(r#"AxisBelow("legitimacy", 45.001)"#));
+        assert!(!p(r#"AxisBelow("legitimacy", 45)"#));
         assert!(p(r#"Flag("married")"#) && !p(r#"Flag("plague")"#));
         assert!(p(r#"NotFlag("plague")"#) && !p(r#"NotFlag("married")"#));
         assert!(p("ProvinceWhere((holder: Vassal))"));
         assert!(!p("ProvinceWhere((holder: Vassal, loyalty_above: 45))"));
-        // Two heirs, ruler 30.
-        assert!(p("HeirCount(2, 2)") && !p("HeirCount(3, 9)") && !p("HeirCount(0, 1)"));
-        assert!(p("RulerAge(30, 30)") && !p("RulerAge(31, 99)"));
+        // One heir, ruler 32.
+        assert!(p("HeirCount(1, 1)") && !p("HeirCount(2, 9)") && !p("HeirCount(0, 0)"));
+        assert!(p("RulerAge(32, 32)") && !p("RulerAge(33, 99)"));
         assert!(!p("AtWar"));
         assert!(p("All([])") && !p(r#"All([Flag("married"), Flag("plague")])"#));
         assert!(p(r#"Any([Flag("plague"), Flag("married")])"#) && !p("Any([])"));
@@ -603,7 +614,7 @@ mod tests {
             );
         };
         run(&mut w, r#"Axis("legitimacy", 5.5)"#, None);
-        assert_eq!(w.axes[&ax("legitimacy")], Fx(65_500));
+        assert_eq!(w.axes[&ax("legitimacy")], Fx(50_500));
         run(&mut w, r#"Axis("legitimacy", 1000)"#, None);
         assert_eq!(w.axes[&ax("legitimacy")], PERCENT); // clamped to the axis max
 
@@ -633,7 +644,7 @@ mod tests {
         let relation = |w: &World| w.neighbours[&NeighbourId("nordmark".into())].relation;
         run(&mut w, r#"Relation(ById("nordmark"), 30)"#, None);
         run(&mut w, "Relation(EventTarget, 20)", Some(&nordmark));
-        assert_eq!(relation(&w), Fx::from_int(50));
+        assert_eq!(relation(&w), Fx::from_int(10)); // from -40
         run(&mut w, "Relation(EventTarget, -900)", Some(&nordmark));
         assert_eq!(relation(&w), Fx::from_int(-100));
         run(&mut w, "Relation(EventTarget, 20)", Some(&holm));
@@ -643,17 +654,17 @@ mod tests {
         assert_eq!(w.crown_modifiers[&pid("holm")], Fx::from_int(7));
 
         run(&mut w, "HeirOp(Add)", None);
-        assert_eq!(w.heirs.len(), 3);
-        assert_eq!(w.heirs[2], data.new_heir);
+        assert_eq!(w.heirs.len(), 2);
+        assert_eq!(w.heirs[1], data.new_heir);
         run(&mut w, "HeirOp(Remove(0))", None);
-        assert_eq!(w.heirs[0].name, "Агнесса");
+        assert_eq!(w.heirs[0].name, "Младенец");
         run(&mut w, r#"HeirOp(SetStatus(0, Hostage("nordmark")))"#, None);
         assert_eq!(
             w.heirs[0].status,
             HeirStatus::Hostage(NeighbourId("nordmark".into()))
         );
         run(&mut w, "HeirOp(Ability(0, 10))", None);
-        assert_eq!(w.heirs[0].ability, Fx::from_int(65));
+        assert_eq!(w.heirs[0].ability, Fx::from_int(60));
         let before = w.clone();
         run(&mut w, "HeirOp(Remove(9))", None);
         run(&mut w, "HeirOp(Ability(9, 1))", None);
@@ -699,15 +710,20 @@ mod tests {
             Holder::Foreign(NeighbourId("nordmark".into()))
         );
 
-        // Nobody close enough: a new house from the list, then the next one.
+        // Nobody close enough: a new house from the name pool, then the next one.
+        // Вейр is taken (by name, under the id "weir"), so it is skipped.
         data.grant.max_distance = 0;
+        data.names.vassals = ["Вейр", "Ростен", "Ольбек"].map(String::from).to_vec();
         run(&mut w, &data, "Grant(EventTarget)", "sol");
-        assert_eq!(holder(&w, "sol"), vassal("rosten"));
-        assert_eq!(w.vassals[&VassalId("rosten".into())].name, "Ростен");
+        assert_eq!(holder(&w, "sol"), vassal("Ростен"));
+        let rosten = &w.vassals[&VassalId("Ростен".into())];
+        assert_eq!(rosten.name, "Ростен");
+        assert_eq!(rosten.loyalty, data.grant.new_loyalty);
+        assert_eq!(rosten.strength, data.grant.new_strength);
         run(&mut w, &data, "Grant(EventTarget)", "berg");
-        assert_eq!(holder(&w, "berg"), vassal("olbek"));
-        // The list is used up: the nearest vassal at any distance.
-        data.grant.new_vassals.clear();
+        assert_eq!(holder(&w, "berg"), vassal("Ольбек"));
+        // The pool is used up: the nearest vassal at any distance.
+        data.names.vassals.clear();
         run(&mut w, &data, "Grant(EventTarget)", "lugovo");
         assert_eq!(holder(&w, "lugovo"), vassal("arden")); // capital and arden at 1
         // No vassal anywhere: no-op.

@@ -8,9 +8,9 @@
 [
     Action("royal_progress", None),
     Wait(10),
-    ChooseByTag("feast_prayer"),
+    ChooseByTag("festival_procession"),
     Wait(10),
-    ChooseByTag("envoy_welcome"),
+    ChooseByTag("embassy_treaty"),
     Wait(10),
-    ChooseByTag("unrest_force"),
+    ChooseByTag("brigands_crown"),
 ]

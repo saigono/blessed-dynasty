@@ -309,6 +309,7 @@ mod tests {
     fn world_roundtrips_through_ron() {
         let (_, mut w) = world();
         // Exercise every enum variant and the optional fields.
+        w.heirs.push(w.heirs[0].clone());
         w.heirs[0].status = HeirStatus::Hostage(NeighbourId("nordmark".into()));
         w.heirs[1].status = HeirStatus::Studying("Монастырь".into());
         w.active_actions.push(ActiveAction {
@@ -347,10 +348,10 @@ mod tests {
         assert_eq!(w.axes.len(), data.axes.len());
         assert_eq!(w.start_year, 1187);
         // Preset override wins over the rules default, the rest keep defaults.
-        assert_eq!(w.axes[&AxisId("legitimacy".into())], Fx::from_int(60));
-        assert_eq!(w.axes[&AxisId("bureaucracy".into())], Fx::from_int(20));
-        // Derived on load: nobles 40 (preset) * 2 + church 50 + people 50, over 4.
-        assert_eq!(w.axes[&AxisId("loyalty".into())], Fx::from_int(45));
+        assert_eq!(w.axes[&AxisId("legitimacy".into())], Fx::from_int(45));
+        assert_eq!(w.axes[&AxisId("army".into())], Fx::from_int(50));
+        // Derived on load: nobles 40 * 2 + church 60 + people 50 (preset), over 4.
+        assert_eq!(w.axes[&AxisId("loyalty".into())], Fx(47_500));
     }
 
     #[test]
@@ -409,8 +410,8 @@ mod tests {
             w.recompute_loyalty(&data);
             w.axes[&AxisId("loyalty".into())]
         };
-        assert_eq!(with_nobles(Fx::from_int(61)), Fx(55_500)); // (122 + 50 + 50) / 4
-        assert_eq!(with_nobles(Fx(50_001)), Fx(50_000)); // 50.0005 rounds toward zero
+        assert_eq!(with_nobles(Fx::from_int(61)), Fx(58_000)); // (122 + 60 + 50) / 4
+        assert_eq!(with_nobles(Fx(50_001)), Fx(52_500)); // 52.5005 rounds toward zero
     }
 
     #[test]

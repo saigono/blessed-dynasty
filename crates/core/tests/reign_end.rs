@@ -5,14 +5,14 @@ use bd_core::fx::Fx;
 use bd_core::game::{DecisionKind, Game, GameError, PendingEvent, Step};
 use bd_core::rng::Rng;
 use bd_core::rules::{Choice, Ctx, Effect, Event, EventTarget, HeirOp, Predicate, Sign, Target};
-use bd_core::state::{AxisId, HeirStatus, NeighbourId, Preset, World};
+use bd_core::state::{AxisId, Heir, HeirStatus, NeighbourId, Preset, World};
 use bd_core::time::{Tick, Years};
 
 const RULES: &str = include_str!("../../../data/rules.ron");
 const PRESET: &str = include_str!("../../../data/presets/default.ron");
 const MAP: &str = include_str!("../../../data/maps/default.ron");
 const EVENTS: [&str; 4] = [
-    include_str!("../../../data/events/test.ron"),
+    include_str!("../../../data/events/reign.ron"),
     include_str!("../../../data/events/neighbours.ron"),
     include_str!("../../../data/events/death.ron"),
     include_str!("../../../data/events/heirs.ron"),
@@ -44,6 +44,18 @@ fn game(data: Data, seed: u64) -> Game {
     Game::new(data, &preset, seed)
 }
 
+/// The preset has one heir, Конрад (6, ability 50, claim 70); tests of two heirs add
+/// Агнесса (5, ability 55, claim 40).
+fn two_heirs(w: &mut World) {
+    w.heirs.push(Heir {
+        name: "Агнесса".into(),
+        age: 5,
+        ability: Fx::from_int(55),
+        claim: Fx::from_int(40),
+        status: HeirStatus::Home,
+    });
+}
+
 fn event(id: &str, effects: Vec<Effect>) -> Event {
     Event {
         id: id.into(),
@@ -73,13 +85,14 @@ fn force(g: &mut Game, id: &str, choice: usize) {
     g.choose(choice).unwrap();
 }
 
-/// Plays with the middle choice of every event and no actions; reign length in years.
+/// Plays with the middle choice `(len - 1) / 2` of every event, as `cli` neutral does, and no
+/// actions; reign length in years.
 fn middle_reign(start: &Game, seed: u64) -> u32 {
     let mut g = start.clone();
     g.rng = Rng::from_seed(seed);
     loop {
         match g.wait().unwrap() {
-            Step::Event(v) => g.choose(v.choices.len() / 2).unwrap(),
+            Step::Event(v) => g.choose((v.choices.len() - 1) / 2).unwrap(),
             Step::Idle => {}
             Step::ReignEnded(end) => return end.tick.year(g.world.time_unit),
         }
@@ -232,10 +245,10 @@ fn hostage_grows_slower_than_home() {
     let (home, away) = (grown(HeirStatus::Home, 5), grown(hostage, 5));
     let studying = grown(HeirStatus::Studying("Монастырь".into()), 5);
     assert!(away < home && home < studying, "{away} {home} {studying}");
-    // Heir 0 is 8: growth stops at adult_age 16.
-    assert_eq!(grown(HeirStatus::Home, 8), grown(HeirStatus::Home, 20));
-    // Grows at ages 9..=15.
-    assert_eq!(grown(HeirStatus::Home, 8), Fx::from_int(64));
+    // Heir 0 is 6: growth stops at adult_age 16.
+    assert_eq!(grown(HeirStatus::Home, 10), grown(HeirStatus::Home, 20));
+    // Grows at ages 7..=15.
+    assert_eq!(grown(HeirStatus::Home, 10), Fx::from_int(68));
 }
 
 /// Claims of heirs 0 and 1 after `years` under the law flag.
@@ -243,6 +256,7 @@ fn claims(law: &str, years: u32, hostage: bool) -> (Fx, Fx) {
     let mut data = bare();
     data.heirs.birth = vec![];
     let mut g = game(data, 1);
+    two_heirs(&mut g.world);
     g.world.flags.retain(|f| !f.starts_with("law_"));
     g.world.flags.insert(law.into());
     if hostage {
@@ -316,7 +330,7 @@ fn births(married: bool) -> usize {
     for _ in 0..5 {
         g.wait().unwrap();
     }
-    g.world.heirs.len() - 2
+    g.world.heirs.len() - 1
 }
 
 #[test]
@@ -433,10 +447,11 @@ fn chance_picks_a_branch() {
 #[test]
 fn heir_predicates() {
     let mut w = game(bare(), 1).world;
+    two_heirs(&mut w);
     let p = |w: &World, text: &str| ron::from_str::<Predicate>(text).unwrap().eval(w);
-    // Конрад 8 (claim 70), Агнесса 5 (claim 40).
+    // Конрад 6 (claim 70), Агнесса 5 (claim 40).
     assert!(
-        p(&w, "HeirAge(0, 8, 8)") && !p(&w, "HeirAge(1, 6, 99)") && !p(&w, "HeirAge(2, 0, 99)")
+        p(&w, "HeirAge(0, 6, 6)") && !p(&w, "HeirAge(1, 6, 99)") && !p(&w, "HeirAge(2, 0, 99)")
     );
     assert!(p(&w, "ClaimGapBelow(30.001)") && !p(&w, "ClaimGapBelow(30)"));
     w.heirs[1].claim = Fx::from_int(95);
@@ -449,6 +464,7 @@ fn heir_predicates() {
 fn heir_ops() {
     let data = bare();
     let mut w = game(bare(), 1).world;
+    two_heirs(&mut w);
     let mut queue = vec![];
     let mut run = |w: &mut World, text: &str, target: Option<Target>| {
         let e: Effect = ron::from_str(text).unwrap();
@@ -525,7 +541,7 @@ fn content_loads() {
 fn war_wound_waits_for_war() {
     let mut g = game(content(), 1);
     g.queue.push((Tick(1), "war_wound".into()));
-    g.world.axes.insert(ax("treasury"), Fx(0)); // keeps harvest_feast out
+    g.world.axes.insert(ax("treasury"), Fx(0)); // keeps the festival out
     for _ in 0..3 {
         if let Step::Event(v) = g.wait().unwrap() {
             assert_ne!(v.event_id, "war_wound");
@@ -581,8 +597,8 @@ fn event_targets_an_heir() {
     let mut e = event("sick", vec![Effect::HeirOp(HeirOp::TargetRemove)]);
     e.target = EventTarget::Heir(6, 12);
     e.text = "{heir} болен".into();
-    // Конрад 8 -> 9 after the first tick, Агнесса 5 -> 6: both fit, the pick is random.
-    let (mut g, v) = fire(e.clone(), |_| {});
+    // Конрад 6 -> 7 after the first tick, Агнесса 5 -> 6: both fit, the pick is random.
+    let (mut g, v) = fire(e.clone(), two_heirs);
     let v = v.unwrap();
     let Some(Target::Heir(i)) = v.target else {
         panic!("{v:?}")
@@ -593,7 +609,10 @@ fn event_targets_an_heir() {
     assert_eq!(g.world.heirs.len(), 1);
     assert_ne!(g.world.heirs[0].name, name);
     // Only Агнесса fits: always her.
-    let (_, v) = fire(e.clone(), |w| w.heirs[0].age = 20);
+    let (_, v) = fire(e.clone(), |w| {
+        two_heirs(w);
+        w.heirs[0].age = 20;
+    });
     assert_eq!(v.unwrap().target, Some(Target::Heir(1)));
     // Nobody of that age: the event cannot fire.
     let (_, v) = fire(e, |w| w.heirs.iter_mut().for_each(|h| h.age = 30));

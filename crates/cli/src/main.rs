@@ -48,7 +48,7 @@ struct Files {
     preset: PathBuf,
     #[arg(long, default_value = "data/maps/default.ron")]
     map: PathBuf,
-    /// Holds rules.ron, actions.ron and events/*.ron (not subdirectories).
+    /// Holds rules.ron, actions.ron, names.ron and events/*.ron (not subdirectories).
     #[arg(long, default_value = "data")]
     data: PathBuf,
 }
@@ -173,6 +173,8 @@ fn load(f: &Files, seed: u64) -> Result<Game, String> {
     }
     let res = data.add_actions(&read(&dir.join("actions.ron"))?);
     res.map_err(|e| format!("actions.ron: {e:?}"))?;
+    let res = data.add_names(&read(&dir.join("names.ron"))?);
+    res.map_err(|e| format!("names.ron: {e:?}"))?;
     let preset = Preset::load_with_map(&read(&f.preset)?, &read(&f.map)?, &data);
     let preset = preset.map_err(|e| format!("пресет: {e:?}"))?;
     Ok(Game::new(data, &preset, seed))

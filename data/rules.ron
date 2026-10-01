@@ -1,4 +1,44 @@
 (
     // 1 = year, 4 = seasons, 12 = months. Durations in data are always in years.
     time_unit: (ticks_per_year: 1),
+
+    // State axes: the world starts with `default`, a preset may override it.
+    axes: [
+        (id: "treasury", min: -1000, max: 10000, default: 100),
+        (id: "income", min: -100, max: 1000, default: 10),
+        (id: "army", min: 0, max: 1000, default: 50),
+        (id: "legitimacy", min: 0, max: 100, default: 50),
+        (id: "stability", min: 0, max: 100, default: 50),
+        (id: "bureaucracy", min: 0, max: 100, default: 20),
+        (id: "loyalty_nobles", min: 0, max: 100, default: 50),
+        (id: "loyalty_church", min: 0, max: 100, default: 50),
+        (id: "loyalty_people", min: 0, max: 100, default: 50),
+        (id: "prestige", min: 0, max: 1000, default: 0),
+        // Derived from the faction axes, never written directly; the default is ignored.
+        (id: "loyalty", min: 0, max: 100, default: 50),
+    ],
+
+    // Each faction's loyalty is its axis. `loyalty_axis` = weighted mean, rounded toward zero.
+    factions: [
+        (id: "nobles", axis: "loyalty_nobles", weight: 2),
+        (id: "church", axis: "loyalty_church", weight: 1),
+        (id: "people", axis: "loyalty_people", weight: 1),
+    ],
+    loyalty_axis: "loyalty",
+
+    // Crown power of own provinces (foreign ones and those cut off from the capital get 0),
+    // recomputed from scratch, never below 0:
+    // base[holder] - (threshold - loyalty) * loyalty_penalty (only below threshold)
+    // - path_cost * distance_penalty + buildings + capital.crown_bonus.
+    // path_cost: cheapest path from the capital; a step into an own province costs 1, into
+    // a neighbour's max(1, 1 + foreign_step_penalty - relation * foreign_step_relation).
+    crown_power: (
+        base: (crown: 60, vassal: 30),
+        loyalty_threshold: 50,
+        loyalty_penalty: 0.5,
+        distance_penalty: 5,
+        foreign_step_penalty: 1,
+        foreign_step_relation: 0.02,
+        buildings: {"fort": 10, "road": 5},
+    ),
 )

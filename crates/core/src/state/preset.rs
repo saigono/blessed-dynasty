@@ -126,8 +126,8 @@ mod tests {
             (r#""legitimacy": 60"#, r#""no_such_axis": 60"#),
             (r#"province: "capital""#, r#"province: "nowhere""#),
             (
-                r#""gart", "frostad", "nordheim"]"#,
-                r#""gart", "nordheim"]"#,
+                r#""arden", "frostad", "nordheim"]"#,
+                r#""arden", "nordheim"]"#,
             ),
             (r#"Vassal("weir")"#, r#"Vassal("nobody")"#),
             (r#"Foreign("nordmark")"#, r#"Foreign("nobody")"#),

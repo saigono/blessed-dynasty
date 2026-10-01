@@ -107,9 +107,9 @@ mod tests {
 
     #[test]
     fn stance_follows_relation_and_border_strength() {
-        // Weakest own province on the Nordmark border: weir, crown power 20.
-        assert_eq!(stance(-50, 20), Stance::Expand);
-        assert_eq!(stance(-50, 19), Stance::Defend);
+        // Weakest own province on the Nordmark border: arden, crown power 22.5.
+        assert_eq!(stance(-50, 23), Stance::Expand);
+        assert_eq!(stance(-50, 22), Stance::Defend);
         assert_eq!(stance(0, 100), Stance::Wait);
         assert_eq!(stance(50, 0), Stance::Trade);
         // No common border: never Expand.
@@ -141,7 +141,7 @@ mod tests {
         for e in &hostile {
             let target = match e.event_id.as_str() {
                 // The weakest border province, the rest at the neighbour itself.
-                "neighbour_raid" => Target::Province(ProvinceId("weir".into())),
+                "neighbour_raid" => Target::Province(ProvinceId("arden".into())),
                 _ => Target::Neighbour(nordmark()),
             };
             assert_eq!(e.target, Some(target), "{}", e.event_id);
@@ -179,7 +179,7 @@ mod tests {
         let raid = neighbour_tick(&mut w, &data, &mut Rng::from_seed(1), nordmark());
         assert_eq!(
             raid.unwrap().target,
-            Some(Target::Province(ProvinceId("weir".into())))
+            Some(Target::Province(ProvinceId("arden".into())))
         );
         w.provinces
             .retain(|_, p| p.holder != Holder::Foreign(nordmark()));

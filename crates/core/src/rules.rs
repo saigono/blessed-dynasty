@@ -480,17 +480,18 @@ mod tests {
         assert_eq!(matching("(loyalty_above: 50)"), crown);
         assert_eq!(matching(r#"(building: "fort")"#), ["capital"]);
         assert_eq!(matching(r#"(without_building: "fort")"#).len(), 19);
-        // Own border provinces, plus skala and porfir: Nordmark and Purpur touch there.
+        // Own border provinces, plus where two neighbours touch: skala and porfir,
+        // frostad and vestburg.
         assert_eq!(
             matching("(borders_foreign: true)"),
             [
-                "berg", "gart", "holm", "lugovo", "mar", "ostwick", "porfir", "skala", "sol",
-                "weir"
+                "arden", "berg", "frostad", "gart", "holm", "lugovo", "mar", "ostwick", "porfir",
+                "skala", "sol", "vestburg", "weir"
             ]
         );
         let inner = matching("(borders_foreign: false)");
         assert!(
-            ["arden", "capital", "nordheim"]
+            ["capital", "kirm", "nordheim"]
                 .iter()
                 .all(|p| inner.contains(p))
         );

@@ -996,7 +996,7 @@ mod tests {
         assert!(!seen.is_empty());
         for (id, target) in seen {
             let expected = match id.as_str() {
-                "neighbour_raid" => Target::Province(pid("weir")),
+                "neighbour_raid" => Target::Province(pid("arden")),
                 "neighbour_ultimatum" => Target::Neighbour(nordmark.clone()),
                 other => panic!("{other}"),
             };

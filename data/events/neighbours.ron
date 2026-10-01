@@ -1,5 +1,6 @@
-// Events started by the neighbour AI (`rules.ron` neighbour_ai), never from the random pool.
-// `neighbour_war_declared` is stage 4's.
+// Events started by the neighbour AI (`rules.ron` neighbour_ai), never from the random pool
+// on their own: the AI offers them to the pick. A province event (the raid) also knows its
+// raider, so `{neighbour}` and `EventTarget` neighbour effects work there too.
 [
     (
         id: "neighbour_ultimatum",
@@ -52,7 +53,7 @@
     (
         id: "neighbour_raid",
         title: "Набег на {province}",
-        text: "Чужие отряды перешли границу, жгут сёла {province} и уводят скот.",
+        text: "Отряды {neighbour} перешли границу, жгут сёла {province} и уводят скот.",
         when: All([]),
         weight: 0,
         once: false,
@@ -62,7 +63,7 @@
         choices: [
             (
                 text: "Выслать войско",
-                effects: [Axis("army", -5), Province(EventTarget, Loyalty, 5)],
+                effects: [Axis("army", -5), Province(EventTarget, Loyalty, 5), Relation(EventTarget, -5)],
                 cause_tag: "raid_repelled",
             ),
             (
@@ -70,6 +71,32 @@
                 effects: [Province(EventTarget, Population, -500), Province(EventTarget, Income, -1), Province(EventTarget, Loyalty, -10), CrownPower(EventTarget, -5)],
                 cause_tag: "raid_endured",
                 hint: "Брошенная провинция помнит, кто её не защитил.",
+            ),
+        ],
+    ),
+    (
+        // Leads into the war chain (events/war.ron) through StartWar.
+        id: "neighbour_war_declared",
+        title: "{neighbour} объявляет войну",
+        text: "Глашатаи {neighbour} бросили к трону {ruler} перчатку. Их войско собирается у границы.",
+        when: Not(AtWar),
+        weight: 0,
+        once: false,
+        cooldown_years: 0,
+        importance: 5,
+        target: Neighbour,
+        choices: [
+            (
+                text: "Принять вызов",
+                effects: [StartWar(EventTarget), Axis("prestige", 2)],
+                cause_tag: "war_accepted",
+                hint: "Кто принял вызов, тот и отвечает за исход.",
+            ),
+            (
+                text: "Откупиться",
+                effects: [Tribute(-60), Relation(EventTarget, 20), Axis("prestige", -5)],
+                cause_tag: "war_bought_off",
+                hint: "Откуп кормит того, кто грозит.",
             ),
         ],
     ),

@@ -7,6 +7,7 @@ pub use preset::{Map, Preset};
 use crate::data::{CrownPowerRules, Data};
 use crate::fx::Fx;
 use crate::time::{Tick, TimeUnit};
+use crate::war::War;
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
@@ -81,6 +82,10 @@ pub struct Ruler {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Heir {
+    /// Stable across births and deaths, unlike the index; `Target::Heir` holds it.
+    /// Assigned by the world (`from_preset`, `add_heir`), so data may omit it.
+    #[serde(default)]
+    pub id: u32,
     pub name: String,
     pub age: u32,
     pub ability: Fx,
@@ -142,6 +147,12 @@ pub struct World {
     /// Added to the crown power formula; set by `Effect::CrownPower`, drifts to 0.
     #[serde(default)]
     pub crown_modifiers: BTreeMap<ProvinceId, Fx>,
+    /// At most one war at a time.
+    #[serde(default)]
+    pub war: Option<War>,
+    /// The id `add_heir` gives next.
+    #[serde(default)]
+    pub next_heir_id: u32,
 }
 
 impl World {
@@ -169,7 +180,12 @@ impl World {
             flags: preset.flags.clone(),
             last_fired: BTreeMap::new(),
             crown_modifiers: BTreeMap::new(),
+            war: None,
+            next_heir_id: 0,
         };
+        for h in std::mem::take(&mut world.heirs) {
+            world.add_heir(h);
+        }
         world.recompute_loyalty(data);
         world.recompute_crown_power(data);
         // Unreachable provinces are not expected (the map is connected); they get u32::MAX.
@@ -178,6 +194,40 @@ impl World {
             p.distance_to_capital = hops.get(&p.id).copied().unwrap_or(u32::MAX);
         }
         world
+    }
+
+    /// Appends the heir under the next free id.
+    pub fn add_heir(&mut self, mut heir: Heir) {
+        heir.id = self.next_heir_id;
+        self.next_heir_id += 1;
+        self.heirs.push(heir);
+    }
+
+    /// Index in `heirs` of the heir with this id.
+    pub fn heir_index(&self, id: u32) -> Option<usize> {
+        self.heirs.iter().position(|h| h.id == id)
+    }
+
+    /// Foreign states owning a province next to this one, its own holder excluded.
+    pub fn foreign_neighbours(&self, id: &ProvinceId) -> BTreeSet<NeighbourId> {
+        let Some(p) = self.provinces.get(id) else {
+            return BTreeSet::new();
+        };
+        let near = p.neighbours.iter().filter_map(|n| self.provinces.get(n));
+        near.filter_map(|q| match &q.holder {
+            Holder::Foreign(n) if q.holder != p.holder => Some(n.clone()),
+            _ => None,
+        })
+        .collect()
+    }
+
+    /// The own province on the border with `n` with the weakest crown power, smallest id
+    /// on a tie: where that neighbour presses.
+    pub fn weakest_border(&self, n: &NeighbourId) -> Option<&Province> {
+        (self.provinces.values())
+            .filter(|p| !matches!(p.holder, Holder::Foreign(_)))
+            .filter(|p| self.foreign_neighbours(&p.id).contains(n))
+            .min_by_key(|p| p.crown_power)
     }
 
     /// Fewest border crossings from `from` to every reachable province (BFS).

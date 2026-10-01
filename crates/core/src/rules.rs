@@ -2,10 +2,12 @@
 
 use crate::data::Data;
 use crate::fx::Fx;
+use crate::game::PendingEvent;
 use crate::state::{
     AxisId, HeirStatus, Holder, NeighbourId, Province, ProvinceId, Vassal, VassalId, World,
 };
 use crate::time::{Tick, Years};
+use crate::war::{War, WarOutcome, WarStage};
 use serde::{Deserialize, Serialize};
 
 /// Province loyalty, ruler health and heir ability live in 0..=100, relations in -100..=100.
@@ -16,7 +18,7 @@ const PERCENT: Fx = Fx::from_int(100);
 pub enum Target {
     Province(ProvinceId),
     Neighbour(NeighbourId),
-    /// Index into `World.heirs`.
+    /// `Heir.id`, stable while heirs are born and die.
     Heir(u32),
 }
 
@@ -35,6 +37,12 @@ pub enum Predicate {
     /// Inclusive range.
     RulerAge(u32, u32),
     AtWar,
+    /// Strictly above; false without a war.
+    WarScoreAbove(Fx),
+    /// Strictly below; false without a war.
+    WarScoreBelow(Fx),
+    /// False without a war.
+    WarStage(WarStage),
     /// Age of the heir at this index within an inclusive range; false without that heir.
     HeirAge(u32, u32, u32),
     /// Claims of heirs 0 and 1 differ by less than this; false with fewer than two heirs.
@@ -55,8 +63,10 @@ impl Predicate {
             Predicate::ProvinceWhere(f) => w.provinces.values().any(|p| f.matches(p, w)),
             Predicate::HeirCount(lo, hi) => (*lo..=*hi).contains(&(w.heirs.len() as u32)),
             Predicate::RulerAge(lo, hi) => (*lo..=*hi).contains(&w.ruler.age),
-            // There is no war state before stage 4.
-            Predicate::AtWar => false,
+            Predicate::AtWar => w.war.is_some(),
+            Predicate::WarScoreAbove(v) => w.war.as_ref().is_some_and(|x| x.war_score > *v),
+            Predicate::WarScoreBelow(v) => w.war.as_ref().is_some_and(|x| x.war_score < *v),
+            Predicate::WarStage(s) => w.war.as_ref().is_some_and(|x| x.stage == *s),
             Predicate::HeirAge(i, lo, hi) => {
                 (w.heirs.get(*i as usize)).is_some_and(|h| (*lo..=*hi).contains(&h.age))
             }
@@ -108,11 +118,7 @@ impl ProvinceFilter {
             Holder::Vassal(_) => HolderKind::Vassal,
             Holder::Foreign(_) => HolderKind::Foreign,
         };
-        let borders = p.neighbours.iter().any(|n| {
-            w.provinces
-                .get(n)
-                .is_some_and(|q| matches!(q.holder, Holder::Foreign(_)) && q.holder != p.holder)
-        });
+        let borders = !w.foreign_neighbours(&p.id).is_empty();
         self.holder.is_none_or(|h| h == kind)
             && self.loyalty_below.is_none_or(|v| p.loyalty < v)
             && self.loyalty_above.is_none_or(|v| p.loyalty > v)
@@ -152,6 +158,28 @@ pub enum Effect {
     Abdicate,
     /// Applies `then` or `otherwise` by a roll. Applied by `Game`, which owns the rng.
     Chance(Chance),
+    /// Starts a war on the neighbour and queues `Data.war.start_event` at it for now.
+    /// A no-op while a war goes on.
+    StartWar(NeighbourTarget),
+    /// A battle of the current war, see `war::clash`. Applied by `Game`, which owns the rng.
+    Clash,
+    /// The province changes hands as a whole; crown power follows by the formula.
+    TransferProvince(ProvinceTarget, NewHolder),
+    /// The treasury gets this (pays it when negative); the neighbour of the event or
+    /// action loses `Data.war.tribute_strength` strength per unit.
+    Tribute(Fx),
+    /// The heir at this index (0 is the first heir) goes to the neighbour as a hostage.
+    TakeHostage(u32, NeighbourTarget),
+    /// Ends the current war; the enemy's strength changes by `Data.war.end_strength`.
+    EndWar(WarOutcome),
+    /// Moves the current war to this stage; the chain's steps wait for their stage.
+    SetWarStage(WarStage),
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub enum NewHolder {
+    Crown,
+    Foreign(NeighbourTarget),
 }
 
 /// Success chance in percent: `percent + sum(axis * k) + bonus of every predicate that holds`,
@@ -187,12 +215,18 @@ pub enum ProvinceTarget {
     ById(ProvinceId),
     /// The province of the event or action; no-op if it has none.
     EventTarget,
+    /// `World::weakest_border` with the neighbour of the event or action.
+    OwnBorder,
+    /// That neighbour's province next to the kingdom closest to the capital, smallest id
+    /// on a tie: what a siege takes.
+    EnemyBorder,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum NeighbourTarget {
     ById(NeighbourId),
-    /// The neighbour of the event or action; no-op if it has none.
+    /// The neighbour of the event or action (its target, or the neighbour behind its
+    /// province target); no-op if it has none.
     EventTarget,
 }
 
@@ -223,9 +257,31 @@ pub enum HeirOp {
 /// What an effect may touch besides the world.
 pub struct Ctx<'a> {
     pub data: &'a Data,
-    /// Deferred events: `(due tick, event id)`.
-    pub queue: &'a mut Vec<(Tick, String)>,
+    /// Deferred events with their due tick.
+    pub queue: &'a mut Vec<(Tick, PendingEvent)>,
     pub target: Option<&'a Target>,
+    /// The neighbour behind a province target, see `PendingEvent.neighbour`.
+    pub neighbour: Option<&'a NeighbourId>,
+}
+
+impl<'a> Ctx<'a> {
+    /// What `NeighbourTarget::EventTarget` means here.
+    pub fn neighbour(&self) -> Option<&'a NeighbourId> {
+        match self.target {
+            Some(Target::Neighbour(n)) => Some(n),
+            _ => self.neighbour,
+        }
+    }
+
+    fn resolve<'b>(&self, t: &'b NeighbourTarget) -> Option<&'b NeighbourId>
+    where
+        'a: 'b,
+    {
+        match t {
+            NeighbourTarget::ById(id) => Some(id),
+            NeighbourTarget::EventTarget => self.neighbour(),
+        }
+    }
 }
 
 impl Effect {
@@ -235,7 +291,7 @@ impl Effect {
         match self {
             Effect::Axis(a, d) => add_axis(w, ctx.data, a, *d),
             Effect::Province(t, field, d) => {
-                let id = t.resolve(w, ctx.target);
+                let id = t.resolve(w, ctx);
                 let Some(p) = id.and_then(|id| w.provinces.get_mut(&id)) else {
                     return;
                 };
@@ -255,21 +311,21 @@ impl Effect {
             }
             Effect::SpawnEvent(id, years) => {
                 let due = Tick(w.tick.0 + years.ticks(w.time_unit).0);
-                ctx.queue.push((due, id.clone()));
+                let p = PendingEvent {
+                    event_id: id.clone(),
+                    target: ctx.target.cloned(),
+                    neighbour: ctx.neighbour.cloned(),
+                };
+                ctx.queue.push((due, p));
             }
             Effect::RulerHealth(d) => w.ruler.health = pct(w.ruler.health + *d),
             Effect::Relation(t, d) => {
-                let id = match (t, ctx.target) {
-                    (NeighbourTarget::ById(id), _) => Some(id),
-                    (NeighbourTarget::EventTarget, Some(Target::Neighbour(id))) => Some(id),
-                    _ => None,
-                };
-                if let Some(n) = id.and_then(|id| w.neighbours.get_mut(id)) {
+                if let Some(n) = ctx.resolve(t).and_then(|id| w.neighbours.get_mut(id)) {
                     n.relation = (n.relation + *d).clamp(Fx(0) - PERCENT, PERCENT);
                 }
             }
             Effect::CrownPower(t, d) => {
-                if let Some(id) = t.resolve(w, ctx.target) {
+                if let Some(id) = t.resolve(w, ctx) {
                     let m = w.crown_modifiers.entry(id).or_default();
                     *m = *m + *d;
                 }
@@ -278,7 +334,7 @@ impl Effect {
                 let heir = |i: &u32| *i as usize;
                 // Out of range, so a no-op, when there is no target heir.
                 let t = match ctx.target {
-                    Some(Target::Heir(i)) => *i,
+                    Some(Target::Heir(id)) => w.heir_index(*id).map_or(u32::MAX, |i| i as u32),
                     _ => u32::MAX,
                 };
                 let op = match op.clone() {
@@ -289,7 +345,7 @@ impl Effect {
                     op => op,
                 };
                 match &op {
-                    HeirOp::Add => w.heirs.push(ctx.data.new_heir.clone()),
+                    HeirOp::Add => w.add_heir(ctx.data.new_heir.clone()),
                     HeirOp::Remove(i) if heir(i) < w.heirs.len() => {
                         w.heirs.remove(heir(i));
                     }
@@ -317,17 +373,78 @@ impl Effect {
                     }
                 }
             }
-            Effect::RulerDies(_) | Effect::Abdicate | Effect::Chance(_) => {
+            Effect::RulerDies(_) | Effect::Abdicate | Effect::Chance(_) | Effect::Clash => {
                 unreachable!("Game applies these")
             }
+            Effect::StartWar(t) => {
+                let Some(enemy) = ctx.resolve(t).filter(|n| w.neighbours.contains_key(*n)) else {
+                    return;
+                };
+                if w.war.is_some() {
+                    return;
+                }
+                let (ours, theirs) = crate::war::strengths(w, ctx.data, enemy);
+                w.war = Some(War {
+                    enemy: enemy.clone(),
+                    stage: WarStage::Declared,
+                    our_strength: ours,
+                    their_strength: theirs,
+                    war_score: Fx(0),
+                    started: w.tick,
+                });
+                let p = PendingEvent {
+                    event_id: ctx.data.war.start_event.clone(),
+                    target: Some(Target::Neighbour(enemy.clone())),
+                    neighbour: None,
+                };
+                ctx.queue.push((w.tick, p));
+            }
+            Effect::TransferProvince(t, to) => {
+                let holder = match to {
+                    NewHolder::Crown => Some(Holder::Crown),
+                    NewHolder::Foreign(n) => ctx.resolve(n).map(|n| Holder::Foreign(n.clone())),
+                };
+                let id = t.resolve(w, ctx);
+                if let (Some(p), Some(h)) = (id.and_then(|id| w.provinces.get_mut(&id)), holder) {
+                    p.holder = h;
+                }
+            }
+            Effect::Tribute(v) => {
+                add_axis(w, ctx.data, &ctx.data.economy.treasury, *v);
+                let n = ctx.neighbour().and_then(|n| w.neighbours.get_mut(n));
+                if let Some(n) = n {
+                    n.strength = (n.strength - *v * ctx.data.war.tribute_strength).max(Fx(0));
+                }
+            }
+            Effect::TakeHostage(i, t) => {
+                let n = ctx.resolve(t).filter(|n| w.neighbours.contains_key(*n));
+                if let (Some(h), Some(n)) = (w.heirs.get_mut(*i as usize), n) {
+                    h.status = HeirStatus::Hostage(n.clone());
+                }
+            }
+            Effect::SetWarStage(stage) => {
+                if let Some(war) = &mut w.war {
+                    war.stage = stage.clone();
+                }
+            }
+            Effect::EndWar(outcome) => {
+                let Some(war) = w.war.take() else {
+                    return;
+                };
+                let mut ends = ctx.data.war.end_strength.iter();
+                let d = ends.find(|(o, _)| o == outcome).map_or(Fx(0), |(_, d)| *d);
+                if let Some(n) = w.neighbours.get_mut(&war.enemy) {
+                    n.strength = (n.strength + d).max(Fx(0));
+                }
+            }
             Effect::Build(t, b) => {
-                let id = t.resolve(w, ctx.target);
+                let id = t.resolve(w, ctx);
                 if let Some(p) = id.and_then(|id| w.provinces.get_mut(&id)) {
                     p.buildings.insert(b.clone());
                 }
             }
             Effect::Grant(t) => {
-                let Some(id) = t.resolve(w, ctx.target) else {
+                let Some(id) = t.resolve(w, ctx) else {
                     return;
                 };
                 if w.provinces
@@ -366,7 +483,7 @@ impl Effect {
                 w.provinces.get_mut(&id).expect("checked above").holder = Holder::Vassal(vassal);
             }
             Effect::Revoke(t) => {
-                let id = t.resolve(w, ctx.target);
+                let id = t.resolve(w, ctx);
                 if let Some(p) = id.and_then(|id| w.provinces.get_mut(&id))
                     && matches!(p.holder, Holder::Vassal(_))
                 {
@@ -396,11 +513,21 @@ impl Effect {
 }
 
 impl ProvinceTarget {
-    fn resolve(&self, w: &World, target: Option<&Target>) -> Option<ProvinceId> {
-        match (self, target) {
-            (ProvinceTarget::Capital, _) => Some(w.capital.province.clone()),
-            (ProvinceTarget::ById(id), _) => Some(id.clone()),
-            (ProvinceTarget::EventTarget, Some(Target::Province(id))) => Some(id.clone()),
+    fn resolve(&self, w: &World, ctx: &Ctx) -> Option<ProvinceId> {
+        match (self, ctx.target, ctx.neighbour()) {
+            (ProvinceTarget::Capital, ..) => Some(w.capital.province.clone()),
+            (ProvinceTarget::ById(id), ..) => Some(id.clone()),
+            (ProvinceTarget::EventTarget, Some(Target::Province(id)), _) => Some(id.clone()),
+            (ProvinceTarget::OwnBorder, _, Some(n)) => w.weakest_border(n).map(|p| p.id.clone()),
+            (ProvinceTarget::EnemyBorder, _, Some(n)) => {
+                let own = |q: &ProvinceId| {
+                    (w.provinces.get(q)).is_some_and(|q| !matches!(q.holder, Holder::Foreign(_)))
+                };
+                (w.provinces.values())
+                    .filter(|p| p.holder == Holder::Foreign(n.clone()) && p.neighbours.iter().any(own))
+                    .min_by_key(|p| p.distance_to_capital)
+                    .map(|p| p.id.clone())
+            }
             _ => None,
         }
     }
@@ -512,7 +639,7 @@ impl Action {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::Preset;
+    use crate::state::{Heir, Preset};
 
     fn world() -> (Data, World) {
         let data = crate::data::load(include_str!("../../../data/rules.ron")).unwrap();
@@ -610,6 +737,7 @@ mod tests {
                     data: &data,
                     queue: &mut queue,
                     target,
+                    neighbour: None,
                 },
             );
         };
@@ -655,7 +783,9 @@ mod tests {
 
         run(&mut w, "HeirOp(Add)", None);
         assert_eq!(w.heirs.len(), 2);
-        assert_eq!(w.heirs[1], data.new_heir);
+        // The newborn gets the next id; the preset's heir has 0.
+        assert_eq!((w.heirs[0].id, w.next_heir_id), (0, 2));
+        assert_eq!(w.heirs[1], Heir { id: 1, ..data.new_heir.clone() });
         run(&mut w, "HeirOp(Remove(0))", None);
         assert_eq!(w.heirs[0].name, "Младенец");
         run(&mut w, r#"HeirOp(SetStatus(0, Hostage("nordmark")))"#, None);
@@ -674,7 +804,12 @@ mod tests {
         w.tick = Tick(3);
         run(&mut w, r#"SpawnEvent("next", 2)"#, None);
         drop(run);
-        assert_eq!(queue, [(Tick(5), "next".to_string())]);
+        let next = PendingEvent {
+            event_id: "next".into(),
+            target: None,
+            neighbour: None,
+        };
+        assert_eq!(queue, [(Tick(5), next)]);
     }
 
     #[test]
@@ -688,6 +823,7 @@ mod tests {
                 data,
                 queue: &mut queue,
                 target: Some(&target),
+                neighbour: None,
             };
             e.apply(w, &mut ctx);
         };

@@ -34,11 +34,15 @@ pub enum DecisionKind {
     Abdicate,
 }
 
-/// The event waiting for `choose`.
+/// The event waiting for `choose`, or deferred in `Game.queue`.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct PendingEvent {
     pub event_id: String,
     pub target: Option<Target>,
+    /// The neighbour behind a province target, e.g. the raider of a raided province;
+    /// fills `{neighbour}` and is what `NeighbourTarget::EventTarget` means then.
+    #[serde(default)]
+    pub neighbour: Option<NeighbourId>,
 }
 
 /// An event with `{province}`, `{neighbour}`, `{ruler}` filled in.
@@ -93,15 +97,13 @@ pub struct Game {
     pub data: Data,
     pub decisions: Vec<Decision>,
     pub pending_event: Option<PendingEvent>,
-    /// Deferred events from `SpawnEvent`: `(due tick, event id)`.
-    pub queue: Vec<(Tick, String)>,
+    /// Deferred events with their due tick, from `SpawnEvent` and `StartWar`. They keep the
+    /// targets of what spawned them.
+    pub queue: Vec<(Tick, PendingEvent)>,
     /// Cause of the reign end, set by `RulerDies` or `Abdicate`.
     pub ended: Option<String>,
     /// `wait` has returned `Step::ReignEnded`; every call errs from now on.
     pub reported: bool,
-    /// Events started by neighbours, with their targets; they go after due `queue` entries.
-    /// At most one per neighbour: a neighbour with one waiting starts no other.
-    pub neighbour_events: Vec<(NeighbourId, PendingEvent)>,
 }
 
 impl Game {
@@ -116,7 +118,6 @@ impl Game {
             queue: Vec::new(),
             ended: None,
             reported: false,
-            neighbour_events: Vec::new(),
         }
     }
 
@@ -141,8 +142,8 @@ impl Game {
                     ActionTarget::Neighbour => (w.neighbours.keys())
                         .map(|n| Some(Target::Neighbour(n.clone())))
                         .collect(),
-                    ActionTarget::Heir => (0..w.heirs.len() as u32)
-                        .map(|i| Some(Target::Heir(i)))
+                    ActionTarget::Heir => (w.heirs.iter())
+                        .map(|h| Some(Target::Heir(h.id)))
                         .collect(),
                 };
                 // The same action on the same target runs once at a time.
@@ -215,14 +216,12 @@ impl Game {
         self.complete_actions();
         self.world.recompute_loyalty(&self.data);
         self.world.recompute_crown_power(&self.data);
+        // Events neighbours start this year; they join the random pick.
+        let mut offers = Vec::new();
         if (self.world.tick.0).is_multiple_of(self.data.time_unit.ticks_per_year) {
             let ids: Vec<_> = self.world.neighbours.keys().cloned().collect();
             for id in ids {
-                let busy = self.neighbour_events.iter().any(|(n, _)| *n == id);
-                let e = neighbour_tick(&mut self.world, &self.data, &mut self.rng, id.clone());
-                if let Some(e) = e.filter(|_| !busy) {
-                    self.neighbour_events.push((id, e));
-                }
+                offers.extend(neighbour_tick(&mut self.world, &self.data, &mut self.rng, id));
             }
             // Relations price the paths through foreign land.
             self.world.recompute_crown_power(&self.data);
@@ -237,7 +236,7 @@ impl Game {
                 &self.world,
                 &mut self.rng,
                 &mut self.queue,
-                &mut self.neighbour_events,
+                offers,
             )
         });
         let Some(p) = picked else {
@@ -258,7 +257,7 @@ impl Game {
         let p = self.pending_event.clone().ok_or(GameError::NoEvent)?;
         let event = find_event(&self.data, &p.event_id).expect("pending events exist");
         let choice = event.choices.get(idx).ok_or(GameError::BadChoice)?.clone();
-        self.apply(&choice.effects, p.target.as_ref());
+        self.apply(&choice.effects, p.target.as_ref(), p.neighbour.as_ref());
         self.world.recompute_loyalty(&self.data);
         self.world.recompute_crown_power(&self.data);
         self.decisions.push(Decision {
@@ -329,7 +328,7 @@ impl Game {
                 ActionTarget::None => unreachable!("untargeted actions store no target"),
             });
             let effects = def.on_complete.clone();
-            self.apply(&effects, target.as_ref());
+            self.apply(&effects, target.as_ref(), None);
         }
     }
 
@@ -346,6 +345,7 @@ impl Game {
         self.pending_event = Some(PendingEvent {
             event_id: id.clone(),
             target: None,
+            neighbour: None,
         });
         self.decisions.push(Decision {
             tick: self.world.tick,
@@ -356,13 +356,14 @@ impl Game {
     }
 
     /// Applies effects in order. Those needing the rng or ending the reign are done here.
-    fn apply(&mut self, effects: &[Effect], target: Option<&Target>) {
+    fn apply(&mut self, effects: &[Effect], target: Option<&Target>, nb: Option<&NeighbourId>) {
         for e in effects {
             match e {
                 Effect::Chance(c) => {
                     let hit = self.rng.range(0, Fx::from_int(100).0) < c.percent(&self.world).0;
-                    self.apply(if hit { &c.then } else { &c.otherwise }, target);
+                    self.apply(if hit { &c.then } else { &c.otherwise }, target, nb);
                 }
+                Effect::Clash => crate::war::clash(&mut self.world, &self.data, &mut self.rng),
                 Effect::RulerDies(cause) => self.ended = Some(cause.clone()),
                 Effect::Abdicate => {
                     let (a, w) = (&self.data.abdication, &mut self.world);
@@ -382,6 +383,7 @@ impl Game {
                         data: &self.data,
                         queue: &mut self.queue,
                         target,
+                        neighbour: nb,
                     };
                     e.apply(&mut self.world, &mut ctx);
                 }
@@ -409,6 +411,7 @@ impl Game {
                 return event.filter(|e| e.when.eval(w)).map(|e| PendingEvent {
                     event_id: e.id.clone(),
                     target: None,
+                    neighbour: None,
                 });
             }
             roll -= risk.0;
@@ -434,16 +437,12 @@ impl Game {
         let name = match &p.target {
             Some(Target::Province(id)) => w.provinces.get(id).map(|x| ("{province}", &x.name)),
             Some(Target::Neighbour(id)) => w.neighbours.get(id).map(|x| ("{neighbour}", &x.name)),
-            Some(Target::Heir(i)) => w.heirs.get(*i as usize).map(|x| ("{heir}", &x.name)),
+            Some(Target::Heir(id)) => (w.heir_index(*id)).map(|i| ("{heir}", &w.heirs[i].name)),
             _ => None,
         };
-        let fill = |s: &str| {
-            let s = s.replace("{ruler}", &w.ruler.name);
-            match name {
-                Some((k, v)) => s.replace(k, v),
-                None => s,
-            }
-        };
+        let behind = (p.neighbour.as_ref()).and_then(|n| w.neighbours.get(n));
+        let names = [Some(("{ruler}", &w.ruler.name)), name, behind.map(|n| ("{neighbour}", &n.name))];
+        let fill = |s: &str| names.iter().flatten().fold(s.to_string(), |s, (k, v)| s.replace(k, v));
         let choices = e.choices.iter().map(|c| Choice {
             text: fill(&c.text),
             hint: c.hint.as_deref().map(fill),
@@ -502,7 +501,7 @@ fn heirs_year(d: &Data, w: &mut World, rng: &mut Rng) {
     };
     let chance = by_age(&r.birth, w.ruler.age) * factor;
     if rng.range(0, Fx::from_int(100).0) < chance.0 {
-        w.heirs.push(d.new_heir.clone());
+        w.add_heir(d.new_heir.clone());
     }
 }
 
@@ -532,62 +531,62 @@ fn candidates(target: &EventTarget, w: &World) -> Option<Vec<Target>> {
                 .collect(),
         ),
         EventTarget::Heir(lo, hi) => Some(
-            (0..w.heirs.len() as u32)
-                .filter(|&i| (*lo..=*hi).contains(&w.heirs[i as usize].age))
-                .map(Target::Heir)
+            (w.heirs.iter())
+                .filter(|h| (*lo..=*hi).contains(&h.age))
+                .map(|h| Target::Heir(h.id))
                 .collect(),
         ),
     }
 }
 
-/// At most one event per tick. Due deferred events go first, earliest due first; then
-/// neighbour events, in order, keeping their target. Either kind is dropped when its `when` is
-/// false, it already fired `once`, or it has no target. Otherwise a weighted pick over
-/// ready events off cooldown, with `quiet_weight` for no event.
+/// At most one event per tick. Due deferred events go first, earliest due first, with the
+/// target they were spawned with, or a fresh one if they had none. Then a weighted pick over
+/// ready pool events off cooldown, the neighbours' `offers` (`neighbour_ai.weight` each, kept
+/// targets) and `quiet_weight` for no event. Any event is dropped when its `when` is false,
+/// it already fired `once`, or it has no target; unpicked offers are dropped too.
 fn pick_event(
     data: &Data,
     w: &World,
     rng: &mut Rng,
-    queue: &mut Vec<(Tick, String)>,
-    neighbour_events: &mut Vec<(NeighbourId, PendingEvent)>,
+    queue: &mut Vec<(Tick, PendingEvent)>,
+    offers: Vec<PendingEvent>,
 ) -> Option<PendingEvent> {
-    let ready = |e: &Event| {
-        let fired = w.last_fired.get(&e.id);
-        let targets = candidates(&e.target, w);
-        e.when.eval(w) && !(e.once && fired.is_some()) && targets.is_none_or(|t| !t.is_empty())
-    };
+    let ready = |e: &Event| e.when.eval(w) && !(e.once && w.last_fired.contains_key(&e.id));
+    let targets = |e: &Event| candidates(&e.target, w).is_none_or(|t| !t.is_empty());
     let fire = |e: &Event, rng: &mut Rng| {
         let pick = |t: Vec<Target>| t[rng.range(0, t.len() as i64) as usize].clone();
         let target = candidates(&e.target, w).map(pick);
         Some(PendingEvent {
             event_id: e.id.clone(),
             target,
+            neighbour: None,
         })
     };
 
-    let due = |q: &Vec<(Tick, String)>| {
+    let due = |q: &Vec<(Tick, PendingEvent)>| {
         (0..q.len())
             .filter(|&i| q[i].0 <= w.tick)
             .min_by_key(|&i| q[i].0)
     };
     while let Some(i) = due(queue) {
-        let (_, id) = queue.remove(i);
-        if let Some(e) = find_event(data, &id).filter(|e| ready(e)) {
-            return fire(e, rng);
-        }
-    }
-
-    while !neighbour_events.is_empty() {
-        let (_, p) = neighbour_events.remove(0);
-        if find_event(data, &p.event_id).is_some_and(ready) {
-            return Some(p);
+        let (_, p) = queue.remove(i);
+        match find_event(data, &p.event_id).filter(|e| ready(e)) {
+            Some(_) if p.target.is_some() => return Some(p),
+            Some(e) if targets(e) => return fire(e, rng),
+            _ => {}
         }
     }
 
     let pool: Vec<&Event> = (data.events.iter())
-        .filter(|e| e.weight > 0 && !cooling(e, w) && ready(e))
+        .filter(|e| e.weight > 0 && !cooling(e, w) && ready(e) && targets(e))
         .collect();
-    let total: u32 = data.quiet_weight + pool.iter().map(|e| e.weight).sum::<u32>();
+    let offers: Vec<PendingEvent> = (offers.into_iter())
+        .filter(|p| find_event(data, &p.event_id).is_some_and(ready))
+        .collect();
+    let offer_weight = data.neighbour_ai.weight;
+    let total = data.quiet_weight
+        + pool.iter().map(|e| e.weight).sum::<u32>()
+        + offer_weight * offers.len() as u32;
     if total == 0 {
         return None;
     }
@@ -597,6 +596,12 @@ fn pick_event(
             return fire(e, rng);
         }
         roll -= e.weight;
+    }
+    for p in offers {
+        if roll < offer_weight {
+            return Some(p);
+        }
+        roll -= offer_weight;
     }
     None
 }
@@ -682,6 +687,7 @@ mod tests {
         g.pending_event = Some(PendingEvent {
             event_id: id.into(),
             target: None,
+            neighbour: None,
         });
         g.choose(0).unwrap();
     }
@@ -814,6 +820,7 @@ mod tests {
         g.pending_event = Some(PendingEvent {
             event_id: "e".into(),
             target: None,
+            neighbour: None,
         });
         assert_eq!(
             g.start_action("envoy", Some(nordmark)),
@@ -991,6 +998,7 @@ mod tests {
         g.pending_event = Some(PendingEvent {
             event_id: "envoy".into(),
             target: Some(Target::Neighbour(NeighbourId("nordmark".into()))),
+            neighbour: None,
         });
         let Step::Event(v) = g.wait().unwrap() else {
             panic!()

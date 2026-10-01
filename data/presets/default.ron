@@ -6,6 +6,7 @@
     axes: {
         "legitimacy": 60,
         "treasury": 150,
+        "loyalty_nobles": 40,
     },
     map: (
         provinces: [
@@ -49,12 +50,7 @@
     ),
     capital: (province: "capital", crown_bonus: 20),
     vassals: [
-        (id: "weir", name: "Вейр", provinces: ["holm"], loyalty: 55, strength: 20),
-    ],
-    factions: [
-        (id: "nobles", loyalty: 50),
-        (id: "church", loyalty: 55),
-        (id: "people", loyalty: 45),
+        (id: "weir", name: "Вейр", loyalty: 55, strength: 20),
     ],
     ruler: (
         name: "Ульрих",

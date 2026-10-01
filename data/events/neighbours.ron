@@ -1,0 +1,76 @@
+// Events started by the neighbour AI (`rules.ron` neighbour_ai), never from the random pool.
+// `neighbour_war_declared` is stage 4's.
+[
+    (
+        id: "neighbour_ultimatum",
+        title: "Ультиматум от {neighbour}",
+        text: "Послы {neighbour} требуют дани и грозят мечом, если {ruler} откажет.",
+        when: All([]),
+        weight: 0,
+        once: false,
+        cooldown_years: 0,
+        importance: 3,
+        target: Neighbour,
+        choices: [
+            (
+                text: "Заплатить дань",
+                effects: [Axis("treasury", -40), Axis("prestige", -3), Relation(EventTarget, 10)],
+                cause_tag: "ultimatum_paid",
+                hint: "Купленный мир стоит ровно столько, сколько заплачено.",
+            ),
+            (
+                text: "Выгнать послов",
+                effects: [Axis("prestige", 3), Relation(EventTarget, -15)],
+                cause_tag: "ultimatum_refused",
+            ),
+        ],
+    ),
+    (
+        id: "neighbour_trade",
+        title: "Купцы из {neighbour}",
+        text: "Купцы {neighbour} просят права торговать на ярмарках королевства.",
+        when: All([]),
+        weight: 0,
+        once: false,
+        cooldown_years: 0,
+        importance: 1,
+        sign: Good,
+        target: Neighbour,
+        choices: [
+            (
+                text: "Открыть ярмарки",
+                effects: [Axis("treasury", 25), Relation(EventTarget, 5), Axis("loyalty_people", 2)],
+                cause_tag: "trade_opened",
+            ),
+            (
+                text: "Защитить своих купцов",
+                effects: [Relation(EventTarget, -5), Axis("loyalty_nobles", 2)],
+                cause_tag: "trade_refused",
+            ),
+        ],
+    ),
+    (
+        id: "neighbour_raid",
+        title: "Набег на {province}",
+        text: "Чужие отряды перешли границу, жгут сёла {province} и уводят скот.",
+        when: All([]),
+        weight: 0,
+        once: false,
+        cooldown_years: 0,
+        importance: 3,
+        target: RandomProvince((borders_foreign: true)),
+        choices: [
+            (
+                text: "Выслать войско",
+                effects: [Axis("army", -5), Province(EventTarget, Loyalty, 5)],
+                cause_tag: "raid_repelled",
+            ),
+            (
+                text: "Пусть отсидятся за стенами",
+                effects: [Province(EventTarget, Population, -500), Province(EventTarget, Income, -1), Province(EventTarget, Loyalty, -10), CrownPower(EventTarget, -5)],
+                cause_tag: "raid_endured",
+                hint: "Брошенная провинция помнит, кто её не защитил.",
+            ),
+        ],
+    ),
+]

@@ -553,7 +553,8 @@ fn death_goes_before_other_events() {
         event_id: "other".into(),
         target: None,
     };
-    g.neighbour_events = vec![other.clone(), other];
+    let nordmark = NeighbourId("nordmark".into());
+    g.neighbour_events = vec![(nordmark.clone(), other.clone()), (nordmark, other)];
     g.queue.push((Tick(1), "other".into()));
     let Step::Event(v) = g.wait().unwrap() else {
         panic!()
@@ -597,4 +598,50 @@ fn event_targets_an_heir() {
     // Nobody of that age: the event cannot fire.
     let (_, v) = fire(e, |w| w.heirs.iter_mut().for_each(|h| h.age = 30));
     assert_eq!(v, None);
+}
+
+/// Every neighbour hostile, stronger than the border and raiding every year.
+fn raided() -> Game {
+    let mut data = bare();
+    data.add_events(EVENTS[1]).unwrap();
+    data.neighbour_ai.expand.events = vec![("neighbour_raid".into(), 100)];
+    let spawn = Effect::SpawnEvent("next".into(), Years(2));
+    data.events
+        .extend([event("first", vec![spawn]), event("next", vec![])]);
+    let mut g = game(data, 1);
+    for n in g.world.neighbours.values_mut() {
+        (n.relation, n.strength) = (Fx::from_int(-80), Fx::from_int(1000));
+    }
+    g
+}
+
+#[test]
+fn deferred_events_beat_neighbours() {
+    let mut g = raided();
+    force(&mut g, "first", 0);
+    let mut fired = vec![];
+    for _ in 0..3 {
+        let Step::Event(v) = g.wait().unwrap() else {
+            panic!()
+        };
+        fired.push((g.world.tick.0, v.event_id));
+        g.choose(0).unwrap();
+    }
+    assert_eq!(fired[1], (2, "next".to_string()));
+    assert_eq!(fired[0].1, "neighbour_raid");
+}
+
+#[test]
+fn one_waiting_event_per_neighbour() {
+    let mut g = raided();
+    for _ in 0..10 {
+        if let Step::Event(_) = g.wait().unwrap() {
+            g.choose(0).unwrap();
+        }
+    }
+    let mut ids: Vec<_> = g.neighbour_events.iter().map(|(n, _)| n.clone()).collect();
+    assert_eq!(ids.len(), 2, "three raids a year, one fired a tick");
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), 2);
 }

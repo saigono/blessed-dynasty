@@ -99,8 +99,9 @@ pub struct Game {
     pub ended: Option<String>,
     /// `wait` has returned `Step::ReignEnded`; every call errs from now on.
     pub reported: bool,
-    /// Events started by neighbours, with their targets; they go before `queue`.
-    pub neighbour_events: Vec<PendingEvent>,
+    /// Events started by neighbours, with their targets; they go after due `queue` entries.
+    /// At most one per neighbour: a neighbour with one waiting starts no other.
+    pub neighbour_events: Vec<(NeighbourId, PendingEvent)>,
 }
 
 impl Game {
@@ -217,8 +218,11 @@ impl Game {
         if (self.world.tick.0).is_multiple_of(self.data.time_unit.ticks_per_year) {
             let ids: Vec<_> = self.world.neighbours.keys().cloned().collect();
             for id in ids {
-                let e = neighbour_tick(&mut self.world, &self.data, &mut self.rng, id);
-                self.neighbour_events.extend(e);
+                let busy = self.neighbour_events.iter().any(|(n, _)| *n == id);
+                let e = neighbour_tick(&mut self.world, &self.data, &mut self.rng, id.clone());
+                if let Some(e) = e.filter(|_| !busy) {
+                    self.neighbour_events.push((id, e));
+                }
             }
             // Relations price the paths through foreign land.
             self.world.recompute_crown_power(&self.data);
@@ -536,8 +540,8 @@ fn candidates(target: &EventTarget, w: &World) -> Option<Vec<Target>> {
     }
 }
 
-/// At most one event per tick. Neighbour events go first, in order, keeping their target;
-/// then due deferred events, earliest due first. Either kind is dropped when its `when` is
+/// At most one event per tick. Due deferred events go first, earliest due first; then
+/// neighbour events, in order, keeping their target. Either kind is dropped when its `when` is
 /// false, it already fired `once`, or it has no target. Otherwise a weighted pick over
 /// ready events off cooldown, with `quiet_weight` for no event.
 fn pick_event(
@@ -545,7 +549,7 @@ fn pick_event(
     w: &World,
     rng: &mut Rng,
     queue: &mut Vec<(Tick, String)>,
-    neighbour_events: &mut Vec<PendingEvent>,
+    neighbour_events: &mut Vec<(NeighbourId, PendingEvent)>,
 ) -> Option<PendingEvent> {
     let ready = |e: &Event| {
         let fired = w.last_fired.get(&e.id);
@@ -561,13 +565,6 @@ fn pick_event(
         })
     };
 
-    while !neighbour_events.is_empty() {
-        let p = neighbour_events.remove(0);
-        if find_event(data, &p.event_id).is_some_and(ready) {
-            return Some(p);
-        }
-    }
-
     let due = |q: &Vec<(Tick, String)>| {
         (0..q.len())
             .filter(|&i| q[i].0 <= w.tick)
@@ -577,6 +574,13 @@ fn pick_event(
         let (_, id) = queue.remove(i);
         if let Some(e) = find_event(data, &id).filter(|e| ready(e)) {
             return fire(e, rng);
+        }
+    }
+
+    while !neighbour_events.is_empty() {
+        let (_, p) = neighbour_events.remove(0);
+        if find_event(data, &p.event_id).is_some_and(ready) {
+            return Some(p);
         }
     }
 

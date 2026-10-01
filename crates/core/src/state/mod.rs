@@ -132,6 +132,12 @@ pub struct World {
     pub neighbours: BTreeMap<NeighbourId, Neighbour>,
     pub active_actions: Vec<ActiveAction>,
     pub flags: BTreeSet<String>,
+    /// Tick each event last fired at; drives `once` and cooldowns.
+    #[serde(default)]
+    pub last_fired: BTreeMap<String, Tick>,
+    /// Added to the crown power formula; set by `Effect::CrownPower`, drifts to 0.
+    #[serde(default)]
+    pub crown_modifiers: BTreeMap<ProvinceId, Fx>,
 }
 
 impl World {
@@ -157,6 +163,8 @@ impl World {
             neighbours: by_id(&preset.neighbours, |n| n.id.clone()),
             active_actions: Vec::new(),
             flags: BTreeSet::new(),
+            last_fired: BTreeMap::new(),
+            crown_modifiers: BTreeMap::new(),
         };
         world.recompute_loyalty(data);
         world.recompute_crown_power(data);
@@ -203,7 +211,9 @@ impl World {
             } else {
                 Fx(0)
             };
-            p.crown_power = (base - disloyalty - distance + buildings + capital).max(Fx(0));
+            let modifier = self.crown_modifiers.get(&p.id).copied().unwrap_or_default();
+            p.crown_power =
+                (base - disloyalty - distance + buildings + capital + modifier).max(Fx(0));
         }
     }
 
@@ -286,6 +296,8 @@ mod tests {
             ends_at: Tick(1),
         });
         w.flags.insert("married".into());
+        w.last_fired.insert("plague".into(), Tick(3));
+        w.crown_modifiers.insert(pid("holm"), Fx(-500));
         w.axes.insert(AxisId("treasury".into()), Fx(-1_250));
         for (i, stance) in [Stance::Expand, Stance::Defend, Stance::Trade, Stance::Wait]
             .into_iter()
@@ -354,6 +366,11 @@ mod tests {
         assert_eq!(power(&w, "capital"), Fx::from_int(90));
         // holm: vassal 30 - (50 - 40) * 0.5 - path 1 * 5 + road 5.
         assert_eq!(power(&w, "holm"), Fx::from_int(25));
+        // Modifiers from effects add on top.
+        w.crown_modifiers.insert(pid("holm"), Fx::from_int(-3));
+        w.recompute_crown_power(&data);
+        assert_eq!(power(&w, "holm"), Fx::from_int(22));
+        w.crown_modifiers.clear();
         // Foreign provinces are not counted.
         assert_eq!(power(&w, "nordheim"), Fx(0));
         // Cut off from the capital: no crown power at all.

@@ -41,4 +41,24 @@
         foreign_step_relation: 0.02,
         buildings: {"fort": 10, "road": 5},
     ),
+
+    // How many actions may run at once: the largest `slots` whose threshold the axis reached.
+    action_slots: (axis: "bureaucracy", steps: [(0, 1), (40, 2), (70, 3)]),
+
+    // Per year: treasury += income of crown provinces + sum(axis * coefficient).
+    // Negative coefficients are upkeep.
+    economy: (
+        treasury: "treasury",
+        flows: [("income", 1), ("army", -0.1)],
+    ),
+
+    // Per year: faction axes move by `step` toward their default, province loyalty toward
+    // `province_loyalty`, crown power modifiers from effects toward 0.
+    drift: (step: 1, province_loyalty: 50),
+
+    // Weight of a quiet tick in the random event pick, next to the weights of the events.
+    quiet_weight: 20,
+
+    // A newborn from HeirOp(Add).
+    new_heir: (name: "Младенец", age: 0, ability: 50, claim: 50, status: Home),
 )

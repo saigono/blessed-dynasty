@@ -166,6 +166,7 @@ impl World {
             last_fired: BTreeMap::new(),
             crown_modifiers: BTreeMap::new(),
         };
+        world.flags.extend(data.start_flags.iter().cloned());
         world.recompute_loyalty(data);
         world.recompute_crown_power(data);
         world

@@ -1,5 +1,5 @@
-// Minimal start for stages 1-2: three provinces, one vassal, one neighbour.
-// Stage 3 replaces the map with data/maps/default.ron.
+// The default start. The map lives in data/maps/default.ron: load with `Preset::load_with_map`.
+// Stage 9 tunes the numbers.
 (
     start_year: 1187,
     // Overrides of rules.ron defaults; unlisted axes start at their default.
@@ -8,49 +8,10 @@
         "treasury": 150,
         "loyalty_nobles": 40,
     },
-    map: (
-        provinces: [
-            (
-                id: "capital",
-                name: "Столица",
-                income: 12,
-                population: 20000,
-                loyalty: 70,
-                holder: Crown,
-                buildings: ["fort"],
-                neighbours: ["holm"],
-            ),
-            (
-                id: "holm",
-                name: "Хольм",
-                income: 6,
-                population: 9000,
-                loyalty: 40,
-                holder: Vassal("weir"),
-                buildings: ["road"],
-                neighbours: ["capital", "nordheim"],
-            ),
-            (
-                id: "nordheim",
-                name: "Нордхейм",
-                income: 8,
-                population: 11000,
-                loyalty: 50,
-                holder: Foreign("nordmark"),
-                buildings: [],
-                neighbours: ["holm"],
-            ),
-        ],
-        // Points in 0..400 x 0..300; filled in by stage 3.
-        polygons: {
-            "capital": [],
-            "holm": [],
-            "nordheim": [],
-        },
-    ),
     capital: (province: "capital", crown_bonus: 20),
     vassals: [
         (id: "weir", name: "Вейр", loyalty: 55, strength: 20),
+        (id: "arden", name: "Арден", loyalty: 50, strength: 20),
     ],
     ruler: (
         name: "Ульрих",
@@ -65,5 +26,9 @@
     ],
     neighbours: [
         (id: "nordmark", name: "Нордмарк", relation: 0, strength: 40, stance: Wait),
+        (id: "purpur", name: "Пурпуляндия", relation: 0, strength: 50, stance: Wait),
+        (id: "vestrum", name: "Веструм", relation: 30, strength: 30, stance: Wait),
     ],
+    // The succession law and the ruler's marriage.
+    flags: ["law_primogeniture", "married"],
 )

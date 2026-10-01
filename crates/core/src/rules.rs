@@ -524,7 +524,9 @@ impl ProvinceTarget {
                     (w.provinces.get(q)).is_some_and(|q| !matches!(q.holder, Holder::Foreign(_)))
                 };
                 (w.provinces.values())
-                    .filter(|p| p.holder == Holder::Foreign(n.clone()) && p.neighbours.iter().any(own))
+                    .filter(|p| {
+                        p.holder == Holder::Foreign(n.clone()) && p.neighbours.iter().any(own)
+                    })
                     .min_by_key(|p| p.distance_to_capital)
                     .map(|p| p.id.clone())
             }
@@ -785,7 +787,13 @@ mod tests {
         assert_eq!(w.heirs.len(), 2);
         // The newborn gets the next id; the preset's heir has 0.
         assert_eq!((w.heirs[0].id, w.next_heir_id), (0, 2));
-        assert_eq!(w.heirs[1], Heir { id: 1, ..data.new_heir.clone() });
+        assert_eq!(
+            w.heirs[1],
+            Heir {
+                id: 1,
+                ..data.new_heir.clone()
+            }
+        );
         run(&mut w, "HeirOp(Remove(0))", None);
         assert_eq!(w.heirs[0].name, "Младенец");
         run(&mut w, r#"HeirOp(SetStatus(0, Hostage("nordmark")))"#, None);
@@ -879,6 +887,205 @@ mod tests {
             holder(&w, "nordheim"),
             Holder::Foreign(NeighbourId("nordmark".into()))
         );
+    }
+
+    fn apply(
+        w: &mut World,
+        data: &Data,
+        queue: &mut Vec<(Tick, PendingEvent)>,
+        text: &str,
+        target: Option<&Target>,
+        neighbour: Option<&NeighbourId>,
+    ) {
+        let e: Effect = crate::data::parse(text).unwrap();
+        e.apply(
+            w,
+            &mut Ctx {
+                data,
+                queue,
+                target,
+                neighbour,
+            },
+        );
+    }
+
+    #[test]
+    fn war_predicates() {
+        let (_, mut w) = world();
+        let p = |w: &World, text: &str| crate::data::parse::<Predicate>(text).unwrap().eval(w);
+        let all = [
+            "AtWar",
+            "WarScoreAbove(-100)",
+            "WarScoreBelow(100)",
+            "WarStage(Declared)",
+        ];
+        assert!(all.iter().all(|t| !p(&w, t)), "no war: all false");
+        w.war = Some(War {
+            enemy: NeighbourId("nordmark".into()),
+            stage: WarStage::Fighting,
+            our_strength: Fx(0),
+            their_strength: Fx(0),
+            war_score: Fx::from_int(10),
+            started: Tick(0),
+        });
+        assert!(p(&w, "AtWar") && p(&w, "WarStage(Fighting)") && !p(&w, "WarStage(Peace)"));
+        assert!(p(&w, "WarScoreAbove(9.999)") && !p(&w, "WarScoreAbove(10)"));
+        assert!(p(&w, "WarScoreBelow(10.001)") && !p(&w, "WarScoreBelow(10)"));
+    }
+
+    #[test]
+    fn war_effects() {
+        let (data, mut w) = world();
+        let mut queue = Vec::new();
+        let nordmark = NeighbourId("nordmark".into());
+        let at_nordmark = Target::Neighbour(nordmark.clone());
+        let holm = Target::Province(pid("holm"));
+        let holder = |w: &World, p: &str| w.provinces[&pid(p)].holder.clone();
+        let strength = |w: &World| w.neighbours[&nordmark].strength;
+        // No neighbour to act on: no-ops.
+        let before = w.clone();
+        for text in [
+            "StartWar(EventTarget)",
+            "TransferProvince(EnemyBorder, Crown)",
+            "TransferProvince(OwnBorder, Crown)",
+            "TakeHostage(0, EventTarget)",
+            "EndWar(Victory)",
+            "SetWarStage(Peace)",
+        ] {
+            apply(&mut w, &data, &mut queue, text, Some(&holm), None);
+        }
+        assert_eq!(w, before);
+        assert!(queue.is_empty());
+
+        apply(
+            &mut w,
+            &data,
+            &mut queue,
+            "StartWar(EventTarget)",
+            Some(&at_nordmark),
+            None,
+        );
+        let war = w.war.clone().unwrap();
+        assert_eq!(
+            (&war.enemy, &war.stage, war.war_score),
+            (&nordmark, &WarStage::Declared, Fx(0))
+        );
+        assert_eq!(
+            (war.our_strength, war.their_strength),
+            (Fx::from_int(60), Fx::from_int(40))
+        );
+        // One war at a time: the second is refused and queues nothing.
+        apply(
+            &mut w,
+            &data,
+            &mut queue,
+            r#"StartWar(ById("purpur"))"#,
+            None,
+            None,
+        );
+        assert_eq!(w.war, Some(war));
+        let declared = PendingEvent {
+            event_id: "war_declared".into(),
+            target: Some(at_nordmark.clone()),
+            neighbour: None,
+        };
+        assert_eq!(queue, [(Tick(0), declared)]);
+
+        apply(&mut w, &data, &mut queue, "SetWarStage(Peace)", None, None);
+        assert_eq!(w.war.as_ref().unwrap().stage, WarStage::Peace);
+
+        // Nordmark's provinces next to the kingdom are all two crossings away: frostad by id.
+        apply(
+            &mut w,
+            &data,
+            &mut queue,
+            "TransferProvince(EnemyBorder, Crown)",
+            Some(&at_nordmark),
+            None,
+        );
+        assert_eq!(holder(&w, "frostad"), Holder::Crown);
+        w.recompute_crown_power(&data);
+        assert_eq!(w.provinces[&pid("frostad")].crown_power, Fx::from_int(50)); // 60 - 2 * 5
+        // The neighbour behind a province target counts: arden is the weakest on its border.
+        let text = "TransferProvince(OwnBorder, Foreign(EventTarget))";
+        apply(
+            &mut w,
+            &data,
+            &mut queue,
+            text,
+            Some(&holm),
+            Some(&nordmark),
+        );
+        assert_eq!(holder(&w, "arden"), Holder::Foreign(nordmark.clone()));
+        let text = r#"TransferProvince(ById("berg"), Foreign(ById("purpur")))"#;
+        apply(&mut w, &data, &mut queue, text, None, None);
+        assert_eq!(
+            holder(&w, "berg"),
+            Holder::Foreign(NeighbourId("purpur".into()))
+        );
+
+        // Paying 50 makes Nordmark 5 stronger.
+        apply(
+            &mut w,
+            &data,
+            &mut queue,
+            "Tribute(-50)",
+            Some(&at_nordmark),
+            None,
+        );
+        assert_eq!(w.axes[&ax("treasury")], Fx::from_int(100));
+        assert_eq!(strength(&w), Fx::from_int(45));
+
+        apply(
+            &mut w,
+            &data,
+            &mut queue,
+            "TakeHostage(0, EventTarget)",
+            Some(&at_nordmark),
+            None,
+        );
+        assert_eq!(w.heirs[0].status, HeirStatus::Hostage(nordmark.clone()));
+        let before = w.clone();
+        apply(
+            &mut w,
+            &data,
+            &mut queue,
+            "TakeHostage(1, EventTarget)",
+            Some(&at_nordmark),
+            None,
+        );
+        assert_eq!(w, before, "no second heir");
+
+        // Victory: Nordmark loses 10.
+        apply(&mut w, &data, &mut queue, "EndWar(Victory)", None, None);
+        assert_eq!((w.war.clone(), strength(&w)), (None, Fx::from_int(35)));
+        // Strength never goes below 0.
+        apply(
+            &mut w,
+            &data,
+            &mut queue,
+            "Tribute(1000)",
+            Some(&at_nordmark),
+            None,
+        );
+        assert_eq!(strength(&w), Fx(0));
+
+        // A deferred event keeps both targets of what spawned it.
+        queue.clear();
+        apply(
+            &mut w,
+            &data,
+            &mut queue,
+            r#"SpawnEvent("next", 1)"#,
+            Some(&holm),
+            Some(&nordmark),
+        );
+        let next = PendingEvent {
+            event_id: "next".into(),
+            target: Some(holm),
+            neighbour: Some(nordmark),
+        };
+        assert_eq!(queue, [(Tick(1), next)]);
     }
 
     #[test]

@@ -142,9 +142,9 @@ impl Game {
                     ActionTarget::Neighbour => (w.neighbours.keys())
                         .map(|n| Some(Target::Neighbour(n.clone())))
                         .collect(),
-                    ActionTarget::Heir => (w.heirs.iter())
-                        .map(|h| Some(Target::Heir(h.id)))
-                        .collect(),
+                    ActionTarget::Heir => {
+                        (w.heirs.iter()).map(|h| Some(Target::Heir(h.id))).collect()
+                    }
                 };
                 // The same action on the same target runs once at a time.
                 let busy = |t: &Option<Target>| {
@@ -221,7 +221,12 @@ impl Game {
         if (self.world.tick.0).is_multiple_of(self.data.time_unit.ticks_per_year) {
             let ids: Vec<_> = self.world.neighbours.keys().cloned().collect();
             for id in ids {
-                offers.extend(neighbour_tick(&mut self.world, &self.data, &mut self.rng, id));
+                offers.extend(neighbour_tick(
+                    &mut self.world,
+                    &self.data,
+                    &mut self.rng,
+                    id,
+                ));
             }
             // Relations price the paths through foreign land.
             self.world.recompute_crown_power(&self.data);
@@ -441,8 +446,17 @@ impl Game {
             _ => None,
         };
         let behind = (p.neighbour.as_ref()).and_then(|n| w.neighbours.get(n));
-        let names = [Some(("{ruler}", &w.ruler.name)), name, behind.map(|n| ("{neighbour}", &n.name))];
-        let fill = |s: &str| names.iter().flatten().fold(s.to_string(), |s, (k, v)| s.replace(k, v));
+        let names = [
+            Some(("{ruler}", &w.ruler.name)),
+            name,
+            behind.map(|n| ("{neighbour}", &n.name)),
+        ];
+        let fill = |s: &str| {
+            names
+                .iter()
+                .flatten()
+                .fold(s.to_string(), |s, (k, v)| s.replace(k, v))
+        };
         let choices = e.choices.iter().map(|c| Choice {
             text: fill(&c.text),
             hint: c.hint.as_deref().map(fill),
@@ -1149,19 +1163,86 @@ mod tests {
         let mut seen = vec![];
         for _ in 0..20 {
             if let Step::Event(v) = g.wait().unwrap() {
-                seen.push((v.event_id, v.target));
+                seen.push((v.event_id, v.target, v.text));
                 g.choose(0).unwrap();
             }
         }
-        assert!(!seen.is_empty());
-        for (id, target) in seen {
+        assert!(seen.iter().any(|(id, ..)| id == "neighbour_raid"));
+        for (id, target, text) in seen {
             let expected = match id.as_str() {
-                "neighbour_raid" => Target::Province(pid("arden")),
-                "neighbour_ultimatum" => Target::Neighbour(nordmark.clone()),
+                // The raid hits a province and names its raider.
+                "neighbour_raid" => {
+                    assert!(text.contains("Отряды Нордмарк"), "{text}");
+                    Target::Province(pid("arden"))
+                }
+                "neighbour_ultimatum" | "neighbour_war_declared" => {
+                    Target::Neighbour(nordmark.clone())
+                }
                 other => panic!("{other}"),
             };
             assert_eq!(target, Some(expected));
         }
+    }
+
+    #[test]
+    fn repelled_raid_angers_the_raider() {
+        let mut g = map_game();
+        let nordmark = NeighbourId("nordmark".into());
+        g.pending_event = Some(PendingEvent {
+            event_id: "neighbour_raid".into(),
+            target: Some(Target::Province(pid("arden"))),
+            neighbour: Some(nordmark.clone()),
+        });
+        g.choose(0).unwrap();
+        assert_eq!(g.world.neighbours[&nordmark].relation, Fx::from_int(-5));
+    }
+
+    #[test]
+    fn heir_action_follows_the_heir_not_the_index() {
+        let mut data = bare();
+        let tutor = Effect::HeirOp(crate::rules::HeirOp::TargetAbility(Fx::from_int(10)));
+        let mut a = action("tutor", ActionTarget::Heir, vec![tutor]);
+        a.duration_years = Years(2);
+        data.actions = vec![a];
+        data.heirs.birth = vec![];
+        let mut g = game(data.clone(), 1);
+        g.world.add_heir(data.new_heir.clone()); // id 1, ability 50
+        assert_eq!(
+            g.available_actions(),
+            [("tutor".into(), vec![Target::Heir(0), Target::Heir(1)])]
+        );
+        g.start_action("tutor", Some(Target::Heir(1))).unwrap();
+        g.wait().unwrap();
+        // The first heir dies; the newborn moves to index 0 but keeps its id.
+        g.world.heirs.remove(0);
+        g.wait().unwrap();
+        assert_eq!(
+            (g.world.heirs[0].id, g.world.heirs[0].ability),
+            (1, Fx::from_int(64))
+        );
+    }
+
+    #[test]
+    fn deferred_event_keeps_the_spawner_target() {
+        let mut data = bare();
+        let mut first = event("first", vec![Effect::SpawnEvent("next".into(), Years(1))]);
+        first.target = EventTarget::Neighbour;
+        let mut next = event("next", vec![]);
+        next.text = "Послы {neighbour}".into();
+        data.events = vec![first, next];
+        let mut g = game(data, 1);
+        let vestrum = Target::Neighbour(NeighbourId("vestrum".into()));
+        g.pending_event = Some(PendingEvent {
+            event_id: "first".into(),
+            target: Some(vestrum.clone()),
+            neighbour: None,
+        });
+        g.choose(0).unwrap();
+        let Step::Event(v) = g.wait().unwrap() else {
+            panic!()
+        };
+        assert_eq!((v.event_id.as_str(), v.target), ("next", Some(vestrum)));
+        assert_eq!(v.text, "Послы Веструм");
     }
 
     #[test]

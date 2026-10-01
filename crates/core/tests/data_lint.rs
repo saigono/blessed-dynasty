@@ -107,6 +107,21 @@ fn every_spawned_event_exists() {
     assert!(missing.is_empty(), "spawned but undefined: {missing:?}");
 }
 
+/// Events `rules.ron` names: the war start, neighbour AI events, death and abdication.
+#[test]
+fn every_event_named_by_the_rules_exists() {
+    let data = load_all();
+    let ai = &data.neighbour_ai;
+    let stances = [&ai.expand, &ai.defend, &ai.trade, &ai.wait];
+    let named = (stances.iter().flat_map(|s| &s.events)).map(|(id, _)| id);
+    let death = data.death.risks.iter().map(|r| &r.event);
+    let fixed = [&data.war.start_event, &data.death.event, &data.abdication.event];
+    let missing: BTreeSet<_> = (named.chain(death).chain(fixed))
+        .filter(|id| !data.events.iter().any(|e| e.id == **id))
+        .collect();
+    assert!(missing.is_empty(), "named but undefined: {missing:?}");
+}
+
 /// The brief of stage 9: 30 events in the pool, 2-3 choices each, every choice hinted
 /// without numbers. Chain steps (weight 0) follow the same shape.
 #[test]

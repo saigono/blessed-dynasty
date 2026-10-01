@@ -354,10 +354,14 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
     }
     let flows = data.economy.flows.iter().map(|(a, _)| a);
     let war = data.war.bonus.iter().map(|(a, _)| a);
-    for a in [&data.action_slots.axis, &data.economy.treasury, &data.war.army]
-        .into_iter()
-        .chain(flows)
-        .chain(war)
+    for a in [
+        &data.action_slots.axis,
+        &data.economy.treasury,
+        &data.war.army,
+    ]
+    .into_iter()
+    .chain(flows)
+    .chain(war)
     {
         if !is_axis(a) {
             return Err(DataError::Invalid(format!("unknown axis {}", a.0)));

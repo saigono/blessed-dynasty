@@ -138,6 +138,9 @@ mod tests {
                 _ => Target::Neighbour(nordmark()),
             };
             assert_eq!(e.target, Some(target), "{}", e.event_id);
+            // A province event also names its raider.
+            let raider = (e.event_id == "neighbour_raid").then(nordmark);
+            assert_eq!(e.neighbour, raider, "{}", e.event_id);
         }
         let (_, friendly) = run(80, 100, 20);
         assert!(!ids(&friendly).contains(&"neighbour_raid".to_string()));

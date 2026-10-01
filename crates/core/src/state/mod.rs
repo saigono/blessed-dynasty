@@ -453,6 +453,41 @@ mod tests {
     }
 
     #[test]
+    fn foreign_neighbours_of_a_province() {
+        let (_, w) = world();
+        let of = |p: &str| {
+            let ns = w.foreign_neighbours(&pid(p));
+            ns.into_iter().map(|n| n.0).collect::<Vec<_>>()
+        };
+        assert_eq!(of("sol"), ["purpur", "vestrum"]);
+        assert_eq!(of("arden"), ["nordmark"]);
+        assert!(of("capital").is_empty());
+        // A foreign province: other states only, not its own holder.
+        assert!(of("nordheim").is_empty());
+        assert_eq!(of("skala"), ["purpur"]);
+        assert!(of("nowhere").is_empty());
+        let weakest = |n: &str| {
+            w.weakest_border(&NeighbourId(n.into()))
+                .map(|p| p.id.0.clone())
+        };
+        assert_eq!(weakest("nordmark").as_deref(), Some("arden")); // 22.5 vs holm 25
+        assert_eq!(weakest("nobody"), None);
+    }
+
+    #[test]
+    fn heirs_get_stable_ids() {
+        let (data, mut w) = world();
+        assert_eq!((w.heirs[0].id, w.next_heir_id), (0, 1));
+        w.add_heir(data.new_heir.clone());
+        w.add_heir(data.new_heir.clone());
+        w.heirs.remove(1);
+        w.add_heir(data.new_heir.clone());
+        let ids: Vec<_> = w.heirs.iter().map(|h| h.id).collect();
+        assert_eq!(ids, [0, 2, 3], "a removed id is not given again");
+        assert_eq!((w.heir_index(3), w.heir_index(1)), (Some(2), None));
+    }
+
+    #[test]
     fn loyalty_follows_faction_axes() {
         let (data, mut w) = world();
         let mut with_nobles = |v: Fx| {

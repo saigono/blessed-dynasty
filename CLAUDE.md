@@ -38,7 +38,7 @@ docs/            калибровка, плейтесты
 ```
 cargo test --workspace
 cargo build -p core --target wasm32-unknown-unknown
-cargo run -p cli -- run --seed 42 --script scripts/neutral.ron
+cargo run -p cli -- run --seed 42 --strategy neutral              # или --script data/scripts/test.ron
 trunk serve crates/ui          # веб
 cargo run -p ui                # нативно
 ```

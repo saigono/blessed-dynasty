@@ -1,64 +1,65 @@
-// Heirs: upbringing, marriage, disputes, death. Heirs are addressed by index: heirs[0] is
-// the first heir (the eldest, newborns are appended), heirs[1] the second.
+// Heirs: upbringing, marriage, disputes, death. Upbringing, marriage and death target a
+// random heir of the right age (`{heir}`); disputes address heirs by index: heirs[0] is the
+// first heir (the eldest, newborns are appended), heirs[1] the second.
 [
     (
         id: "heir_tutor",
         title: "Воспитатель наследника",
-        text: "Первенцу пора учиться. При дворе спорят, кому доверить его воспитание.",
-        when: HeirAge(0, 6, 12),
+        text: "{heir} подрастает. При дворе спорят, кому доверить воспитание.",
+        when: All([]),
         weight: 6,
-        once: true,
-        cooldown_years: 0,
+        once: false,
+        cooldown_years: 4,
         importance: 3,
         sign: Good,
-        target: None,
+        target: Heir(6, 12),
         choices: [
             (
                 text: "Отдать в монастырскую школу",
-                effects: [HeirOp(SetStatus(0, Studying("Монастырь"))), Axis("loyalty_church", 5)],
+                effects: [HeirOp(TargetStatus(Studying("Монастырь"))), Axis("loyalty_church", 5)],
                 cause_tag: "tutor_church",
                 hint: "Монахи вырастят книжника, а не воина.",
             ),
             (
                 text: "Поручить старому рыцарю",
-                effects: [HeirOp(Ability(0, 5)), Axis("loyalty_nobles", 5)],
+                effects: [HeirOp(TargetAbility(5)), Axis("loyalty_nobles", 5)],
                 cause_tag: "tutor_knight",
                 hint: "Знать увидит в наследнике своего.",
             ),
             (
                 text: "Пригласить учёного из-за моря",
-                effects: [HeirOp(Ability(0, 10)), Axis("treasury", -40), Axis("loyalty_church", -3)],
+                effects: [HeirOp(TargetAbility(10)), Axis("treasury", -40), Axis("loyalty_church", -3)],
                 cause_tag: "tutor_scholar",
             ),
         ],
     ),
     (
         id: "heir_marriage",
-        title: "Невеста для наследника",
-        text: "Наследник вошёл в возраст. Послы {neighbour} намекают на союз через брак.",
-        when: All([HeirAge(0, 16, 30), NotFlag("heir_married")]),
+        title: "Брак наследника",
+        text: "{heir}: пора подумать о браке. Соседние дворы присылают сватов.",
+        when: NotFlag("heir_married"),
         weight: 5,
         once: false,
         cooldown_years: 3,
         importance: 3,
         sign: Good,
-        target: Neighbour,
+        target: Heir(16, 30),
         choices: [
             (
-                text: "Женить на дочери {neighbour}",
-                effects: [SetFlag("heir_married"), Relation(EventTarget, 20), Axis("loyalty_nobles", -3)],
+                text: "Искать пару при чужеземном дворе",
+                effects: [SetFlag("heir_married"), Axis("prestige", 10), Axis("loyalty_nobles", -3)],
                 cause_tag: "heir_married_foreign",
-                hint: "Чужая невеста приводит с собой чужих советников.",
+                hint: "Чужеземный брак приводит ко двору чужих советников.",
             ),
             (
-                text: "Выбрать невесту из своих баронов",
-                effects: [SetFlag("heir_married"), Axis("loyalty_nobles", 5), HeirOp(Claim(0, 5))],
+                text: "Искать пару среди своих баронов",
+                effects: [SetFlag("heir_married"), Axis("loyalty_nobles", 5), HeirOp(TargetClaim(5))],
                 cause_tag: "heir_married_noble",
                 hint: "Род, породнившийся с короной, захочет большего.",
             ),
             (
                 text: "Повременить со свадьбой",
-                effects: [Relation(EventTarget, -5)],
+                effects: [Axis("prestige", -2)],
                 cause_tag: "heir_marriage_delayed",
             ),
         ],
@@ -109,19 +110,19 @@
     (
         id: "heir_death",
         title: "Беда с наследником",
-        text: "Наследник упал с коня на охоте и слёг в горячке. Лекари не ручаются за его жизнь.",
-        when: HeirCount(1, 99),
+        text: "{heir}: падение с коня на охоте, потом горячка. Лекари не ручаются за жизнь.",
+        when: All([]),
         weight: 3,
         once: false,
         cooldown_years: 5,
         importance: 4,
-        target: None,
+        target: Heir(0, 99),
         choices: [
             (
                 text: "Позвать лучших лекарей",
                 effects: [
                     Axis("treasury", -40),
-                    Chance((percent: 60, then: [HeirOp(Ability(0, -3))], otherwise: [HeirOp(Remove(0))])),
+                    Chance((percent: 60, then: [HeirOp(TargetAbility(-3))], otherwise: [HeirOp(TargetRemove)])),
                 ],
                 cause_tag: "heir_doctors",
             ),
@@ -129,14 +130,14 @@
                 text: "Молиться",
                 effects: [
                     Axis("loyalty_church", 3),
-                    Chance((percent: 40, then: [HeirOp(Ability(0, -3))], otherwise: [HeirOp(Remove(0))])),
+                    Chance((percent: 40, then: [HeirOp(TargetAbility(-3))], otherwise: [HeirOp(TargetRemove)])),
                 ],
                 cause_tag: "heir_prayer",
             ),
             (
                 text: "Положиться на крепость юности",
                 effects: [
-                    Chance((percent: 25, then: [HeirOp(Ability(0, 3))], otherwise: [HeirOp(Remove(0))])),
+                    Chance((percent: 25, then: [HeirOp(TargetAbility(3))], otherwise: [HeirOp(TargetRemove)])),
                 ],
                 cause_tag: "heir_left_alone",
                 hint: "Наследник, выживший сам, не будет обязан ни лекарям, ни монахам.",

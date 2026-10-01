@@ -2,16 +2,18 @@
 
 use bd_core::data::{Data, DataError, by_age};
 use bd_core::fx::Fx;
-use bd_core::game::{Game, GameError, PendingEvent, Step};
+use bd_core::game::{DecisionKind, Game, GameError, PendingEvent, Step};
 use bd_core::rng::Rng;
-use bd_core::rules::{Choice, Ctx, Effect, Event, EventTarget, Predicate, Sign, Target};
+use bd_core::rules::{Choice, Ctx, Effect, Event, EventTarget, HeirOp, Predicate, Sign, Target};
 use bd_core::state::{AxisId, HeirStatus, NeighbourId, Preset, World};
 use bd_core::time::{Tick, Years};
 
 const RULES: &str = include_str!("../../../data/rules.ron");
 const PRESET: &str = include_str!("../../../data/presets/default.ron");
-const EVENTS: [&str; 3] = [
+const MAP: &str = include_str!("../../../data/maps/default.ron");
+const EVENTS: [&str; 4] = [
     include_str!("../../../data/events/test.ron"),
+    include_str!("../../../data/events/neighbours.ron"),
     include_str!("../../../data/events/death.ron"),
     include_str!("../../../data/events/heirs.ron"),
 ];
@@ -38,7 +40,7 @@ fn bare() -> Data {
 }
 
 fn game(data: Data, seed: u64) -> Game {
-    let preset = Preset::load(PRESET, &data).unwrap();
+    let preset = Preset::load_with_map(PRESET, MAP, &data).unwrap();
     Game::new(data, &preset, seed)
 }
 
@@ -200,6 +202,11 @@ fn abdication_can_be_cancelled() {
     let mut g = game(content(), 1);
     g.abdicate().unwrap();
     assert_eq!(g.abdicate(), Err(GameError::EventPending));
+    let last = g.decisions.last().unwrap();
+    assert_eq!(
+        (&last.kind, last.cause_tag.as_str()),
+        (&DecisionKind::Abdicate, "abdication")
+    );
     g.choose(1).unwrap();
     assert!(g.ended.is_none());
     assert!(!matches!(g.wait().unwrap(), Step::ReignEnded(_)));
@@ -494,8 +501,13 @@ fn content_loads() {
     ] {
         assert!(data.events.iter().any(|e| e.id == id), "{id}");
     }
-    let w = game(data, 1).world;
-    assert!(w.flags.contains("law_primogeniture"));
+    let w = game(data.clone(), 1).world;
+    assert!(w.flags.contains("law_primogeniture") && w.flags.contains("married"));
+    // Flags come from the preset; without the field the world starts with none.
+    let bare = PRESET.replace("flags: [\"law_primogeniture\", \"married\"],", "");
+    assert_ne!(bare, PRESET);
+    let preset = Preset::load_with_map(&bare, MAP, &data).unwrap();
+    assert!(World::from_preset(&data, &preset).flags.is_empty());
     // A bad death risk predicate is rejected.
     let bad = RULES.replacen("when: Flag(\"plot\")", "when: AxisAbove(\"nothing\", 1)", 1);
     assert!(matches!(
@@ -529,4 +541,60 @@ fn death_events_are_deterministic() {
     let b: Vec<u32> = (0..20).map(|s| middle_reign(&start, s)).collect();
     assert_eq!(a, b);
     assert!(a.iter().any(|&y| y != a[0]));
+}
+
+#[test]
+fn death_goes_before_other_events() {
+    let mut data = bare();
+    data.death.base = vec![(0, Fx::from_int(1000))];
+    data.events = vec![event("illness", vec![]), event("other", vec![])];
+    let mut g = game(data, 1);
+    let other = PendingEvent {
+        event_id: "other".into(),
+        target: None,
+    };
+    g.neighbour_events = vec![other.clone(), other];
+    g.queue.push((Tick(1), "other".into()));
+    let Step::Event(v) = g.wait().unwrap() else {
+        panic!()
+    };
+    assert_eq!(v.event_id, "illness");
+}
+
+/// Fires `e` from the random pool in a game where it is the only event.
+fn fire(mut e: Event, setup: impl Fn(&mut World)) -> (Game, Option<bd_core::game::EventView>) {
+    let mut data = bare();
+    e.weight = 1;
+    data.events = vec![e];
+    data.heirs.birth = vec![];
+    let mut g = game(data, 3);
+    setup(&mut g.world);
+    match g.wait().unwrap() {
+        Step::Event(v) => (g, Some(v)),
+        _ => (g, None),
+    }
+}
+
+#[test]
+fn event_targets_an_heir() {
+    let mut e = event("sick", vec![Effect::HeirOp(HeirOp::TargetRemove)]);
+    e.target = EventTarget::Heir(6, 12);
+    e.text = "{heir} болен".into();
+    // Конрад 8 -> 9 after the first tick, Агнесса 5 -> 6: both fit, the pick is random.
+    let (mut g, v) = fire(e.clone(), |_| {});
+    let v = v.unwrap();
+    let Some(Target::Heir(i)) = v.target else {
+        panic!("{v:?}")
+    };
+    let name = g.world.heirs[i as usize].name.clone();
+    assert_eq!(v.text, format!("{name} болен"));
+    g.choose(0).unwrap();
+    assert_eq!(g.world.heirs.len(), 1);
+    assert_ne!(g.world.heirs[0].name, name);
+    // Only Агнесса fits: always her.
+    let (_, v) = fire(e.clone(), |w| w.heirs[0].age = 20);
+    assert_eq!(v.unwrap().target, Some(Target::Heir(1)));
+    // Nobody of that age: the event cannot fire.
+    let (_, v) = fire(e, |w| w.heirs.iter_mut().for_each(|h| h.age = 30));
+    assert_eq!(v, None);
 }

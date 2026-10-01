@@ -95,6 +95,8 @@ pub struct ProvinceFilter {
     pub without_building: Option<String>,
     /// Borders a province of a foreign state (other than its own holder).
     pub borders_foreign: Option<bool>,
+    /// Is the capital.
+    pub capital: Option<bool>,
 }
 
 impl ProvinceFilter {
@@ -118,6 +120,7 @@ impl ProvinceFilter {
                 .is_none_or(|b| p.buildings.contains(b))
             && (self.without_building.as_ref()).is_none_or(|b| !p.buildings.contains(b))
             && self.borders_foreign.is_none_or(|b| b == borders)
+            && (self.capital).is_none_or(|c| c == (p.id == w.capital.province))
     }
 }
 
@@ -135,6 +138,12 @@ pub enum Effect {
     /// A lasting modifier on top of the crown power formula; drifts back to 0.
     CrownPower(ProvinceTarget, Fx),
     HeirOp(HeirOp),
+    /// Adds the building to the province; its crown power bonus comes from `rules.ron`.
+    Build(ProvinceTarget, String),
+    /// A crown province goes to a vassal chosen by `Data.grant`; otherwise a no-op.
+    Grant(ProvinceTarget),
+    /// A vassal province goes back to the crown; otherwise a no-op.
+    Revoke(ProvinceTarget),
     /// Ends the reign with this cause. Applied by `Game`.
     RulerDies(String),
     /// Ends the reign, see `Data.abdication`. Applied by `Game`.
@@ -206,6 +215,7 @@ pub enum HeirOp {
     TargetStatus(HeirStatus),
     TargetAbility(Fx),
     TargetClaim(Fx),
+    TargetRemove,
 }
 
 /// What an effect may touch besides the world.
@@ -273,6 +283,7 @@ impl Effect {
                     HeirOp::TargetStatus(s) => HeirOp::SetStatus(t, s),
                     HeirOp::TargetAbility(d) => HeirOp::Ability(t, d),
                     HeirOp::TargetClaim(d) => HeirOp::Claim(t, d),
+                    HeirOp::TargetRemove => HeirOp::Remove(t),
                     op => op,
                 };
                 match &op {
@@ -296,13 +307,60 @@ impl Effect {
                         }
                     }
                     HeirOp::Remove(_) => {}
-                    HeirOp::TargetStatus(_) | HeirOp::TargetAbility(_) | HeirOp::TargetClaim(_) => {
+                    HeirOp::TargetStatus(_)
+                    | HeirOp::TargetAbility(_)
+                    | HeirOp::TargetClaim(_)
+                    | HeirOp::TargetRemove => {
                         unreachable!("resolved above")
                     }
                 }
             }
             Effect::RulerDies(_) | Effect::Abdicate | Effect::Chance(_) => {
                 unreachable!("Game applies these")
+            }
+            Effect::Build(t, b) => {
+                let id = t.resolve(w, ctx.target);
+                if let Some(p) = id.and_then(|id| w.provinces.get_mut(&id)) {
+                    p.buildings.insert(b.clone());
+                }
+            }
+            Effect::Grant(t) => {
+                let Some(id) = t.resolve(w, ctx.target) else {
+                    return;
+                };
+                if w.provinces
+                    .get(&id)
+                    .is_none_or(|p| p.holder != Holder::Crown)
+                {
+                    return;
+                }
+                let g = &ctx.data.grant;
+                let hops = w.hops(&id);
+                let nearest = (w.provinces.values())
+                    .filter_map(|p| match &p.holder {
+                        Holder::Vassal(v) => Some((*hops.get(&p.id)?, v.clone())),
+                        _ => None,
+                    })
+                    .min();
+                let fresh = (g.new_vassals.iter()).find(|v| !w.vassals.contains_key(&v.id));
+                let vassal = match (nearest, fresh) {
+                    (Some((d, v)), _) if d <= g.max_distance => v,
+                    (_, Some(v)) => {
+                        w.vassals.insert(v.id.clone(), v.clone());
+                        v.id.clone()
+                    }
+                    (Some((_, v)), None) => v,
+                    (None, None) => return,
+                };
+                w.provinces.get_mut(&id).expect("checked above").holder = Holder::Vassal(vassal);
+            }
+            Effect::Revoke(t) => {
+                let id = t.resolve(w, ctx.target);
+                if let Some(p) = id.and_then(|id| w.provinces.get_mut(&id))
+                    && matches!(p.holder, Holder::Vassal(_))
+                {
+                    p.holder = Holder::Crown;
+                }
             }
         }
     }
@@ -355,7 +413,7 @@ fn known_axis(data: &Data, a: &AxisId) -> Result<(), String> {
     }
 }
 
-/// Texts may contain `{province}`, `{neighbour}`, `{ruler}`; `Game` fills them in for display.
+/// Texts may contain `{province}`, `{neighbour}`, `{heir}`, `{ruler}`; `Game` fills them in for display.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Event {
     pub id: String,
@@ -387,6 +445,8 @@ pub enum EventTarget {
     /// The event cannot fire while no province matches.
     RandomProvince(ProvinceFilter),
     Neighbour,
+    /// A random heir aged within this inclusive range; cannot fire while there is none.
+    Heir(u32, u32),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -441,12 +501,13 @@ impl Action {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::Preset;
+    use crate::state::{Preset, VassalId};
 
     fn world() -> (Data, World) {
         let data = crate::data::load(include_str!("../../../data/rules.ron")).unwrap();
         let preset = include_str!("../../../data/presets/default.ron");
-        let preset = Preset::load(preset, &data).unwrap();
+        let map = include_str!("../../../data/maps/default.ron");
+        let preset = Preset::load_with_map(preset, map, &data).unwrap();
         let world = World::from_preset(&data, &preset);
         (data, world)
     }
@@ -476,7 +537,7 @@ mod tests {
         assert!(p(r#"Flag("married")"#) && !p(r#"Flag("plague")"#));
         assert!(p(r#"NotFlag("plague")"#) && !p(r#"NotFlag("married")"#));
         assert!(p("ProvinceWhere((holder: Vassal))"));
-        assert!(!p("ProvinceWhere((holder: Vassal, loyalty_above: 40))"));
+        assert!(!p("ProvinceWhere((holder: Vassal, loyalty_above: 45))"));
         // Two heirs, ruler 30.
         assert!(p("HeirCount(2, 2)") && !p("HeirCount(3, 9)") && !p("HeirCount(0, 1)"));
         assert!(p("RulerAge(30, 30)") && !p("RulerAge(31, 99)"));
@@ -494,22 +555,34 @@ mod tests {
             let ids = w.provinces.values().filter(|p| f.matches(p, &w));
             ids.map(|p| p.id.0.as_str()).collect::<Vec<_>>()
         };
-        assert_eq!(matching("()"), ["capital", "holm", "nordheim"]);
-        assert_eq!(matching("(holder: Crown)"), ["capital"]);
-        assert_eq!(matching("(holder: Foreign)"), ["nordheim"]);
-        assert_eq!(matching("(loyalty_below: 50)"), ["holm"]);
-        assert_eq!(matching("(loyalty_above: 50)"), ["capital"]);
+        let crown = ["berg", "capital", "gart", "lugovo", "ostwick", "sol"];
+        assert_eq!(matching("()").len(), 20);
+        assert_eq!(matching("(holder: Crown)"), crown);
+        assert_eq!(matching("(holder: Foreign)").len(), 10);
+        assert_eq!(
+            matching("(loyalty_below: 50)"),
+            ["arden", "holm", "mar", "weir"]
+        );
+        assert_eq!(matching("(loyalty_above: 50)"), crown);
         assert_eq!(matching(r#"(building: "fort")"#), ["capital"]);
+        assert_eq!(matching(r#"(without_building: "fort")"#).len(), 19);
+        // Own border provinces, plus where two neighbours touch: skala and porfir,
+        // frostad and vestburg.
         assert_eq!(
-            matching(r#"(without_building: "fort")"#),
-            ["holm", "nordheim"]
+            matching("(borders_foreign: true)"),
+            [
+                "arden", "berg", "frostad", "gart", "holm", "lugovo", "mar", "ostwick", "porfir",
+                "skala", "sol", "vestburg", "weir"
+            ]
         );
-        // holm borders nordheim; nordheim borders no other foreign state.
-        assert_eq!(matching("(borders_foreign: true)"), ["holm"]);
-        assert_eq!(
-            matching("(borders_foreign: false)"),
-            ["capital", "nordheim"]
+        let inner = matching("(borders_foreign: false)");
+        assert!(
+            ["capital", "kirm", "nordheim"]
+                .iter()
+                .all(|p| inner.contains(p))
         );
+        assert_eq!(matching("(capital: true)"), ["capital"]);
+        assert_eq!(matching("(capital: false)").len(), 19);
     }
 
     #[test]
@@ -591,6 +664,69 @@ mod tests {
         run(&mut w, r#"SpawnEvent("next", 2)"#, None);
         drop(run);
         assert_eq!(queue, [(Tick(5), "next".to_string())]);
+    }
+
+    #[test]
+    fn map_effects() {
+        let (mut data, mut w) = world();
+        let run = |w: &mut World, data: &Data, text: &str, province: &str| {
+            let e: Effect = crate::data::parse(text).unwrap();
+            let target = Target::Province(pid(province));
+            let mut queue = Vec::new();
+            let mut ctx = Ctx {
+                data,
+                queue: &mut queue,
+                target: Some(&target),
+            };
+            e.apply(w, &mut ctx);
+        };
+        let holder = |w: &World, p: &str| w.provinces[&pid(p)].holder.clone();
+        let vassal = |v: &str| Holder::Vassal(VassalId(v.into()));
+
+        run(&mut w, &data, r#"Build(EventTarget, "market")"#, "berg");
+        assert!(w.provinces[&pid("berg")].buildings.contains("market"));
+
+        // Next to holm (weir) at one crossing.
+        run(&mut w, &data, "Grant(EventTarget)", "gart");
+        assert_eq!(holder(&w, "gart"), vassal("weir"));
+        // Arden and Weir both border the capital: the smaller id wins the tie.
+        run(&mut w, &data, "Grant(ById(\"capital\"))", "gart");
+        assert_eq!(holder(&w, "capital"), vassal("arden"));
+        // Not a crown province: no-op.
+        run(&mut w, &data, "Grant(EventTarget)", "nordheim");
+        assert_eq!(
+            holder(&w, "nordheim"),
+            Holder::Foreign(NeighbourId("nordmark".into()))
+        );
+
+        // Nobody close enough: a new house from the list, then the next one.
+        data.grant.max_distance = 0;
+        run(&mut w, &data, "Grant(EventTarget)", "sol");
+        assert_eq!(holder(&w, "sol"), vassal("rosten"));
+        assert_eq!(w.vassals[&VassalId("rosten".into())].name, "Ростен");
+        run(&mut w, &data, "Grant(EventTarget)", "berg");
+        assert_eq!(holder(&w, "berg"), vassal("olbek"));
+        // The list is used up: the nearest vassal at any distance.
+        data.grant.new_vassals.clear();
+        run(&mut w, &data, "Grant(EventTarget)", "lugovo");
+        assert_eq!(holder(&w, "lugovo"), vassal("arden")); // capital and arden at 1
+        // No vassal anywhere: no-op.
+        for p in w.provinces.values_mut() {
+            if matches!(p.holder, Holder::Vassal(_)) {
+                p.holder = Holder::Crown;
+            }
+        }
+        run(&mut w, &data, "Grant(EventTarget)", "ostwick");
+        assert_eq!(holder(&w, "ostwick"), Holder::Crown);
+
+        w.provinces.get_mut(&pid("holm")).unwrap().holder = vassal("weir");
+        run(&mut w, &data, "Revoke(EventTarget)", "holm");
+        assert_eq!(holder(&w, "holm"), Holder::Crown);
+        run(&mut w, &data, "Revoke(EventTarget)", "nordheim");
+        assert_eq!(
+            holder(&w, "nordheim"),
+            Holder::Foreign(NeighbourId("nordmark".into()))
+        );
     }
 
     #[test]

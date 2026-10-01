@@ -2,6 +2,7 @@
 
 use crate::data::{Data, by_age};
 use crate::fx::Fx;
+use crate::neighbour::neighbour_tick;
 use crate::rng::Rng;
 use crate::rules::{ActionTarget, Choice, Ctx, Effect, Event, EventTarget, Target, add_axis};
 use crate::state::{ActiveAction, HeirStatus, Holder, NeighbourId, Preset, ProvinceId, World};
@@ -29,6 +30,8 @@ pub enum DecisionKind {
         action_id: ActionId,
         target: Option<Target>,
     },
+    /// `Game::abdicate`; the confirm or cancel choice follows as an `EventChoice`.
+    Abdicate,
 }
 
 /// The event waiting for `choose`.
@@ -96,6 +99,8 @@ pub struct Game {
     pub ended: Option<String>,
     /// `wait` has returned `Step::ReignEnded`; every call errs from now on.
     pub reported: bool,
+    /// Events started by neighbours, with their targets; they go before `queue`.
+    pub neighbour_events: Vec<PendingEvent>,
 }
 
 impl Game {
@@ -110,6 +115,7 @@ impl Game {
             queue: Vec::new(),
             ended: None,
             reported: false,
+            neighbour_events: Vec::new(),
         }
     }
 
@@ -208,11 +214,28 @@ impl Game {
         self.complete_actions();
         self.world.recompute_loyalty(&self.data);
         self.world.recompute_crown_power(&self.data);
+        if (self.world.tick.0).is_multiple_of(self.data.time_unit.ticks_per_year) {
+            let ids: Vec<_> = self.world.neighbours.keys().cloned().collect();
+            for id in ids {
+                let e = neighbour_tick(&mut self.world, &self.data, &mut self.rng, id);
+                self.neighbour_events.extend(e);
+            }
+            // Relations price the paths through foreign land.
+            self.world.recompute_crown_power(&self.data);
+        }
         if self.ended.is_some() {
             return self.report_end();
         }
-        self.death_roll();
-        let picked = pick_event(&self.data, &self.world, &mut self.rng, &mut self.queue);
+        let death = self.death_roll();
+        let picked = death.or_else(|| {
+            pick_event(
+                &self.data,
+                &self.world,
+                &mut self.rng,
+                &mut self.queue,
+                &mut self.neighbour_events,
+            )
+        });
         let Some(p) = picked else {
             return Ok(Step::Idle);
         };
@@ -320,6 +343,11 @@ impl Game {
             event_id: id.clone(),
             target: None,
         });
+        self.decisions.push(Decision {
+            tick: self.world.tick,
+            kind: DecisionKind::Abdicate,
+            cause_tag: id.clone(),
+        });
         Ok(())
     }
 
@@ -357,8 +385,9 @@ impl Game {
         }
     }
 
-    /// Rolls the ruler's death risk (`Data.death`); a hit queues a death event for now.
-    fn death_roll(&mut self) {
+    /// Rolls the ruler's death risk (`Data.death`). A hit returns its death event, which
+    /// goes before any other event this tick; one whose `when` is false is dropped.
+    fn death_roll(&mut self) -> Option<PendingEvent> {
         let (d, w) = (&self.data, &self.world);
         let health = (Fx::from_int(100) - w.ruler.health) * d.death.health_k;
         let base = (by_age(&d.death.base, w.ruler.age) + health, &d.death.event);
@@ -368,15 +397,19 @@ impl Game {
         let ticks = d.time_unit.ticks_per_year as i64;
         let mut roll = self.rng.range(0, 1000 * Fx::SCALE * ticks);
         for (risk, id) in std::iter::once(base).chain(risks) {
-            if find_event(d, id).is_some_and(|e| cooling(e, w)) {
+            let event = find_event(d, id);
+            if event.is_some_and(|e| cooling(e, w)) {
                 continue;
             }
             if roll < risk.0 {
-                self.queue.push((w.tick, id.clone()));
-                return;
+                return event.filter(|e| e.when.eval(w)).map(|e| PendingEvent {
+                    event_id: e.id.clone(),
+                    target: None,
+                });
             }
             roll -= risk.0;
         }
+        None
     }
 
     fn report_end(&mut self) -> Result<Step, GameError> {
@@ -397,6 +430,7 @@ impl Game {
         let name = match &p.target {
             Some(Target::Province(id)) => w.provinces.get(id).map(|x| ("{province}", &x.name)),
             Some(Target::Neighbour(id)) => w.neighbours.get(id).map(|x| ("{neighbour}", &x.name)),
+            Some(Target::Heir(i)) => w.heirs.get(*i as usize).map(|x| ("{heir}", &x.name)),
             _ => None,
         };
         let fill = |s: &str| {
@@ -493,17 +527,25 @@ fn candidates(target: &EventTarget, w: &World) -> Option<Vec<Target>> {
                 .map(|n| Target::Neighbour(n.clone()))
                 .collect(),
         ),
+        EventTarget::Heir(lo, hi) => Some(
+            (0..w.heirs.len() as u32)
+                .filter(|&i| (*lo..=*hi).contains(&w.heirs[i as usize].age))
+                .map(Target::Heir)
+                .collect(),
+        ),
     }
 }
 
-/// At most one event per tick. Due deferred events go first, earliest due first; one whose
-/// `when` is false, which already fired `once`, or has no target is dropped. Otherwise a
-/// weighted pick over ready events off cooldown, with `quiet_weight` for no event.
+/// At most one event per tick. Neighbour events go first, in order, keeping their target;
+/// then due deferred events, earliest due first. Either kind is dropped when its `when` is
+/// false, it already fired `once`, or it has no target. Otherwise a weighted pick over
+/// ready events off cooldown, with `quiet_weight` for no event.
 fn pick_event(
     data: &Data,
     w: &World,
     rng: &mut Rng,
     queue: &mut Vec<(Tick, String)>,
+    neighbour_events: &mut Vec<PendingEvent>,
 ) -> Option<PendingEvent> {
     let ready = |e: &Event| {
         let fired = w.last_fired.get(&e.id);
@@ -518,6 +560,13 @@ fn pick_event(
             target,
         })
     };
+
+    while !neighbour_events.is_empty() {
+        let p = neighbour_events.remove(0);
+        if find_event(data, &p.event_id).is_some_and(ready) {
+            return Some(p);
+        }
+    }
 
     let due = |q: &Vec<(Tick, String)>| {
         (0..q.len())
@@ -559,6 +608,7 @@ mod tests {
 
     const RULES: &str = include_str!("../../../data/rules.ron");
     const PRESET: &str = include_str!("../../../data/presets/default.ron");
+    const MAP: &str = include_str!("../../../data/maps/default.ron");
 
     fn ax(s: &str) -> AxisId {
         AxisId(s.into())
@@ -569,7 +619,7 @@ mod tests {
     }
 
     fn game(data: Data, seed: u64) -> Game {
-        let preset = Preset::load(PRESET, &data).unwrap();
+        let preset = Preset::load_with_map(PRESET, MAP, &data).unwrap();
         Game::new(data, &preset, seed)
     }
 
@@ -673,7 +723,7 @@ mod tests {
             ActionTarget::Province(ProvinceFilter::default()),
             vec![],
         );
-        tax.min_crown_power = Fx::from_int(50);
+        tax.min_crown_power = Fx::from_int(60); // provinces next to the capital have 55
         let mut decree = action("decree", ActionTarget::None, vec![]);
         decree.min_crown_power = Fx::from_int(91);
         let mut edict = action("edict", ActionTarget::None, vec![]);
@@ -726,11 +776,15 @@ mod tests {
         let mut g = game(data, 1);
         g.world.axes.insert(ax("bureaucracy"), Fx::from_int(100));
         let nordmark = Target::Neighbour(NeighbourId("nordmark".into()));
+        let neighbours: Vec<_> = (g.world.neighbours.keys())
+            .map(|n| Target::Neighbour(n.clone()))
+            .collect();
+        assert_eq!(neighbours.len(), 3);
         assert_eq!(
             g.available_actions(),
             [
                 ("costly".into(), vec![]),
-                ("envoy".into(), vec![nordmark.clone()]),
+                ("envoy".into(), neighbours.clone()),
                 ("tutor".into(), vec![Target::Heir(0), Target::Heir(1)]),
             ]
         );
@@ -748,7 +802,7 @@ mod tests {
         assert_eq!(
             g.available_actions(),
             [
-                ("envoy".into(), vec![nordmark.clone()]),
+                ("envoy".into(), neighbours),
                 ("tutor".into(), vec![Target::Heir(0)]),
             ]
         );
@@ -919,7 +973,7 @@ mod tests {
         local.weight = 1;
         local.title = "{ruler}: {province}".into();
         local.choices[0].hint = Some("{province}, {neighbour}".into());
-        let filter = "(holder: Vassal)";
+        let filter = r#"(holder: Vassal, building: "road")"#; // holm only
         local.target = EventTarget::RandomProvince(crate::data::parse(filter).unwrap());
         let mut envoy = event("envoy", vec![]);
         envoy.text = "Посол {neighbour}".into();
@@ -983,6 +1037,122 @@ mod tests {
         assert_eq!(g.choose(0), Err(GameError::NoEvent));
     }
 
+    /// `bare()` plus the real actions and neighbour events.
+    fn map_game() -> Game {
+        let mut data = bare();
+        data.add_actions(include_str!("../../../data/actions.ron"))
+            .unwrap();
+        data.add_events(include_str!("../../../data/events/neighbours.ron"))
+            .unwrap();
+        data.neighbour_ai.wait.events.clear(); // quiet neighbours unless a test says otherwise
+        let mut g = game(data, 1);
+        g.world.axes.insert(ax("treasury"), Fx::from_int(1000));
+        g
+    }
+
+    fn targets(g: &Game, action: &str) -> Vec<Target> {
+        let all = g.available_actions().into_iter();
+        all.filter(|(id, _)| id == action)
+            .flat_map(|(_, t)| t)
+            .collect()
+    }
+
+    /// Runs `action` on `province` to completion next to an untouched game; returns
+    /// (crown power, loyalty_nobles) of both.
+    fn compare(action: &str, province: &str) -> ((Fx, Fx), (Fx, Fx)) {
+        let mut base = map_game();
+        let mut g = map_game();
+        g.start_action(action, Some(Target::Province(pid(province))))
+            .unwrap();
+        base.wait().unwrap();
+        g.wait().unwrap();
+        let at = |g: &Game| {
+            let power = g.world.provinces[&pid(province)].crown_power;
+            (power, g.world.axes[&ax("loyalty_nobles")])
+        };
+        (at(&base), at(&g))
+    }
+
+    #[test]
+    fn grant_and_revoke_province() {
+        let ((power, nobles), (granted_power, granted_nobles)) = compare("grant_province", "berg");
+        assert!(granted_power < power, "{granted_power} vs {power}");
+        assert!(granted_nobles > nobles, "{granted_nobles} vs {nobles}");
+        let ((power, nobles), (revoked_power, revoked_nobles)) = compare("revoke_province", "holm");
+        assert!(revoked_power > power, "{revoked_power} vs {power}");
+        assert!(revoked_nobles < nobles, "{revoked_nobles} vs {nobles}");
+        // Grant goes to crown provinces but the capital, revoke to vassal ones.
+        let g = map_game();
+        let grant = targets(&g, "grant_province");
+        assert!(grant.contains(&Target::Province(pid("berg"))));
+        assert!(!grant.contains(&Target::Province(pid("capital"))));
+        assert!(!grant.contains(&Target::Province(pid("holm"))));
+        assert!(targets(&g, "revoke_province").contains(&Target::Province(pid("holm"))));
+    }
+
+    #[test]
+    fn build_fort_only_on_crown_land() {
+        let mut g = map_game();
+        let forts = targets(&g, "build_fort");
+        assert!(forts.contains(&Target::Province(pid("berg"))));
+        for vassal in ["holm", "weir", "arden", "mar"] {
+            assert!(!forts.contains(&Target::Province(pid(vassal))), "{vassal}");
+        }
+        let holm = Some(Target::Province(pid("holm")));
+        assert_eq!(
+            g.start_action("build_fort", holm),
+            Err(GameError::Unavailable)
+        );
+        // Four years later the fort stands and adds its crown power.
+        let before = g.world.provinces[&pid("berg")].crown_power;
+        g.start_action("build_fort", Some(Target::Province(pid("berg"))))
+            .unwrap();
+        for _ in 0..4 {
+            g.wait().unwrap();
+        }
+        let berg = &g.world.provinces[&pid("berg")];
+        assert!(berg.buildings.contains("fort"));
+        assert_eq!(berg.crown_power, before + Fx::from_int(10));
+    }
+
+    #[test]
+    fn marriage_raises_relation_once() {
+        let mut g = map_game();
+        let vestrum = Target::Neighbour(NeighbourId("vestrum".into()));
+        g.start_action("marry_neighbour", Some(vestrum.clone()))
+            .unwrap();
+        g.wait().unwrap();
+        // 30 + 30 on completion; then Vestrum, friendly now, trades: +1.
+        let n = &g.world.neighbours[&NeighbourId("vestrum".into())];
+        assert_eq!(n.relation, Fx::from_int(61));
+        assert!(g.world.flags.contains("royal_marriage"));
+        assert!(targets(&g, "marry_neighbour").is_empty());
+    }
+
+    #[test]
+    fn neighbour_events_reach_the_player() {
+        let mut g = map_game();
+        let nordmark = NeighbourId("nordmark".into());
+        let n = g.world.neighbours.get_mut(&nordmark).unwrap();
+        (n.relation, n.strength) = (Fx::from_int(-80), Fx::from_int(100));
+        let mut seen = vec![];
+        for _ in 0..20 {
+            if let Step::Event(v) = g.wait().unwrap() {
+                seen.push((v.event_id, v.target));
+                g.choose(0).unwrap();
+            }
+        }
+        assert!(!seen.is_empty());
+        for (id, target) in seen {
+            let expected = match id.as_str() {
+                "neighbour_raid" => Target::Province(pid("arden")),
+                "neighbour_ultimatum" => Target::Neighbour(nordmark.clone()),
+                other => panic!("{other}"),
+            };
+            assert_eq!(target, Some(expected));
+        }
+    }
+
     #[test]
     fn passive_tick() {
         let mut data = bare();
@@ -1000,8 +1170,9 @@ mod tests {
         assert_eq!(g.world.ruler.age, 30);
         g.wait().unwrap();
         let w = &g.world;
-        // Per year: capital income 12 + income 10 - army 50 * 0.1 = 17, in quarters.
-        assert_eq!(w.axes[&ax("treasury")], Fx::from_int(167));
+        // Per year: crown provinces 12 + 7 + 5 + 8 + 6 + 6 + income 10 - army 50 * 0.1 = 49,
+        // in quarters.
+        assert_eq!(w.axes[&ax("treasury")], Fx::from_int(199));
         assert_eq!((w.ruler.age, w.heirs[0].age), (31, 9));
         // Toward the axis default 50, toward province_loyalty 50, a year's step of 1.
         assert_eq!(w.axes[&ax("loyalty_nobles")], Fx::from_int(41));

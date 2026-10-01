@@ -84,6 +84,8 @@ pub struct ProvinceFilter {
     pub without_building: Option<String>,
     /// Borders a province of a foreign state (other than its own holder).
     pub borders_foreign: Option<bool>,
+    /// Is the capital.
+    pub capital: Option<bool>,
 }
 
 impl ProvinceFilter {
@@ -107,6 +109,7 @@ impl ProvinceFilter {
                 .is_none_or(|b| p.buildings.contains(b))
             && (self.without_building.as_ref()).is_none_or(|b| !p.buildings.contains(b))
             && self.borders_foreign.is_none_or(|b| b == borders)
+            && (self.capital).is_none_or(|c| c == (p.id == w.capital.province))
     }
 }
 
@@ -124,6 +127,12 @@ pub enum Effect {
     /// A lasting modifier on top of the crown power formula; drifts back to 0.
     CrownPower(ProvinceTarget, Fx),
     HeirOp(HeirOp),
+    /// Adds the building to the province; its crown power bonus comes from `rules.ron`.
+    Build(ProvinceTarget, String),
+    /// A crown province goes to a vassal chosen by `Data.grant`; otherwise a no-op.
+    Grant(ProvinceTarget),
+    /// A vassal province goes back to the crown; otherwise a no-op.
+    Revoke(ProvinceTarget),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -231,6 +240,47 @@ impl Effect {
                         }
                     }
                     HeirOp::Remove(_) => {}
+                }
+            }
+            Effect::Build(t, b) => {
+                let id = t.resolve(w, ctx.target);
+                if let Some(p) = id.and_then(|id| w.provinces.get_mut(&id)) {
+                    p.buildings.insert(b.clone());
+                }
+            }
+            Effect::Grant(t) => {
+                let Some(id) = t.resolve(w, ctx.target) else {
+                    return;
+                };
+                if w.provinces.get(&id).is_none_or(|p| p.holder != Holder::Crown) {
+                    return;
+                }
+                let g = &ctx.data.grant;
+                let hops = w.hops(&id);
+                let nearest = (w.provinces.values())
+                    .filter_map(|p| match &p.holder {
+                        Holder::Vassal(v) => Some((*hops.get(&p.id)?, v.clone())),
+                        _ => None,
+                    })
+                    .min();
+                let fresh = (g.new_vassals.iter()).find(|v| !w.vassals.contains_key(&v.id));
+                let vassal = match (nearest, fresh) {
+                    (Some((d, v)), _) if d <= g.max_distance => v,
+                    (_, Some(v)) => {
+                        w.vassals.insert(v.id.clone(), v.clone());
+                        v.id.clone()
+                    }
+                    (Some((_, v)), None) => v,
+                    (None, None) => return,
+                };
+                w.provinces.get_mut(&id).expect("checked above").holder = Holder::Vassal(vassal);
+            }
+            Effect::Revoke(t) => {
+                let id = t.resolve(w, ctx.target);
+                if let Some(p) = id.and_then(|id| w.provinces.get_mut(&id))
+                    && matches!(p.holder, Holder::Vassal(_))
+                {
+                    p.holder = Holder::Crown;
                 }
             }
         }
@@ -367,7 +417,8 @@ mod tests {
     fn world() -> (Data, World) {
         let data = crate::data::load(include_str!("../../../data/rules.ron")).unwrap();
         let preset = include_str!("../../../data/presets/default.ron");
-        let preset = Preset::load(preset, &data).unwrap();
+        let map = include_str!("../../../data/maps/default.ron");
+        let preset = Preset::load_with_map(preset, map, &data).unwrap();
         let world = World::from_preset(&data, &preset);
         (data, world)
     }
@@ -397,7 +448,7 @@ mod tests {
         assert!(p(r#"Flag("married")"#) && !p(r#"Flag("plague")"#));
         assert!(p(r#"NotFlag("plague")"#) && !p(r#"NotFlag("married")"#));
         assert!(p("ProvinceWhere((holder: Vassal))"));
-        assert!(!p("ProvinceWhere((holder: Vassal, loyalty_above: 40))"));
+        assert!(!p("ProvinceWhere((holder: Vassal, loyalty_above: 45))"));
         // Two heirs, ruler 30.
         assert!(p("HeirCount(2, 2)") && !p("HeirCount(3, 9)") && !p("HeirCount(0, 1)"));
         assert!(p("RulerAge(30, 30)") && !p("RulerAge(31, 99)"));
@@ -415,22 +466,26 @@ mod tests {
             let ids = w.provinces.values().filter(|p| f.matches(p, &w));
             ids.map(|p| p.id.0.as_str()).collect::<Vec<_>>()
         };
-        assert_eq!(matching("()"), ["capital", "holm", "nordheim"]);
-        assert_eq!(matching("(holder: Crown)"), ["capital"]);
-        assert_eq!(matching("(holder: Foreign)"), ["nordheim"]);
-        assert_eq!(matching("(loyalty_below: 50)"), ["holm"]);
-        assert_eq!(matching("(loyalty_above: 50)"), ["capital"]);
+        let crown = ["berg", "capital", "gart", "lugovo", "ostwick", "sol"];
+        assert_eq!(matching("()").len(), 20);
+        assert_eq!(matching("(holder: Crown)"), crown);
+        assert_eq!(matching("(holder: Foreign)").len(), 10);
+        assert_eq!(
+            matching("(loyalty_below: 50)"),
+            ["arden", "holm", "mar", "weir"]
+        );
+        assert_eq!(matching("(loyalty_above: 50)"), crown);
         assert_eq!(matching(r#"(building: "fort")"#), ["capital"]);
+        assert_eq!(matching(r#"(without_building: "fort")"#).len(), 19);
+        // Own border provinces, plus skala and porfir: Nordmark and Purpur touch there.
         assert_eq!(
-            matching(r#"(without_building: "fort")"#),
-            ["holm", "nordheim"]
+            matching("(borders_foreign: true)"),
+            ["berg", "gart", "holm", "lugovo", "mar", "ostwick", "porfir", "skala", "sol", "weir"]
         );
-        // holm borders nordheim; nordheim borders no other foreign state.
-        assert_eq!(matching("(borders_foreign: true)"), ["holm"]);
-        assert_eq!(
-            matching("(borders_foreign: false)"),
-            ["capital", "nordheim"]
-        );
+        let inner = matching("(borders_foreign: false)");
+        assert!(["arden", "capital", "nordheim"].iter().all(|p| inner.contains(p)));
+        assert_eq!(matching("(capital: true)"), ["capital"]);
+        assert_eq!(matching("(capital: false)").len(), 19);
     }
 
     #[test]

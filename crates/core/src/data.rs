@@ -1,6 +1,6 @@
 use crate::fx::Fx;
 use crate::rules::{Action, Event};
-use crate::state::{AxisId, Heir, World};
+use crate::state::{AxisId, Heir, Stance, Vassal, World};
 use crate::time::TimeUnit;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -22,6 +22,8 @@ pub struct Data {
     pub quiet_weight: u32,
     /// What `HeirOp::Add` pushes.
     pub new_heir: Heir,
+    pub neighbour_ai: NeighbourAi,
+    pub grant: GrantRules,
     /// From `add_events`, not from `rules.ron`.
     #[serde(default)]
     pub events: Vec<Event>,
@@ -147,6 +149,49 @@ pub struct HolderBase {
     pub vassal: Fx,
 }
 
+/// Yearly neighbour behaviour, see `neighbour::neighbour_tick`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct NeighbourAi {
+    /// Relation below this is hostile: Expand or Defend.
+    pub hostile_below: Fx,
+    /// Relation above this: Trade. In between: Wait.
+    pub friendly_above: Fx,
+    /// Expand needs strength >= the weakest border crown power + this.
+    pub expand_margin: Fx,
+    pub expand: StanceRules,
+    pub defend: StanceRules,
+    pub trade: StanceRules,
+    pub wait: StanceRules,
+}
+
+impl NeighbourAi {
+    pub fn stance(&self, s: &Stance) -> &StanceRules {
+        match s {
+            Stance::Expand => &self.expand,
+            Stance::Defend => &self.defend,
+            Stance::Trade => &self.trade,
+            Stance::Wait => &self.wait,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct StanceRules {
+    /// Added to the relation every year.
+    pub relation: Fx,
+    /// `(event id, chance in percent per year)`; at most one fires, chances sum to <= 100.
+    pub events: Vec<(String, u32)>,
+}
+
+/// Who gets a province from `Effect::Grant`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct GrantRules {
+    /// The nearest vassal within this many border crossings takes the province.
+    pub max_distance: u32,
+    /// Otherwise the first of these not yet in the world is founded.
+    pub new_vassals: Vec<Vassal>,
+}
+
 #[derive(Debug)]
 pub enum DataError {
     Parse(ron::error::SpannedError),
@@ -195,6 +240,12 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
     }
     if data.is_derived(&data.economy.treasury) {
         return Err(DataError::Invalid("economy.treasury is derived".into()));
+    }
+    let ai = &data.neighbour_ai;
+    for s in [&ai.expand, &ai.defend, &ai.trade, &ai.wait] {
+        if s.events.iter().map(|(_, c)| c).sum::<u32>() > 100 {
+            return Err(DataError::Invalid("neighbour_ai: chances sum over 100".into()));
+        }
     }
     Ok(data)
 }
@@ -261,14 +312,16 @@ mod tests {
 
     const EVENTS: &str = include_str!("../../../data/events/test.ron");
     const ACTIONS: &str = include_str!("../../../data/actions.ron");
+    const NEIGHBOUR_EVENTS: &str = include_str!("../../../data/events/neighbours.ron");
 
     #[test]
     fn content_loads() {
         let mut data = load(RULES).unwrap();
         data.add_events(EVENTS).unwrap();
+        data.add_events(NEIGHBOUR_EVENTS).unwrap();
         data.add_actions(ACTIONS).unwrap();
-        assert_eq!(data.events.len(), 5);
-        assert_eq!(data.actions.len(), 2);
+        assert_eq!(data.events.len(), 8);
+        assert_eq!(data.actions.len(), 7);
         // Ids must be unique across files.
         assert!(matches!(
             data.add_events(EVENTS),
@@ -278,7 +331,7 @@ mod tests {
             data.add_actions(ACTIONS),
             Err(DataError::Invalid(_))
         ));
-        assert_eq!(data.events.len(), 5);
+        assert_eq!(data.events.len(), 8);
     }
 
     #[test]

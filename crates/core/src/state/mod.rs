@@ -43,6 +43,10 @@ pub struct Province {
     /// Derived by `World::recompute_crown_power`, so data may omit it.
     #[serde(default)]
     pub crown_power: Fx,
+    /// Border crossings from the capital over the whole graph, foreign land included.
+    /// Set by `World::from_preset`; the graph never changes, so it stays valid.
+    #[serde(default)]
+    pub distance_to_capital: u32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -168,7 +172,28 @@ impl World {
         };
         world.recompute_loyalty(data);
         world.recompute_crown_power(data);
+        // Unreachable provinces are not expected (the map is connected); they get u32::MAX.
+        let hops = world.hops(&world.capital.province);
+        for p in world.provinces.values_mut() {
+            p.distance_to_capital = hops.get(&p.id).copied().unwrap_or(u32::MAX);
+        }
         world
+    }
+
+    /// Fewest border crossings from `from` to every reachable province (BFS).
+    pub fn hops(&self, from: &ProvinceId) -> BTreeMap<ProvinceId, u32> {
+        let mut hops = BTreeMap::from([(from.clone(), 0)]);
+        let mut queue = std::collections::VecDeque::from([from.clone()]);
+        while let Some(id) = queue.pop_front() {
+            let d = hops[&id];
+            for n in self.provinces.get(&id).map_or(&[][..], |p| &p.neighbours) {
+                if !hops.contains_key(n) && self.provinces.contains_key(n) {
+                    hops.insert(n.clone(), d + 1);
+                    queue.push_back(n.clone());
+                }
+            }
+        }
+        hops
     }
 
     /// A frozen copy for the chronicle.
@@ -266,7 +291,8 @@ mod tests {
     fn world() -> (Data, World) {
         let data = data();
         let text = include_str!("../../../../data/presets/default.ron");
-        let preset = Preset::load(text, &data).unwrap();
+        let map = include_str!("../../../../data/maps/default.ron");
+        let preset = Preset::load_with_map(text, map, &data).unwrap();
         let world = World::from_preset(&data, &preset);
         (data, world)
     }
@@ -317,7 +343,7 @@ mod tests {
     #[test]
     fn preset_matches_data() {
         let (data, w) = world();
-        assert_eq!(w.provinces.len(), 3);
+        assert_eq!(w.provinces.len(), 20);
         assert_eq!(w.axes.len(), data.axes.len());
         assert_eq!(w.start_year, 1187);
         // Preset override wins over the rules default, the rest keep defaults.
@@ -395,6 +421,7 @@ mod tests {
             buildings: BTreeSet::new(),
             neighbours: neighbours.iter().map(|n| pid(n)).collect(),
             crown_power: Fx(0),
+            distance_to_capital: 0,
         };
         let nordmark = Holder::Foreign(NeighbourId("nordmark".into()));
         let mut map = vec![p("nordheim", nordmark, &["capital", "far"])];

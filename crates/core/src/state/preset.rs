@@ -9,6 +9,8 @@ pub struct Preset {
     pub start_year: u32,
     /// Overrides of the rule defaults; axes not listed start at their default.
     pub axes: Axes,
+    /// Empty when the map lives in its own file, see `load_with_map`.
+    #[serde(default)]
     pub map: Map,
     pub capital: Capital,
     pub vassals: Vec<Vassal>,
@@ -17,7 +19,7 @@ pub struct Preset {
     pub neighbours: Vec<Neighbour>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct Map {
     pub provinces: Vec<Province>,
     /// UI outlines, points in map coordinates. Static, so kept out of `World`.
@@ -28,6 +30,14 @@ impl Preset {
     /// Parses a preset and checks that its references hold against `data`. No file I/O.
     pub fn load(text: &str, data: &Data) -> Result<Preset, DataError> {
         let preset: Preset = ron::from_str(text).map_err(DataError::Parse)?;
+        preset.check(data).map_err(DataError::Invalid)?;
+        Ok(preset)
+    }
+
+    /// A preset whose map is a separate text (`data/maps/*.ron`); it replaces `map`.
+    pub fn load_with_map(text: &str, map: &str, data: &Data) -> Result<Preset, DataError> {
+        let mut preset: Preset = ron::from_str(text).map_err(DataError::Parse)?;
+        preset.map = ron::from_str(map).map_err(DataError::Parse)?;
         preset.check(data).map_err(DataError::Invalid)?;
         Ok(preset)
     }
@@ -78,29 +88,37 @@ mod tests {
     use super::*;
 
     const PRESET: &str = include_str!("../../../../data/presets/default.ron");
+    const MAP: &str = include_str!("../../../../data/maps/default.ron");
 
     #[test]
     fn broken_presets_are_rejected() {
         let data = crate::data::load(include_str!("../../../../data/rules.ron")).unwrap();
-        assert!(Preset::load(PRESET, &data).is_ok());
+        assert!(Preset::load_with_map(PRESET, MAP, &data).is_ok());
+        // Without its map the default preset has no capital.
+        assert!(matches!(
+            Preset::load(PRESET, &data),
+            Err(DataError::Invalid(_))
+        ));
         assert!(matches!(
             Preset::load("()", &data),
+            Err(DataError::Parse(_))
+        ));
+        assert!(matches!(
+            Preset::load_with_map(PRESET, "()", &data),
             Err(DataError::Parse(_))
         ));
         for (from, to) in [
             (r#""legitimacy": 60"#, r#""legitimacy": 101"#),
             (r#""legitimacy": 60"#, r#""no_such_axis": 60"#),
             (r#"province: "capital""#, r#"province: "nowhere""#),
-            (
-                r#"neighbours: ["capital", "nordheim"]"#,
-                r#"neighbours: ["capital"]"#,
-            ),
+            (r#""gart", "frostad", "nordheim"]"#, r#""gart", "nordheim"]"#),
             (r#"Vassal("weir")"#, r#"Vassal("nobody")"#),
             (r#"Foreign("nordmark")"#, r#"Foreign("nobody")"#),
             (r#""legitimacy": 60"#, r#""loyalty": 60"#),
         ] {
-            assert!(PRESET.contains(from), "{from}");
-            let res = Preset::load(&PRESET.replacen(from, to, 1), &data);
+            let (preset, map) = (PRESET.replacen(from, to, 1), MAP.replacen(from, to, 1));
+            assert!(preset != PRESET || map != MAP, "{from}");
+            let res = Preset::load_with_map(&preset, &map, &data);
             assert!(matches!(res, Err(DataError::Invalid(_))), "{to}: {res:?}");
         }
     }

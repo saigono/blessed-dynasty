@@ -1,10 +1,9 @@
 //! Content lint: loads every data file and checks references across files.
 
-use bd_core::data::{self, Data};
+use bd_core::data::{self, Data, DataError};
 use bd_core::game::{Game, Step};
 use bd_core::rules::Effect;
 use bd_core::state::Preset;
-use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
@@ -19,10 +18,12 @@ fn read(rel: &str) -> String {
     fs::read_to_string(path(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"))
 }
 
-/// Files of a data directory, sorted so the load order is fixed.
+/// `*.ron` files of a data directory, without subdirectories, sorted so the load order
+/// is fixed (as `cli` loads them).
 fn files(rel: &str) -> Vec<PathBuf> {
     let entries = fs::read_dir(path(rel)).unwrap();
     let mut files: Vec<_> = entries.map(|e| e.unwrap().path()).collect();
+    files.retain(|p| p.is_file() && p.extension().is_some_and(|x| x == "ron"));
     files.sort();
     files
 }
@@ -31,7 +32,8 @@ fn rules() -> Data {
     data::load(&read("rules.ron")).unwrap()
 }
 
-/// `rules.ron`, every `events/*.ron` and `actions.ron` in one `Data`, as the game sees them.
+/// `rules.ron`, every `events/*.ron`, `actions.ron` and `names.ron` in one `Data`, as the
+/// game sees them.
 fn load_all() -> Data {
     let mut data = rules();
     for f in files("events") {
@@ -40,18 +42,16 @@ fn load_all() -> Data {
             .unwrap_or_else(|e| panic!("{f:?}: {e:?}"));
     }
     data.add_actions(&read("actions.ron")).unwrap();
+    data.add_names(&read("names.ron")).unwrap();
     data
+}
+
+fn preset(text: &str, data: &Data) -> Preset {
+    Preset::load_with_map(text, &read("maps/default.ron"), data).unwrap()
 }
 
 fn hints() -> BTreeMap<String, String> {
     ron::from_str(&read("hints.ron")).unwrap()
-}
-
-#[derive(Deserialize)]
-struct Names {
-    rulers: Vec<String>,
-    heirs: Vec<String>,
-    vassals: Vec<String>,
 }
 
 fn has_digits(s: &str) -> bool {
@@ -63,10 +63,10 @@ fn all_files_load() {
     let data = load_all();
     for f in files("presets") {
         let text = fs::read_to_string(&f).unwrap();
-        Preset::load(&text, &data).unwrap_or_else(|e| panic!("{f:?}: {e:?}"));
+        Preset::load_with_map(&text, &read("maps/default.ron"), &data)
+            .unwrap_or_else(|e| panic!("{f:?}: {e:?}"));
     }
     assert!(!hints().is_empty());
-    let _: Names = ron::from_str(&read("names.ron")).unwrap();
 }
 
 #[test]
@@ -129,26 +129,33 @@ fn reign_events_follow_the_brief() {
 
 #[test]
 fn name_pools() {
-    let names: Names = ron::from_str(&read("names.ron")).unwrap();
+    let names = load_all().names;
     for list in [&names.rulers, &names.heirs, &names.vassals] {
         assert_eq!(list.len(), 30);
-        assert_eq!(list.iter().collect::<BTreeSet<_>>().len(), 30, "{list:?}");
     }
+    // A name twice in a pool is rejected.
+    let dup = r#"(rulers: ["Ульрих", "Ульрих"], heirs: [], vassals: [])"#;
+    assert!(matches!(rules().add_names(dup), Err(DataError::Invalid(_))));
 }
 
-/// Stand-in for `cli batch --strategy neutral` until stage 8a lands: 1000 seeds, a 35-year
-/// reign, always the middle choice, no actions. Every reign event must fire at least once.
+/// Stand-in for `cli batch --strategy neutral` (stage 8b): 1000 seeds, each reign to its end
+/// (at most 60 years), the middle choice `(len - 1) / 2` as in `cli`, no actions. Every
+/// reign event must fire at least once.
 #[test]
 fn every_reign_event_fires_under_neutral_play() {
     let data = load_all();
-    let preset = Preset::load(&read("presets/default.ron"), &data).unwrap();
+    let preset = preset(&read("presets/default.ron"), &data);
     let mut fired = BTreeSet::new();
     for seed in 0..1000 {
         let mut g = Game::new(data.clone(), &preset, seed);
-        for _ in 0..35 {
-            if let Step::Event(v) = g.wait().unwrap() {
-                g.choose(v.choices.len() / 2).unwrap();
-                fired.insert(v.event_id);
+        for _ in 0..60 {
+            match g.wait().unwrap() {
+                Step::Event(v) => {
+                    g.choose((v.choices.len() - 1) / 2).unwrap();
+                    fired.insert(v.event_id);
+                }
+                Step::Idle => {}
+                Step::ReignEnded(_) => break,
             }
         }
     }

@@ -81,17 +81,9 @@
     ),
 
     // Effect Grant: the nearest vassal within `max_distance` border crossings gets the
-    // province, otherwise the next unused house from `new_vassals`; when those run out,
-    // the nearest vassal at any distance.
-    grant: (
-        max_distance: 1,
-        new_vassals: [
-            (id: "rosten", name: "Ростен", loyalty: 60, strength: 10),
-            (id: "olbek", name: "Ольбек", loyalty: 60, strength: 10),
-            (id: "dravic", name: "Дравич", loyalty: 60, strength: 10),
-            (id: "kelm", name: "Кельм", loyalty: 60, strength: 10),
-        ],
-    ),
+    // province, otherwise a new house named by the next unused name of names.ron `vassals`,
+    // with this loyalty and strength; when the names run out, the nearest vassal at any distance.
+    grant: (max_distance: 1, new_loyalty: 60, new_strength: 10),
 
     // Yearly ruler death risk in per mille: the `base` row of the largest age_from <= age,
     // plus (100 - health) * health_k, plus every risk whose `when` holds. A hit spawns the

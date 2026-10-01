@@ -126,8 +126,8 @@ mod tests {
             Err(DataError::Parse(_))
         ));
         for (from, to) in [
-            (r#""legitimacy": 60"#, r#""legitimacy": 101"#),
-            (r#""legitimacy": 60"#, r#""no_such_axis": 60"#),
+            (r#""legitimacy": 45"#, r#""legitimacy": 101"#),
+            (r#""legitimacy": 45"#, r#""no_such_axis": 45"#),
             (r#"province: "capital""#, r#"province: "nowhere""#),
             (
                 r#""arden", "frostad", "nordheim"]"#,
@@ -135,7 +135,7 @@ mod tests {
             ),
             (r#"Vassal("weir")"#, r#"Vassal("nobody")"#),
             (r#"Foreign("nordmark")"#, r#"Foreign("nobody")"#),
-            (r#""legitimacy": 60"#, r#""loyalty": 60"#),
+            (r#""legitimacy": 45"#, r#""loyalty": 45"#),
         ] {
             let (preset, map) = (PRESET.replacen(from, to, 1), MAP.replacen(from, to, 1));
             assert!(preset != PRESET || map != MAP, "{from}");

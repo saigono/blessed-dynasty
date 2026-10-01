@@ -79,7 +79,9 @@ mod tests {
             &data,
         )
         .unwrap();
-        let world = World::from_preset(&data, &preset);
+        let mut world = World::from_preset(&data, &preset);
+        // The preset makes Nordmark hostile; tests start it neutral (Wait) unless they say so.
+        world.neighbours.get_mut(&nordmark()).unwrap().relation = Fx(0);
         (data, world)
     }
 

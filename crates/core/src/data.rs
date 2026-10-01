@@ -1,6 +1,6 @@
 use crate::fx::Fx;
 use crate::rules::{Action, Event, Predicate};
-use crate::state::{AxisId, Heir, Stance, Vassal, World};
+use crate::state::{AxisId, Heir, Stance, World};
 use crate::time::TimeUnit;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -33,6 +33,18 @@ pub struct Data {
     /// From `add_actions`, not from `rules.ron`.
     #[serde(default)]
     pub actions: Vec<Action>,
+    /// From `add_names`, not from `rules.ron`.
+    #[serde(default)]
+    pub names: Names,
+}
+
+/// Name pools (`data/names.ron`). A vassal house founded by `Effect::Grant` takes the first
+/// name of `vassals` not yet in the world; the name is also its id.
+#[derive(Debug, Clone, PartialEq, Deserialize, Default)]
+pub struct Names {
+    pub rulers: Vec<String>,
+    pub heirs: Vec<String>,
+    pub vassals: Vec<String>,
 }
 
 /// Concurrent actions: the largest `slots` whose `threshold` the axis has reached.
@@ -91,6 +103,16 @@ impl Data {
             a.check(self).map_err(|m| invalid(&a.id, m))?;
         }
         self.actions.extend(actions);
+        Ok(())
+    }
+
+    /// Sets the name pools (`data/names.ron`). Names are unique within a pool.
+    pub fn add_names(&mut self, text: &str) -> Result<(), DataError> {
+        let names: Names = parse(text)?;
+        for pool in [&names.rulers, &names.heirs, &names.vassals] {
+            unique(pool.iter().map(|n| n.as_str()))?;
+        }
+        self.names = names;
         Ok(())
     }
 }
@@ -260,8 +282,9 @@ pub struct StanceRules {
 pub struct GrantRules {
     /// The nearest vassal within this many border crossings takes the province.
     pub max_distance: u32,
-    /// Otherwise the first of these not yet in the world is founded.
-    pub new_vassals: Vec<Vassal>,
+    /// Otherwise a new house from `Data.names.vassals` is founded with these.
+    pub new_loyalty: Fx,
+    pub new_strength: Fx,
 }
 
 #[derive(Debug)]
@@ -397,7 +420,7 @@ mod tests {
         assert!(matches!(load(&no_weight), Err(DataError::Invalid(_))));
     }
 
-    const EVENTS: &str = include_str!("../../../data/events/test.ron");
+    const EVENTS: &str = include_str!("../../../data/events/reign.ron");
     const ACTIONS: &str = include_str!("../../../data/actions.ron");
     const NEIGHBOUR_EVENTS: &str = include_str!("../../../data/events/neighbours.ron");
 
@@ -407,7 +430,7 @@ mod tests {
         data.add_events(EVENTS).unwrap();
         data.add_events(NEIGHBOUR_EVENTS).unwrap();
         data.add_actions(ACTIONS).unwrap();
-        assert_eq!(data.events.len(), 8);
+        assert_eq!(data.events.len(), 37);
         assert_eq!(data.actions.len(), 10);
         // Ids must be unique across files.
         assert!(matches!(
@@ -418,7 +441,7 @@ mod tests {
             data.add_actions(ACTIONS),
             Err(DataError::Invalid(_))
         ));
-        assert_eq!(data.events.len(), 8);
+        assert_eq!(data.events.len(), 37);
     }
 
     #[test]

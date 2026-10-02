@@ -123,9 +123,8 @@ fn golden_seed_42_script_a() {
     // Stage 15: gentler heir deaths, Конрад reigns with children born before; less money;
     // Вейр, grown by the three grants, revolts and takes the land bit by bit.
     // Stage 16: sons and daughters, the coronation resets the factions and tells the trait,
-    // heirs marry one by one: Конрад outlives his father; pious, he brings in the Salic law
-    // and the line ends without a man.
-    assert_eq!((c.years, &c.fall), (151, &FallReason::NoHeir));
+    // heirs marry one by one: Конрад outlives his father and reigns 31 years.
+    assert_eq!((c.years, &c.fall), (91, &FallReason::Usurped));
     let hint = |h: &'static str| Some(h);
     let raid = hint("Набег, отбитый при основателе, научил соседа осторожности.");
     assert_eq!(
@@ -157,9 +156,9 @@ fn golden_seed_42_script_a() {
                 None
             ),
             (
-                "Новый закон о престоле",
-                "Отныне престол наследуют по закону «Салический закон».",
-                None,
+                "Великое бедствие",
+                "В тот год великое наводнение, а за ним мор опустошили землю Оствик.",
+                hint("Основатель кормил край после наводнения."),
             ),
         ]
     );
@@ -1006,11 +1005,11 @@ fn kin_of_seed_42_script_a() {
     );
     assert_eq!((k[0].crowned, k[0].parent), (Some(1187), None));
     assert_eq!(k[0].died, Some(1187 + c.rulers[0].end.0));
-    // Конрад, 6 at the start, reigned from 1221 to 1239; Генрих, born 1196, died 1260
+    // Конрад, 6 at the start, reigned from 1221 to 1252; Генрих, born 1196, died 1265
     // uncrowned; Ирмгард born 1200.
     assert_eq!(
         (k[1].name.as_str(), k[1].born, k[1].crowned, k[1].died),
-        ("Конрад", 1181, Some(1221), Some(1239))
+        ("Конрад", 1181, Some(1221), Some(1252))
     );
     assert_eq!(
         (k[2].name.as_str(), k[2].born, k[2].parent, k[2].crowned),
@@ -1018,7 +1017,7 @@ fn kin_of_seed_42_script_a() {
     );
     assert_eq!(
         (k[3].name.as_str(), k[3].born, k[3].parent, k[3].died),
-        ("Ирмгард", 1200, Some(0), Some(1265))
+        ("Ирмгард", 1200, Some(0), Some(1236))
     );
     // Гизела, born to Конрад in 1201 before his coronation.
     assert_eq!(

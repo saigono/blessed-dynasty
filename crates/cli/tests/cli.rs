@@ -230,3 +230,91 @@ fn calibration_criteria_hold() {
         .unwrap();
     assert!(deserted >= 10, "{deserted}");
 }
+
+/// Stage 16: a batch may start on any law of `heirs.laws`; it tells the share of contested
+/// successions and of law changes; an unknown law fails.
+#[test]
+fn batch_starts_on_a_law() {
+    let out = batch(&["--runs", "3", "--law", "law_salic"]);
+    assert!(out.contains("# спор о престоле: "), "{out}");
+    assert!(out.contains("# закон сменён после основателя в "), "{out}");
+    assert_ne!(out, batch(&["--runs", "3"]));
+    let out = Command::new(env!("CARGO_BIN_EXE_cli"))
+        .args(["batch", "--runs", "1", "--law", "law_nope"])
+        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("нет закона law_nope"));
+}
+
+/// Stage 16 acceptance: 1000 neutral dynasties on each law (the table of docs/calibration.md);
+/// every law has a risk profile of its own: none is best on every row (median years of the
+/// dynasty, NoHeir, Usurped, contested successions).
+/// `cargo test --release -p cli -- --ignored law_profiles`.
+#[test]
+#[ignore = "release only, a minute"]
+fn law_profiles_differ() {
+    let laws = [
+        "law_primogeniture",
+        "law_male",
+        "law_salic",
+        "law_seniority",
+        "law_elective",
+        "law_partition",
+    ];
+    let runs: Vec<_> = (laws.iter())
+        .map(|l| {
+            Command::new(env!("CARGO_BIN_EXE_cli"))
+                .args(["batch", "--runs", "1000", "--law", l])
+                .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+    let outs: Vec<String> = (runs.into_iter())
+        .map(|c| stdout(c.wait_with_output().unwrap()))
+        .collect();
+    let number = |out: &str, prefix: &str| -> i64 {
+        let l = out.lines().find(|l| l.starts_with(prefix));
+        let l = l.unwrap_or_else(|| panic!("{prefix}: {out}"));
+        let digits = l[prefix.len()..]
+            .split(|c: char| !c.is_ascii_digit())
+            .next();
+        digits.unwrap().parse().unwrap_or(0)
+    };
+    let fall = |out: &str, f: &str| {
+        let l = out.lines().find(|l| l.starts_with(&format!("#   {f} ")));
+        l.map_or(0, |l| number(l, &format!("#   {f} ")))
+    };
+    // Every row as "higher is better".
+    let rows: Vec<Vec<i64>> = (outs.iter())
+        .map(|o| {
+            let median = o
+                .lines()
+                .find(|l| l.starts_with("#   лет династии "))
+                .unwrap();
+            let median = median.split(" / ").nth(1).unwrap().parse().unwrap();
+            vec![
+                median,
+                -fall(o, "NoHeir"),
+                -fall(o, "Usurped"),
+                -number(o, "# спор о престоле: "),
+            ]
+        })
+        .collect();
+    for (i, r) in rows.iter().enumerate() {
+        let best_everywhere = (0..r.len()).all(|k| rows.iter().all(|o| r[k] >= o[k]));
+        assert!(
+            !best_everywhere,
+            "{} is best on every row: {rows:?}",
+            laws[i]
+        );
+    }
+    // The risks the laws are for: Salic dies out, seniority quarrels, partition breaks up.
+    let worst = |k: usize| (0..rows.len()).min_by_key(|&i| rows[i][k]).unwrap();
+    assert_eq!(laws[worst(1)], "law_salic", "{rows:?}");
+    assert_eq!(laws[worst(3)], "law_seniority", "{rows:?}");
+    assert!(fall(&outs[5], "NoCrownLand") > fall(&outs[0], "NoCrownLand"));
+}

@@ -233,10 +233,9 @@ fn partition_gives_the_younger_sons_a_province_each() {
             .filter(|p| p.holder == Holder::Vassal(v.id.clone()))
             .collect();
         assert_eq!(held.len(), 1);
-        assert_eq!(
-            (v.loyalty, v.strength),
-            (Fx::from_int(60), Fx::from_int(10))
-        );
+        // The house's (loyalty, strength) of the law.
+        let law = data.heirs.laws.iter().find(|l| l.flag == "law_partition");
+        assert_eq!((v.loyalty, v.strength), law.unwrap().house);
         // The farthest of the crown's lands first.
         let nearer = before.iter().map(|id| &g.world.provinces[id]);
         let max = nearer.filter(|p| p.id != g.world.capital.province);

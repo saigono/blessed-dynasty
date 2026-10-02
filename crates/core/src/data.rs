@@ -435,6 +435,16 @@ pub struct WarRules {
     pub tribute_strength: Fx,
     /// `EndWar(outcome)` adds this to the enemy's strength.
     pub end_strength: Vec<(WarOutcome, Fx)>,
+    /// While at war the crown provinces bring this share of their income less.
+    #[serde(default)]
+    pub income_penalty: Fx,
+    /// Yearly upkeep by army size, `curve` points `(army, upkeep)`; see `war::yearly_income`.
+    #[serde(default)]
+    pub army_upkeep: Vec<(Fx, Fx)>,
+    /// Every year the treasury is below 0, or a year of peace whose income (`war::yearly_income`)
+    /// is below 0, this share of the army deserts.
+    #[serde(default)]
+    pub desertion: Fx,
 }
 
 /// The dynasty simulation after the reign, see `sim::run`.
@@ -649,7 +659,7 @@ mod tests {
             (r#"axis: "bureaucracy""#, r#"axis: "nothing""#),
             (r#"treasury: "treasury""#, r#"treasury: "nothing""#),
             (r#"treasury: "treasury""#, r#"treasury: "loyalty""#),
-            (r#"("army", -0.1)"#, r#"("nothing", -0.1)"#),
+            (r#"("income", 1)"#, r#"("nothing", 1)"#),
             (r#"army: "army""#, r#"army: "nothing""#),
             (r#"("loyalty_nobles", 0.005)"#, r#"("nothing", 0.005)"#),
             ("treasury_full: 100", "treasury_full: 0"),
@@ -682,7 +692,7 @@ mod tests {
         data.add_events(NEIGHBOUR_EVENTS).unwrap();
         data.add_actions(ACTIONS).unwrap();
         assert_eq!(data.events.len(), 38);
-        assert_eq!(data.actions.len(), 11);
+        assert_eq!(data.actions.len(), 15);
         // Ids must be unique across files.
         assert!(matches!(
             data.add_events(EVENTS),

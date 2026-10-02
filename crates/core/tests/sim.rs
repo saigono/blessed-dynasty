@@ -116,12 +116,12 @@ fn texts(c: &Chronicle) -> Vec<(&str, &str, Option<&str>)> {
 fn golden_seed_42_script_a() {
     let (g, end) = script_a(42);
     let c = sim::run(end, &g.data, g.rng.clone());
-    // Stage 12: Конрад does not live to reign (heirs.death), Агнесса does. Round 3: revolt
-    // weight follows the vassal ratio, so Вейр, grown by script A's grants, and Арден rise
-    // early, and the realm ends with no crown land.
-    assert_eq!((c.years, &c.fall), (156, &FallReason::NoCrownLand));
+    // Stage 12: Конрад does not live to reign (heirs.death), Агнесса does.
+    // Stage 14: armies cost by the upkeep curve, the dynasty wars with its own actions;
+    // Вейр rises, Нордмарк declares war, and the realm lives to the horizon.
+    assert_eq!((c.years, &c.fall), (300, &FallReason::Alive));
     let hint = |h: &'static str| Some(h);
-    let spring = hint("Обитель у святого источника, поставленная основателем, кормила край.");
+    let raid = hint("Набег, отбитый при основателе, научил соседа осторожности.");
     assert_eq!(
         texts(&c)[..4],
         [
@@ -131,19 +131,19 @@ fn golden_seed_42_script_a() {
                 hint("Основатель породнил наследника с домом своего барона."),
             ),
             (
-                "Мятеж дома Арден",
-                "В тот год дом Арден поднял мятеж в земле Мар и отказался присягать короне.",
-                spring,
-            ),
-            (
-                "Чума в городе",
-                "В портовом квартале люди падают прямо на улицах. Лекари говорят о чёрной смерти.",
-                hint("Пережитый при основателе мор сплотил страну."),
-            ),
-            (
                 "Мятеж дома Вейр",
-                "В тот год дом Вейр поднял мятеж в земле Берг и отказался присягать короне.",
-                spring,
+                "В тот год дом Вейр поднял мятеж в земле Хольм и отказался присягать короне.",
+                hint("Обитель у святого источника, поставленная основателем, кормила край."),
+            ),
+            (
+                "Нордмарк объявляет войну",
+                "Нордмарк шлёт глашатаев, и те бросают к трону перчатку. Вражье войско собирается у границы.",
+                raid,
+            ),
+            (
+                "Война: Нордмарк",
+                "Объявлена война, против короны стоит Нордмарк. Войско надо собрать прежде, чем враг перейдёт границу.",
+                raid,
             ),
         ]
     );
@@ -666,6 +666,8 @@ fn an_unfinished_war_starts_over_under_the_heir() {
         their_strength: Fx(0),
         war_score: Fx(0),
         started: Tick(0),
+        target: None,
+        battles: vec![],
     });
     let c = sim::run(end_now(&g), &data, Rng::from_seed(1));
     let events: Vec<_> = c
@@ -794,6 +796,35 @@ fn auto_chooser_weighs_effects_by_the_ruler_traits() {
         .map(|_| noisy.choose(&mut g, &war_or_peace))
         .collect();
     assert_eq!(picks.len(), 2);
+}
+
+/// Stage 14: the automaton pays for its army. With `army_upkeep` weighed, more soldiers are
+/// worth less the bigger the army already is, and past some size nothing.
+#[test]
+fn auto_chooser_counts_the_army_upkeep() {
+    let data = content();
+    let mut g = game(&data, 1);
+    let soldiers = choices(
+        r#"[(text: "", effects: [Axis("treasury", 10)], cause_tag: ""),
+            (text: "", effects: [Axis("army", 20)], cause_tag: "")]"#,
+    );
+    let auto = |upkeep: i64| AutoChooser {
+        weights: [("army", 1), ("treasury", 1), ("army_upkeep", upkeep)]
+            .map(|(k, v)| (k.to_string(), Fx::from_int(v)))
+            .into(),
+        noise: Fx(0),
+    };
+    let at = |g: &mut Game, army: i64| {
+        g.world.axes.insert(ax("army"), Fx::from_int(army));
+    };
+    // Army 50: 20 more cost 4 a year (curve 5 -> 9); weighed 2, +20 - 8 beats +10.
+    at(&mut g, 50);
+    assert_eq!(auto(0).choose(&mut g, &soldiers), 1);
+    assert_eq!(auto(-2).choose(&mut g, &soldiers), 1);
+    // Army 200: 20 more cost 20 a year; +20 - 40 loses to +10. Without the upkeep it wins.
+    at(&mut g, 200);
+    assert_eq!(auto(-2).choose(&mut g, &soldiers), 0);
+    assert_eq!(auto(0).choose(&mut g, &soldiers), 1);
 }
 
 #[test]

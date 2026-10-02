@@ -6,7 +6,7 @@ use crate::fx::Fx;
 use crate::game::{ActionId, Game, PendingEvent, ReignEnd, Step};
 use crate::rng::Rng;
 use crate::rules::{Choice, Effect, Event, HeirOp, NewHolder, Predicate, ProvinceField, Target};
-use crate::state::{CauseTag, HeirStatus, Holder, Kin, MarkKey, ProvinceId, Ruler, World};
+use crate::state::{Axes, CauseTag, HeirStatus, Holder, Kin, MarkKey, ProvinceId, Ruler, World};
 use crate::time::Tick;
 use crate::war::WarStage;
 use serde::{Deserialize, Serialize};
@@ -24,6 +24,9 @@ pub struct Chronicle {
     /// The family tree at the end, `World.kin`.
     #[serde(default)]
     pub kin: Vec<Kin>,
+    /// The axes at the end, e.g. the army a dynasty fell or lived on with.
+    #[serde(default)]
+    pub axes: Axes,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -83,6 +86,7 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
             ..founder
         }],
         kin: Vec::new(),
+        axes: Axes::new(),
     };
     let mut world = reign_end.world;
     died(&mut world, &data, c.rulers[0].cause.as_deref());
@@ -194,6 +198,7 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
     let w = &g.world;
     c.years = w.tick.year(w.time_unit);
     c.kin = w.kin.clone();
+    c.axes = w.axes.clone();
     let last = c.rulers.last_mut().expect("a ruler reigned");
     if last.cause.is_none() {
         last.end = w.tick;
@@ -508,12 +513,21 @@ impl AutoChooser {
     /// `province_population`, `province_loyalty`, `health`, `relation`, `crown_power`
     /// (by the delta), `build`, `grant`, `revoke`, `secede`, `war`, `hostage`, `death`,
     /// `abdicate` (+1 each), `province` (+1 gained, -1 given away), `heir` (+1 born, -1 lost),
-    /// `heir_ability`, `heir_claim` (by the delta). A chance weighs both branches by its odds.
+    /// `heir_ability`, `heir_claim` (by the delta), `army_upkeep` (by the change in the yearly
+    /// upkeep a change of the army brings). A chance weighs both branches by its odds.
     fn worth(&self, effects: &[Effect], w: &World, data: &Data) -> Fx {
         let one = Fx::from_int(1);
         let mut sum = Fx(0);
         for e in effects {
             let (key, v): (&str, Fx) = match e {
+                Effect::Axis(a, d) if *a == data.war.army => {
+                    // An army is paid for every year: `army_upkeep` by the change in upkeep.
+                    let (upkeep, army) = (&data.war.army_upkeep, w.axes[a]);
+                    let more =
+                        crate::data::curve(upkeep, army + *d) - crate::data::curve(upkeep, army);
+                    sum = sum + self.weight("army_upkeep") * more;
+                    (&a.0, *d)
+                }
                 Effect::Axis(a, d) => (&a.0, *d),
                 Effect::Tribute(v) => (&data.economy.treasury.0, *v),
                 Effect::Province(_, ProvinceField::Income, d) => ("province_income", *d),

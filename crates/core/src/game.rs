@@ -158,6 +158,9 @@ impl Game {
                     ActionTarget::Heir => (w.heirs.iter())
                         .filter_map(|h| free(Target::Heir(h.id)))
                         .collect(),
+                    ActionTarget::Enemy => (w.war.iter())
+                        .filter_map(|x| free(Target::Neighbour(x.enemy.clone())))
+                        .collect(),
                 };
                 (!targets.is_empty()).then(|| (a.id.clone(), targets))
             })
@@ -380,14 +383,20 @@ impl Game {
         }
     }
 
-    /// Treasury, aging, drift. Yearly amounts are spread over the ticks of a year.
+    /// Treasury, aging, desertion, drift. Yearly amounts are spread over the ticks of a year.
     fn passive(&mut self) {
         let (d, w) = (&self.data, &mut self.world);
         let per_tick = |v: Fx| v / Fx::from_int(d.time_unit.ticks_per_year as i64);
-        let income = d.economy.yearly_income(w);
+        let income = crate::war::yearly_income(w, d);
         add_axis(w, d, &d.economy.treasury, per_tick(income));
 
         if w.tick.0 % d.time_unit.ticks_per_year == 0 {
+            // No pay, no soldiers: an empty treasury, or a year of peace whose income does
+            // not cover the army.
+            if w.axes[&d.economy.treasury] < Fx(0) || (w.war.is_none() && income < Fx(0)) {
+                let gone = w.axes[&d.war.army] * d.war.desertion;
+                add_axis(w, d, &d.war.army, Fx(0) - gone);
+            }
             w.ruler.age += 1;
             w.heirs.iter_mut().for_each(|h| h.age += 1);
             heirs_year(d, w, &mut self.rng);
@@ -433,10 +442,22 @@ impl Game {
             let def = def.expect("only known actions start");
             let target = a.target.clone().map(|key| match def.target {
                 ActionTarget::Province(_) => Target::Province(ProvinceId(key)),
-                ActionTarget::Neighbour => Target::Neighbour(NeighbourId(key)),
+                ActionTarget::Neighbour | ActionTarget::Enemy => {
+                    Target::Neighbour(NeighbourId(key))
+                }
                 ActionTarget::Heir => Target::Heir(key.parse().expect("written by target_key")),
                 ActionTarget::None => unreachable!("untargeted actions store no target"),
             });
+            // The state behind a foreign province target, e.g. the enemy of a war declared
+            // for one of its provinces.
+            let behind = match &target {
+                Some(Target::Province(id)) => match self.world.provinces.get(id).map(|p| &p.holder)
+                {
+                    Some(Holder::Foreign(n)) => Some(n.clone()),
+                    _ => None,
+                },
+                _ => None,
+            };
             let (effects, tag) = (def.on_complete.clone(), def.cause_tag.clone());
             // The decision that started it; none for the simulation's automaton.
             let started = self.decisions.iter().rposition(|d| match &d.kind {
@@ -446,7 +467,7 @@ impl Game {
                 _ => false,
             });
             let before = started.map(|_| self.world.without_marks());
-            self.apply(&effects, target.as_ref(), None);
+            self.apply(&effects, target.as_ref(), behind.as_ref());
             if let (Some(idx), Some(before)) = (started, before) {
                 self.mark(idx, &tag, &before);
             }
@@ -971,6 +992,8 @@ mod tests {
             their_strength: Fx(0),
             war_score: Fx(0),
             started: Tick(0),
+            target: None,
+            battles: vec![],
         });
         g.world.heirs[0].status = HeirStatus::Hostage(nordmark.clone());
         let queued = |id: &str, target: Option<Target>| {
@@ -1622,6 +1645,7 @@ mod tests {
         let mut data = bare();
         data.time_unit = TimeUnit { ticks_per_year: 4 };
         data.economy.flows = vec![(ax("income"), Fx::from_int(1)), (ax("army"), Fx(-100))];
+        data.war.army_upkeep.clear(); // the linear upkeep above only
         data.drift.step = Fx::from_int(1);
         data.drift.province_loyalty = Fx::from_int(50);
         let mut g = game(data, 1);

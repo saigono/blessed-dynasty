@@ -1,4 +1,5 @@
-// Map actions (stage 3), the war (stage 4) and the stage 2 test action. Stage 9 adds the rest.
+// Map actions (stage 3), the war (stage 4) and the stage 2 test action. Stage 9 adds the rest,
+// stage 14 the actions of a war going on.
 [
     // The succession law is a flag; one action per law, since ActionTarget has no law
     // target. Claims follow the law year by year (rules.ron `heirs.laws`).
@@ -133,15 +134,16 @@
         cause_tag: "royal_progress",
     ),
     (
-        // Starts the war chain of events/war.ron at once; one war at a time.
+        // Starts the war chain of events/war.ron at once; one war at a time. The target is
+        // the enemy province the war is fought for: victory takes it (ProvinceTarget WarTarget).
         id: "declare_war",
-        description: "Начать войну с соседом: дальше цепочка событий войны. Война с другом ославит вас предателем.",
+        description: "Начать войну за пограничную провинцию соседа: выберите её на карте или из списка, победа отдаст её короне. Пока идёт война, доход короны ниже. Война с другом ославит вас предателем.",
         name: "Объявить войну",
         duration_years: 0,
         cost: 20,
         requires: Not(AtWar),
         min_crown_power: 0,
-        target: Neighbour,
+        target: Province((holder: Foreign, borders_realm: true)),
         // War on a friend (relation above neighbour_ai.friendly_above) earns a name for
         // treachery: prestige and every other neighbour's trust drop.
         on_complete: [
@@ -151,5 +153,60 @@
             Axis("loyalty_people", -3),
         ],
         cause_tag: "war_declared_by_crown",
+    ),
+    // While a war goes on (not yet at its terms of peace), against its enemy.
+    (
+        id: "war_recruit",
+        description: "Деньги превращаются в солдат: армия сразу растёт. Большую армию содержать дорого, и в мирные годы она тоже ест казну.",
+        name: "Набрать войско",
+        duration_years: 0,
+        cost: 60,
+        requires: All([AtWar, Not(WarStage(Peace))]),
+        min_crown_power: 0,
+        target: Enemy,
+        on_complete: [Axis("army", 20)],
+        cause_tag: "war_recruit",
+    ),
+    (
+        id: "war_battle",
+        description: "Битва вне очереди: счёт войны сдвинется в пользу сильнейшего. Войско несёт потери.",
+        name: "Дать сражение",
+        duration_years: 0,
+        cost: 10,
+        requires: All([AtWar, Not(WarStage(Peace))]),
+        min_crown_power: 0,
+        target: Enemy,
+        on_complete: [Clash, Axis("army", -5)],
+        cause_tag: "war_battle",
+    ),
+    (
+        // The terms follow the war score now: the outcome event whose `when` fits fires.
+        id: "war_peace_talks",
+        description: "Мир на условиях нынешнего счёта войны: при перевесе враг уступит цель войны, при равенстве разойдутся на прежних границах, при неудаче условия диктует враг.",
+        name: "Переговоры о мире",
+        duration_years: 0,
+        cost: 30,
+        requires: All([AtWar, Not(WarStage(Peace))]),
+        min_crown_power: 0,
+        target: Enemy,
+        on_complete: [SetWarStage(Peace), SpawnEvent("war_victory", 0), SpawnEvent("war_defeat", 0), SpawnEvent("war_draw", 0)],
+        cause_tag: "war_peace_talks",
+    ),
+    (
+        // Long but sure: no roll against the enemy, only the field army must hold the field.
+        id: "war_siege_target",
+        description: "Правильная осада провинции, за которую идёт война: два года и серебро на припасы. Если к концу осады войско держит поле (счёт войны выше нуля), провинция сдаётся и враг подписывает мир.",
+        name: "Осадить цель войны",
+        duration_years: 2,
+        cost: 60,
+        requires: All([AtWar, Not(WarStage(Peace))]),
+        min_crown_power: 0,
+        target: Enemy,
+        on_complete: [Chance((
+            percent: 0,
+            bonus: [(WarScoreAbove(0), 100)],
+            then: [TransferProvince(WarTarget, Crown), Axis("prestige", 10), Relation(EventTarget, -20), EndWar(Victory)],
+        ))],
+        cause_tag: "war_siege_target",
     ),
 ]

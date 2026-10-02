@@ -136,6 +136,7 @@ impl MapView {
             .filter_map(|a| a.target.as_deref())
             .collect();
 
+        let war_target = w.war.as_ref().and_then(|x| x.target.as_ref());
         let mut mesh = Mesh::default();
         let (mut base, mut top) = (Vec::new(), Vec::new());
         for (id, (poly, tris)) in &self.shapes {
@@ -158,6 +159,9 @@ impl MapView {
             }
             if marked.contains(id) {
                 top.push(Shape::closed_line(pts.clone(), Stroke::new(2.5, FG)));
+            }
+            if war_target == Some(id) {
+                top.push(Shape::closed_line(pts.clone(), Stroke::new(4.0, RUBRIC)));
             }
             if building.contains(id.0.as_str()) {
                 let mut ring = pts;
@@ -200,10 +204,14 @@ impl MapView {
                 FG
             };
             let font = eframe::egui::FontId::proportional(size);
+            let (name, color) = match war_target == Some(id) {
+                true => (format!("⚔ {}", p.name), RUBRIC),
+                false => (p.name.clone(), color),
+            };
             painter.text(
                 self.to_screen(c),
                 eframe::egui::Align2::CENTER_CENTER,
-                &p.name,
+                name,
                 font,
                 color,
             );
@@ -222,6 +230,9 @@ impl MapView {
                 ui.label(format!("Лояльность {}", round(p.loyalty)));
                 ui.label(format!("Сила короны {}", round(p.crown_power)));
                 ui.label(format!("Доход {}", round(p.income)));
+                if war_target == Some(&p.id) {
+                    ui.label(eframe::egui::RichText::new("Цель войны").color(RUBRIC));
+                }
             });
         }
         clicked
@@ -265,6 +276,9 @@ pub fn legend(ui: &mut Ui, w: &World) {
             (FG, "стройка (пунктир)".into()),
             (BORDER, "граница владений".into()),
         ]);
+        if w.war.is_some() {
+            items.push((RUBRIC, "⚔ цель войны".into()));
+        }
         for (color, text) in items {
             let (r, _) = ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
             ui.painter().rect_filled(r, 0.0, color);

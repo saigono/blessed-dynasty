@@ -115,6 +115,8 @@ pub struct ProvinceFilter {
     pub vassal_stronger: Option<bool>,
     /// Held by a vassal whose `World::vassal_ratio` here is above this.
     pub vassal_ratio_above: Option<Fx>,
+    /// Borders a province of the crown or a vassal; for foreign land, what a war can take.
+    pub borders_realm: Option<bool>,
 }
 
 impl ProvinceFilter {
@@ -147,6 +149,12 @@ impl ProvinceFilter {
             && (self.capital).is_none_or(|c| c == (p.id == w.capital.province))
             && self.vassal_stronger.is_none_or(|b| b == stronger())
             && (self.vassal_ratio_above).is_none_or(|v| w.vassal_ratio(p).is_some_and(|r| r > v))
+            && self.borders_realm.is_none_or(|b| {
+                let own = |q: &ProvinceId| {
+                    (w.provinces.get(q)).is_some_and(|q| !matches!(q.holder, Holder::Foreign(_)))
+                };
+                b == p.neighbours.iter().any(own)
+            })
     }
 }
 
@@ -177,7 +185,8 @@ pub enum Effect {
     /// Applies `then` or `otherwise` by a roll. Applied by `Game`, which owns the rng.
     Chance(Chance),
     /// Starts a war on the neighbour and queues `Data.war.start_event` at it for now.
-    /// A no-op while a war goes on.
+    /// The war is fought for the province of the event or action if the enemy holds it,
+    /// else for `war::enemy_border`. A no-op while a war goes on.
     StartWar(NeighbourTarget),
     /// A battle of the current war, see `war::clash`. Applied by `Game`, which owns the rng.
     Clash,
@@ -244,8 +253,10 @@ pub enum ProvinceTarget {
     /// `World::weakest_border` with the neighbour of the event or action.
     OwnBorder,
     /// That neighbour's province next to the kingdom closest to the capital, smallest id
-    /// on a tie: what a siege takes.
+    /// on a tie (`war::enemy_border`).
     EnemyBorder,
+    /// The target of the current war while the enemy holds it (`War.target`).
+    WarTarget,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -414,6 +425,15 @@ impl Effect {
                     return;
                 }
                 let (ours, theirs) = crate::war::strengths(w, ctx.data, enemy);
+                let theirs_here = |id: &&ProvinceId| {
+                    (w.provinces.get(*id))
+                        .is_some_and(|p| p.holder == Holder::Foreign(enemy.clone()))
+                };
+                let target = match ctx.target {
+                    Some(Target::Province(id)) => Some(id).filter(theirs_here).cloned(),
+                    _ => None,
+                };
+                let target = target.or_else(|| crate::war::enemy_border(w, enemy));
                 w.war = Some(War {
                     enemy: enemy.clone(),
                     stage: WarStage::Declared,
@@ -421,6 +441,8 @@ impl Effect {
                     their_strength: theirs,
                     war_score: Fx(0),
                     started: w.tick,
+                    target,
+                    battles: Vec::new(),
                 });
                 let p = PendingEvent {
                     event_id: ctx.data.war.start_event.clone(),
@@ -582,16 +604,12 @@ impl ProvinceTarget {
             (ProvinceTarget::ById(id), ..) => Some(id.clone()),
             (ProvinceTarget::EventTarget, Some(Target::Province(id)), _) => Some(id.clone()),
             (ProvinceTarget::OwnBorder, _, Some(n)) => w.weakest_border(n).map(|p| p.id.clone()),
-            (ProvinceTarget::EnemyBorder, _, Some(n)) => {
-                let own = |q: &ProvinceId| {
-                    (w.provinces.get(q)).is_some_and(|q| !matches!(q.holder, Holder::Foreign(_)))
-                };
-                (w.provinces.values())
-                    .filter(|p| {
-                        p.holder == Holder::Foreign(n.clone()) && p.neighbours.iter().any(own)
-                    })
-                    .min_by_key(|p| p.distance_to_capital)
-                    .map(|p| p.id.clone())
+            (ProvinceTarget::EnemyBorder, _, Some(n)) => crate::war::enemy_border(w, n),
+            (ProvinceTarget::WarTarget, ..) => {
+                let war = w.war.as_ref()?;
+                let id = war.target.as_ref()?;
+                let held = w.provinces.get(id)?.holder == Holder::Foreign(war.enemy.clone());
+                held.then(|| id.clone())
             }
             _ => None,
         }
@@ -726,6 +744,8 @@ pub enum ActionTarget {
     Province(ProvinceFilter),
     Neighbour,
     Heir,
+    /// The enemy of the current war; no target, so unavailable, in peace.
+    Enemy,
 }
 
 impl Action {
@@ -1154,6 +1174,8 @@ mod tests {
             their_strength: Fx(0),
             war_score: Fx::from_int(10),
             started: Tick(0),
+            target: None,
+            battles: vec![],
         });
         assert!(p(&w, "AtWar") && p(&w, "WarStage(Fighting)") && !p(&w, "WarStage(Peace)"));
         assert!(p(&w, "WarScoreAbove(9.999)") && !p(&w, "WarScoreAbove(10)"));
@@ -1233,6 +1255,13 @@ mod tests {
         assert_eq!(holder(&w, "frostad"), Holder::Crown);
         w.recompute_crown_power(&data);
         assert_eq!(w.provinces[&pid("frostad")].crown_power, Fx::from_int(50)); // 60 - 2 * 5
+        // The war, declared at Nordmark itself, is for that same default province; the enemy
+        // no longer holds it, so the war's target is nothing to take.
+        assert_eq!(w.war.as_ref().unwrap().target, Some(pid("frostad")));
+        let before = w.clone();
+        let text = "TransferProvince(WarTarget, Foreign(EventTarget))";
+        apply(&mut w, &data, &mut queue, text, Some(&at_nordmark), None);
+        assert_eq!(w, before);
         // The neighbour behind a province target counts: arden is the weakest on its border.
         let text = "TransferProvince(OwnBorder, Foreign(EventTarget))";
         apply(

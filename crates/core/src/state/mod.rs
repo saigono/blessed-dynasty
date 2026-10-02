@@ -569,6 +569,8 @@ mod tests {
             their_strength: Fx::from_int(40),
             war_score: Fx(-12_250),
             started: Tick(2),
+            target: None,
+            battles: vec![],
         });
         w.axes.insert(AxisId("treasury".into()), Fx(-1_250));
         for (i, stance) in [Stance::Expand, Stance::Defend, Stance::Trade, Stance::Wait]

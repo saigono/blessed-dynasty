@@ -235,8 +235,8 @@ fn chooser(f: &Files, g: &Game, name: &str) -> Result<Option<AutoChooser>, Strin
     Ok(Some(auto))
 }
 
-/// One game of `batch`: (seed, reign years, dynasty years, score, fall).
-type Row = (u64, u32, u32, i64, FallReason);
+/// One game of `batch`: (seed, reign years, dynasty years, score, fall, army at the end).
+type Row = (u64, u32, u32, i64, FallReason, i64);
 
 /// Years before which the founder's death counts as early (DESIGN 4.3).
 const EARLY_YEARS: u32 = 10;
@@ -259,16 +259,18 @@ fn batch_row(
             MAX_YEARS.0
         ));
     };
-    Ok((seed, reign, c.years, s.total, c.fall))
+    let army = c.axes.get(&g.data.war.army).map_or(0, |a| a.0 / Fx::SCALE);
+    Ok((seed, reign, c.years, s.total, c.fall, army))
 }
 
 /// The CSV, then `#` lines: quartiles of the dynasty years, score and reign years, the share
 /// of early deaths, the fall reasons by frequency.
 fn batch_report(rows: &[Row]) -> String {
-    let mut out = String::from("seed,reign_years,dynasty_years,score,fall_reason,early_death\n");
-    for (seed, reign, years, score, fall) in rows {
+    let mut out =
+        String::from("seed,reign_years,dynasty_years,score,fall_reason,early_death,army\n");
+    for (seed, reign, years, score, fall, army) in rows {
         let early = *reign < EARLY_YEARS;
-        out += &format!("{seed},{reign},{years},{score},{fall:?},{early}\n");
+        out += &format!("{seed},{reign},{years},{score},{fall:?},{early},{army}\n");
     }
     let quartiles = |mut v: Vec<i64>| {
         v.sort();
@@ -287,6 +289,10 @@ fn batch_report(rows: &[Row]) -> String {
     out += &format!(
         "#   лет правления {}\n",
         quartiles(rows.iter().map(|r| r.1 as i64).collect())
+    );
+    out += &format!(
+        "#   армия в конце {}\n",
+        quartiles(rows.iter().map(|r| r.5).collect())
     );
     let early = rows.iter().filter(|r| r.1 < EARLY_YEARS).count();
     out += &format!(
@@ -641,7 +647,7 @@ mod tests {
 
     #[test]
     fn batch_summary() {
-        let row = |seed, reign, score, fall| (seed, reign, 100, score, fall);
+        let row = |seed, reign, score, fall| (seed, reign, 100, score, fall, reign as i64);
         let rows = [
             row(0, 5, 10, FallReason::NoHeir),
             row(1, 30, 30, FallReason::Usurped),
@@ -652,9 +658,9 @@ mod tests {
         let mut lines = out.lines();
         assert_eq!(
             lines.next(),
-            Some("seed,reign_years,dynasty_years,score,fall_reason,early_death")
+            Some("seed,reign_years,dynasty_years,score,fall_reason,early_death,army")
         );
-        assert_eq!(lines.next(), Some("0,5,100,10,NoHeir,true"));
+        assert_eq!(lines.next(), Some("0,5,100,10,NoHeir,true,5"));
         let summary: Vec<_> = lines.skip(3).collect();
         assert_eq!(
             summary,
@@ -664,6 +670,7 @@ mod tests {
                 "#   лет династии 100 / 100 / 100",
                 "#   счёт 20 / 30 / 40",
                 "#   лет правления 20 / 30 / 40",
+                "#   армия в конце 20 / 30 / 40",
                 "# ранняя смерть 25%",
                 "# причины падения:",
                 "#   Usurped 50%",

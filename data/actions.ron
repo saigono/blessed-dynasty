@@ -168,6 +168,20 @@
         cause_tag: "neighbour_married",
     ),
     (
+        // Open to an heir unwed and of marriage.age (Game::available_actions), in war too:
+        // war events take the year's event, and heir_marriage with it.
+        id: "marry_heir",
+        description: "Женить наследника или выдать наследницу замуж в дом своего барона. Дети от брака законны и наследуют престол.",
+        name: "Женить наследника",
+        duration_years: 0,
+        cost: 20,
+        requires: All([]),
+        min_crown_power: 0,
+        target: Heir,
+        on_complete: [HeirOp(TargetMarry)],
+        cause_tag: "heir_wed",
+    ),
+    (
         // Over the law: heirs.designate_penalty, unless the heir named is the rightful one.
         id: "designate_heir",
         description: "Назвать наследника своей волей, а не по закону. Если закон ставит первым другого, легитимность, знать и церковь сразу недовольны, обойдённый сохраняет претензию, и при воцарении престол оспорят вероятнее.",

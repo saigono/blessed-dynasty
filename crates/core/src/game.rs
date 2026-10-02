@@ -147,6 +147,7 @@ impl Game {
                     (w.active_actions.iter()).any(|x| x.id == a.id && same(x))
                 };
                 let free = |t: Target| (!busy(Some(&t))).then_some(t);
+                let weds = (a.on_complete).contains(&Effect::HeirOp(HeirOp::TargetMarry));
                 let targets: Vec<Target> = match &a.target {
                     ActionTarget::Province(f) => (w.provinces.values())
                         .filter(|p| f.matches(p, w) && p.crown_power >= a.min_crown_power)
@@ -159,7 +160,9 @@ impl Game {
                         .filter(|n| !a.marries() || m.chance(w, &self.data, n) > Fx(0))
                         .filter_map(|n| free(Target::Neighbour(n.clone())))
                         .collect(),
+                    // A wedding only for an heir unwed and of `marriage.age`.
                     ActionTarget::Heir => (w.heirs.iter())
+                        .filter(|h| !weds || (!h.married && h.age >= m.age))
                         .filter_map(|h| free(Target::Heir(h.id)))
                         .collect(),
                     ActionTarget::Enemy => (w.war.iter())

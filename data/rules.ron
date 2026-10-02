@@ -2,20 +2,21 @@
     // 1 = year, 4 = seasons, 12 = months. Durations in data are always in years.
     time_unit: (ticks_per_year: 1),
 
-    // State axes: the world starts with `default`, a preset may override it.
+    // State axes: the world starts with `default`, a preset may override it. `name` is shown
+    // in the UI.
     axes: [
-        (id: "treasury", min: -1000, max: 10000, default: 100),
-        (id: "income", min: -100, max: 1000, default: 10),
-        (id: "army", min: 0, max: 1000, default: 50),
-        (id: "legitimacy", min: 0, max: 100, default: 50),
-        (id: "stability", min: 0, max: 100, default: 50),
-        (id: "bureaucracy", min: 0, max: 100, default: 20),
-        (id: "loyalty_nobles", min: 0, max: 100, default: 50),
-        (id: "loyalty_church", min: 0, max: 100, default: 50),
-        (id: "loyalty_people", min: 0, max: 100, default: 50),
-        (id: "prestige", min: 0, max: 1000, default: 0),
+        (id: "treasury", min: -1000, max: 10000, default: 100, name: "Казна"),
+        (id: "income", min: -100, max: 1000, default: 10, name: "Доход"),
+        (id: "army", min: 0, max: 1000, default: 50, name: "Армия"),
+        (id: "legitimacy", min: 0, max: 100, default: 50, name: "Легитимность"),
+        (id: "stability", min: 0, max: 100, default: 50, name: "Стабильность"),
+        (id: "bureaucracy", min: 0, max: 100, default: 20, name: "Бюрократия"),
+        (id: "loyalty_nobles", min: 0, max: 100, default: 50, name: "Знать"),
+        (id: "loyalty_church", min: 0, max: 100, default: 50, name: "Церковь"),
+        (id: "loyalty_people", min: 0, max: 100, default: 50, name: "Народ"),
+        (id: "prestige", min: 0, max: 1000, default: 0, name: "Престиж"),
         // Derived from the faction axes, never written directly; the default is ignored.
-        (id: "loyalty", min: 0, max: 100, default: 50),
+        (id: "loyalty", min: 0, max: 100, default: 50, name: "Лояльность"),
     ],
 
     // Each faction's loyalty is its axis. `loyalty_axis` = weighted mean, rounded toward zero.
@@ -58,6 +59,10 @@
 
     // Weight of a quiet tick in the random event pick, next to the weights of the events.
     quiet_weight: 20,
+
+    // Province loyalty below this shows as unrest on the map. Display only; below the
+    // start loyalty of every own province (40 and up), between the sim triggers (30, 40).
+    unrest_below: 35,
 
     // A newborn from HeirOp(Add).
     new_heir: (name: "Младенец", age: 0, ability: 50, claim: 50, status: Home),
@@ -222,6 +227,22 @@
             crowned: ("Новое правление", "Престол наследует {ruler}."),
             province_lost: ("Потеря земли", "Земля {province} потеряна, ею владеет {neighbour}."),
             province_gained: ("Земля возвращена", "Земля {province} отошла к короне. Прежний владелец: {neighbour}."),
+            // What ended a reign (a RulerDies cause or the abdication event id) and the dynasty,
+            // as shown to the player.
+            reign_ends: {
+                "illness": "болезнь",
+                "assassination": "убийство",
+                "war_wound": "рана на войне",
+                "abdication": "отречение",
+            },
+            // The subject is the dynasty (feminine): «89 лет на троне · пала от узурпации».
+            falls: [
+                (NoHeir, "пресеклась без наследника"),
+                (CapitalLost, "пала с потерей столицы"),
+                (Usurped, "пала от узурпации"),
+                (NoCrownLand, "распалась на уделы"),
+                (Alive, "правит до сих пор"),
+            ],
         ),
     ),
 )

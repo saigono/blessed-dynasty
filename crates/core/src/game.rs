@@ -339,10 +339,7 @@ impl Game {
     fn passive(&mut self) {
         let (d, w) = (&self.data, &mut self.world);
         let per_tick = |v: Fx| v / Fx::from_int(d.time_unit.ticks_per_year as i64);
-        let crown = w.provinces.values().filter(|p| p.holder == Holder::Crown);
-        let income = crown.fold(Fx(0), |sum, p| sum + p.income);
-        let flows = d.economy.flows.iter();
-        let income = flows.fold(income, |sum, (a, k)| sum + w.axes[a] * *k);
+        let income = d.economy.yearly_income(w);
         add_axis(w, d, &d.economy.treasury, per_tick(income));
 
         if w.tick.0 % d.time_unit.ticks_per_year == 0 {
@@ -1395,6 +1392,8 @@ mod tests {
         data.drift.step = Fx::from_int(1);
         data.drift.province_loyalty = Fx::from_int(50);
         let mut g = game(data, 1);
+        // The yearly sum below, as the UI shows it.
+        assert_eq!(g.data.economy.yearly_income(&g.world), Fx::from_int(49));
         g.world.crown_modifiers.insert(pid("holm"), Fx(500));
         g.wait().unwrap();
         assert_eq!(g.world.crown_modifiers[&pid("holm")], Fx(250));

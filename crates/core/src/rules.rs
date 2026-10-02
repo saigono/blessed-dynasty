@@ -141,7 +141,7 @@ impl ProvinceFilter {
                 .as_ref()
                 .is_none_or(|b| p.buildings.contains(b))
             && (self.without_building.as_ref()).is_none_or(|b| !p.buildings.contains(b))
-            && (self.borders_foreign).is_none_or(|b| b == !w.foreign_neighbours(&p.id).is_empty())
+            && (self.borders_foreign).is_none_or(|b| b == w.foreign_of(p).next().is_some())
             && (self.capital).is_none_or(|c| c == (p.id == w.capital.province))
             && self.vassal_stronger.is_none_or(|b| b == stronger())
     }

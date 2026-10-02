@@ -1,0 +1,14 @@
+// Strategies of `cli run/batch --strategy` (`neutral` is built in: the middle choice of every
+// event, no actions). Each one plays the founder's reign with sim::AutoChooser: the founder's
+// own weights (rules.ron sim.auto: base plus his traits) plus the weights below, same keys.
+// The dynasty after him is simulated as always.
+{
+    // Keeps every province: never grants, takes land back from the vassals.
+    "crown_all": {"grant": -100, "revoke": 40, "crown_power": 1},
+    // Gives every province it can to the vassals, never takes one back.
+    "vassal_all": {"grant": 60, "revoke": -100},
+    // Declares wars and fights them for land.
+    "warmonger": {"war": 80, "province": 40, "army": 1, "prestige": 1},
+    // Builds forts, roads and markets.
+    "builder": {"build": 30, "province_income": 5, "grant": -20, "war": -20},
+}

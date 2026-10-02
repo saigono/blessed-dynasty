@@ -1,0 +1,5 @@
+# Without this file trunk reads its config from the workspace Cargo.toml and fails
+# on the virtual manifest. `trunk serve crates/ui` from the repository root.
+[build]
+target = "crates/ui/index.html"
+dist = "crates/ui/dist"

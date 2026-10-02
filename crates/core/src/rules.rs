@@ -141,7 +141,7 @@ impl ProvinceFilter {
                 .as_ref()
                 .is_none_or(|b| p.buildings.contains(b))
             && (self.without_building.as_ref()).is_none_or(|b| !p.buildings.contains(b))
-            && (self.borders_foreign).is_none_or(|b| b == !w.foreign_neighbours(&p.id).is_empty())
+            && (self.borders_foreign).is_none_or(|b| b == w.foreign_of(p).next().is_some())
             && (self.capital).is_none_or(|c| c == (p.id == w.capital.province))
             && self.vassal_stronger.is_none_or(|b| b == stronger())
     }
@@ -1127,7 +1127,7 @@ mod tests {
         );
         assert_eq!(
             (war.our_strength, war.their_strength),
-            (Fx::from_int(60), Fx::from_int(40))
+            (Fx::from_int(60), Fx::from_int(60))
         );
         // One war at a time: the second is refused and queues nothing.
         apply(
@@ -1189,7 +1189,7 @@ mod tests {
             None,
         );
         assert_eq!(w.axes[&ax("treasury")], Fx::from_int(100));
-        assert_eq!(strength(&w), Fx::from_int(45));
+        assert_eq!(strength(&w), Fx::from_int(65));
 
         apply(
             &mut w,
@@ -1213,7 +1213,7 @@ mod tests {
 
         // Victory: Nordmark loses 10.
         apply(&mut w, &data, &mut queue, "EndWar(Victory)", None, None);
-        assert_eq!((w.war.clone(), strength(&w)), (None, Fx::from_int(35)));
+        assert_eq!((w.war.clone(), strength(&w)), (None, Fx::from_int(55)));
         // Strength never goes below 0.
         apply(
             &mut w,

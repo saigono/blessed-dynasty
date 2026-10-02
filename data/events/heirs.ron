@@ -72,7 +72,7 @@
         id: "heir_dispute",
         title: "Спор наследников",
         text: "Двое королевских детей не уступают друг другу, у каждого свои сторонники при дворе.",
-        when: All([HeirAge(1, 14, 99), ClaimGapBelow(15)]),
+        when: All([HeirAge(1, 14, 99), ClaimGapBelow(30)]),
         weight: 8,
         once: false,
         cooldown_years: 5,

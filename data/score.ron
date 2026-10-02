@@ -5,15 +5,15 @@
     // per year; per point of `prestige_axis` per year; per crisis outlived without losing
     // provinces; per institution alive at the fall.
     weights: {
-        "years": 30,
-        "territory_years": 1,
-        "prestige": 2,
-        "stability": 40,
-        "legacy": 60,
+        "years": 40,
+        "territory_years": 2,
+        "prestige": 0.2,
+        "stability": 20,
+        "legacy": 100,
     },
     prestige_axis: "prestige",
     // A crisis: a chronicle entry of a Bad event (the default sign) with importance above this.
     crisis_importance: 3,
     // Institutions: these flags, set at the fall, count for `legacy`.
-    legacy_flags: ["law_primogeniture", "law_elective", "cathedral"],
+    legacy_flags: ["law_elective", "cathedral"],
 )

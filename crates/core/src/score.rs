@@ -272,11 +272,11 @@ mod tests {
             ],
         );
         let (long, short) = (compute(&long, &[], &r), compute(&short, &[], &r));
-        assert_eq!(long.parts["territory_years"], 1000);
-        assert_eq!(short.parts["territory_years"], 240);
-        assert_eq!(long.parts["years"], 3000);
-        assert_eq!(long.parts["prestige"], 2000);
-        assert_eq!(short.parts["prestige"], 800);
+        assert_eq!(long.parts["territory_years"], 2000);
+        assert_eq!(short.parts["territory_years"], 480);
+        assert_eq!(long.parts["years"], 4000);
+        assert_eq!(long.parts["prestige"], 200);
+        assert_eq!(short.parts["prestige"], 80);
         assert!(long.total > short.total, "{long:?} vs {short:?}");
         assert_eq!(long.total, long.parts.values().sum::<i64>());
     }
@@ -379,7 +379,7 @@ mod tests {
             compute(&chronicle(50, fall, entries), &[], &r).parts["stability"]
         };
         let alive = FallReason::Alive;
-        assert_eq!(stability(alive.clone(), vec![event(5, &ten, "bad", 4)]), 40);
+        assert_eq!(stability(alive.clone(), vec![event(5, &ten, "bad", 4)]), 20);
         // Importance at the threshold is no crisis; a good event is none either.
         assert_eq!(stability(alive.clone(), vec![event(5, &ten, "bad", 3)]), 0);
         assert_eq!(stability(alive.clone(), vec![event(5, &ten, "good", 5)]), 0);
@@ -399,7 +399,7 @@ mod tests {
         );
         assert_eq!(
             stability(FallReason::NoHeir, vec![event(49, &ten, "bad", 5)]),
-            40
+            20
         );
     }
 
@@ -415,7 +415,7 @@ mod tests {
             FallReason::NoHeir,
             vec![entry(0, &early), entry(9, &late)],
         );
-        assert_eq!(compute(&c, &[], &r).parts["legacy"], 60);
+        assert_eq!(compute(&c, &[], &r).parts["legacy"], 100);
         let c = chronicle(50, FallReason::NoHeir, Vec::new());
         assert_eq!(compute(&c, &[], &r).parts["legacy"], 0);
     }
@@ -424,9 +424,9 @@ mod tests {
     fn load_checks_weights_and_axis_and_reads_event_signs() {
         let r = rules();
         assert!(r.good_events.contains("good") && !r.good_events.contains("bad"));
-        let bad = SCORE.replace("\"legacy\": 60,", "");
+        let bad = SCORE.replace("\"legacy\": 100,", "");
         assert!(load(&bad, &data()).is_err());
-        let bad = SCORE.replace("\"legacy\": 60,", "\"legacy\": 60, \"luck\": 1,");
+        let bad = SCORE.replace("\"legacy\": 100,", "\"legacy\": 60, \"luck\": 1,");
         assert!(load(&bad, &data()).is_err());
         let bad = SCORE.replace("prestige_axis: \"prestige\"", "prestige_axis: \"glory\"");
         assert!(load(&bad, &data()).is_err());

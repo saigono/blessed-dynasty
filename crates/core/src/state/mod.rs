@@ -235,24 +235,33 @@ impl World {
 
     /// Foreign states owning a province next to this one, its own holder excluded.
     pub fn foreign_neighbours(&self, id: &ProvinceId) -> BTreeSet<NeighbourId> {
-        let Some(p) = self.provinces.get(id) else {
-            return BTreeSet::new();
-        };
+        let p = self.provinces.get(id);
+        p.map_or(BTreeSet::new(), |p| self.foreign_of(p).cloned().collect())
+    }
+
+    /// `foreign_neighbours` without allocating, repeats possible.
+    pub(crate) fn foreign_of<'a>(
+        &'a self,
+        p: &'a Province,
+    ) -> impl Iterator<Item = &'a NeighbourId> {
         let near = p.neighbours.iter().filter_map(|n| self.provinces.get(n));
-        near.filter_map(|q| match &q.holder {
-            Holder::Foreign(n) if q.holder != p.holder => Some(n.clone()),
+        near.filter_map(move |q| match &q.holder {
+            Holder::Foreign(n) if q.holder != p.holder => Some(n),
             _ => None,
         })
-        .collect()
     }
 
     /// The own province on the border with `n` with the weakest crown power, smallest id
     /// on a tie: where that neighbour presses.
     pub fn weakest_border(&self, n: &NeighbourId) -> Option<&Province> {
-        (self.provinces.values())
+        let theirs =
+            (self.provinces.values()).filter(|p| matches!(&p.holder, Holder::Foreign(x) if x == n));
+        // Borders are symmetric (Preset::load): our side is among the neighbours of theirs.
+        // Starting there saves most lookups; this runs for every neighbour every year.
+        let near = theirs.flat_map(|p| &p.neighbours);
+        (near.filter_map(|id| self.provinces.get(id)))
             .filter(|p| !matches!(p.holder, Holder::Foreign(_)))
-            .filter(|p| self.foreign_neighbours(&p.id).contains(n))
-            .min_by_key(|p| p.crown_power)
+            .min_by_key(|p| (p.crown_power, &p.id))
     }
 
     /// Fewest border crossings from `from` to every reachable province (BFS).
@@ -269,6 +278,14 @@ impl World {
             }
         }
         hops
+    }
+
+    /// A copy with empty `marks`, which grow with every decision: what `Game::mark` compares.
+    pub(crate) fn without_marks(&mut self) -> World {
+        let marks = std::mem::take(&mut self.marks);
+        let copy = self.clone();
+        self.marks = marks;
+        copy
     }
 
     /// A frozen copy for the chronicle.
@@ -292,13 +309,13 @@ impl World {
     pub fn recompute_crown_power(&mut self, data: &Data) {
         let r = &data.crown_power;
         let costs = self.path_costs(r);
-        for p in self.provinces.values_mut() {
+        for (p, path) in self.provinces.values_mut().zip(costs) {
             let base = match p.holder {
                 Holder::Crown => Some(r.base.crown),
                 Holder::Vassal(_) => Some(r.base.vassal),
                 Holder::Foreign(_) => None,
             };
-            let (Some(base), Some(&path)) = (base, costs.get(&p.id)) else {
+            let (Some(base), Some(path)) = (base, path) else {
                 p.crown_power = Fx(0);
                 continue;
             };
@@ -317,33 +334,50 @@ impl World {
         }
     }
 
-    /// Cheapest path cost from the capital over `neighbours` (Dijkstra).
-    /// Cut-off provinces are absent.
-    fn path_costs(&self, r: &CrownPowerRules) -> BTreeMap<ProvinceId, Fx> {
+    /// Cheapest path cost from the capital over `neighbours` (Dijkstra), in province order;
+    /// None for cut-off provinces. Runs every tick, so it works on indices.
+    fn path_costs(&self, r: &CrownPowerRules) -> Vec<Option<Fx>> {
         let one = Fx::from_int(1);
-        let step = |into: &Province| match &into.holder {
-            Holder::Foreign(n) => {
-                let relation = self.neighbours.get(n).map_or(Fx(0), |n| n.relation);
-                (one + r.foreign_step_penalty - relation * r.foreign_step_relation).max(one)
-            }
-            _ => one,
+        let ps: Vec<&Province> = self.provinces.values().collect();
+        // Ids are found by a hash first: comparing strings was most of the time here.
+        let hash = |id: &ProvinceId| {
+            (id.0.bytes()).fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+                (h ^ b as u64).wrapping_mul(0x100_0000_01b3)
+            })
         };
-        let mut costs = BTreeMap::new();
-        // Min-heap; equal costs pop in ProvinceId order, so ties are deterministic.
-        let mut heap = BinaryHeap::from([Reverse((Fx(0), self.capital.province.clone()))]);
-        while let Some(Reverse((cost, id))) = heap.pop() {
-            let Some(p) = self.provinces.get(&id) else {
-                continue;
-            };
-            if costs.contains_key(&id) {
+        let mut by_hash: Vec<(u64, usize)> = (ps.iter().enumerate())
+            .map(|(i, p)| (hash(&p.id), i))
+            .collect();
+        by_hash.sort_unstable();
+        let find = |id: &ProvinceId| {
+            let h = hash(id);
+            let from = by_hash.partition_point(|(x, _)| *x < h);
+            let same = by_hash[from..].iter().take_while(|(x, _)| *x == h);
+            same.map(|(_, i)| *i).find(|&i| ps[i].id == *id)
+        };
+        let steps: Vec<Fx> = (ps.iter())
+            .map(|into| match &into.holder {
+                Holder::Foreign(n) => {
+                    let relation = self.neighbours.get(n).map_or(Fx(0), |n| n.relation);
+                    (one + r.foreign_step_penalty - relation * r.foreign_step_relation).max(one)
+                }
+                _ => one,
+            })
+            .collect();
+        let mut costs = vec![None; ps.len()];
+        // Min-heap; equal costs pop in index (ProvinceId) order, so ties are deterministic.
+        let mut heap: BinaryHeap<_> = find(&self.capital.province)
+            .map(|i| Reverse((Fx(0), i)))
+            .into_iter()
+            .collect();
+        while let Some(Reverse((cost, i))) = heap.pop() {
+            if costs[i].is_some() {
                 continue;
             }
-            costs.insert(id, cost);
-            for n in &p.neighbours {
-                if let Some(q) = self.provinces.get(n)
-                    && !costs.contains_key(n)
-                {
-                    heap.push(Reverse((cost + step(q), n.clone())));
+            costs[i] = Some(cost);
+            for j in ps[i].neighbours.iter().filter_map(find) {
+                if costs[j].is_none() {
+                    heap.push(Reverse((cost + steps[j], j)));
                 }
             }
         }
@@ -615,7 +649,8 @@ mod tests {
             .get_mut(&NeighbourId("nordmark".into()))
             .unwrap();
         n.relation = Fx::from_int(relation);
-        w.path_costs(&data.crown_power)[&pid("far")]
+        let far = w.provinces.keys().position(|id| *id == pid("far")).unwrap();
+        w.path_costs(&data.crown_power)[far].unwrap()
     }
 
     #[test]

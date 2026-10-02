@@ -130,13 +130,17 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
             match g.wait().expect("the reign goes on") {
                 Step::Idle => {}
                 Step::Event(v) => {
-                    let p = g.pending_event.clone().expect("an event waits");
-                    let e = g.data.events.iter().find(|e| e.id == p.event_id);
-                    let keys = event_keys(&g.world, e.expect("pending events exist"), &p);
-                    let causes = causes(&g.world, keys);
+                    // Causes as the world stood before the choice; only entries need them.
+                    let told = v.importance >= s.threshold;
+                    let causes = told.then(|| {
+                        let p = g.pending_event.as_ref().expect("an event waits");
+                        let e = g.data.events.iter().find(|e| e.id == p.event_id);
+                        let keys = event_keys(&g.world, e.expect("pending events exist"), p);
+                        causes(&g.world, keys)
+                    });
                     let idx = auto.choose(&mut g, &v.choices);
                     g.resolve(idx, false).expect("a listed choice");
-                    if v.importance >= s.threshold {
+                    if let Some(causes) = causes {
                         let e = entry(&g, (v.title, v.text), v.importance, causes);
                         c.entries.push(ChronicleEntry {
                             event: Some(v.event_id),
@@ -410,19 +414,18 @@ impl AutoChooser {
         let mut options = vec![None];
         let mut scores = vec![Fx(0)];
         let treasury = self.weight(&g.data.economy.treasury.0);
-        for (id, targets) in g.available_actions() {
-            let a = g.data.actions.iter().find(|a| a.id == id).expect("listed");
+        let mut actions = g.available_actions();
+        for (k, (id, targets)) in actions.iter().enumerate() {
+            let a = g.data.actions.iter().find(|a| a.id == *id).expect("listed");
             let score = self.worth(&a.on_complete, &g.world, &g.data) - treasury * a.cost;
-            let targets = match targets.is_empty() {
-                true => vec![None],
-                false => targets.into_iter().map(Some).collect(),
-            };
-            for t in targets {
-                options.push(Some((id.clone(), t)));
+            for t in 0..targets.len().max(1) {
+                options.push(Some((k, t)));
                 scores.push(score);
             }
         }
-        options.swap_remove(self.best(&scores, &mut g.rng))
+        let (k, t) = options[self.best(&scores, &mut g.rng)]?;
+        let (id, mut targets) = actions.swap_remove(k);
+        Some((id, (t < targets.len()).then(|| targets.swap_remove(t))))
     }
 
     fn best(&self, scores: &[Fx], rng: &mut Rng) -> usize {

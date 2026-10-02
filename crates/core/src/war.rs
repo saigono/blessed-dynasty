@@ -98,10 +98,10 @@ mod tests {
     fn strength_formula() {
         let (data, mut w) = setup();
         let ax = |s: &str| AxisId(s.into());
-        // Army 50 * (1 + nobles 40 * 0.005) * full treasury (150 >= 100); Nordmark 40.
+        // Army 50 * (1 + nobles 40 * 0.005) * full treasury (150 >= 100); Nordmark 60.
         assert_eq!(
             strengths(&w, &data, &nordmark()),
-            (Fx::from_int(60), Fx::from_int(40))
+            (Fx::from_int(60), Fx::from_int(60))
         );
         // A fort on the Nordmark border counts, the capital's does not.
         let holm = w.provinces.get_mut(&ProvinceId("holm".into())).unwrap();
@@ -122,6 +122,7 @@ mod tests {
         let mut rng = Rng::from_seed(1);
         clash(&mut w, &data, &mut rng);
         assert_eq!(w.war, None, "no war, no clash");
+        w.neighbours.get_mut(&nordmark()).unwrap().strength = Fx::from_int(40);
         w.war = Some(War {
             enemy: nordmark(),
             stage: WarStage::Declared,

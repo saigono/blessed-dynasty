@@ -17,7 +17,7 @@
         title: "Мятеж дома {vassal}",
         text: "В тот год дом {vassal} поднял мятеж в земле {province} и отказался присягать короне.",
         when: ProvinceWhere((holder: Vassal, vassal_stronger: true)),
-        weight: 1,
+        weight: 15,
         weight_bonus: [
             (AxisBelow("loyalty_nobles", 40), 4),
             (AxisBelow("stability", 35), 3),
@@ -33,7 +33,7 @@
                 text: "Подавить мятеж силой",
                 effects: [
                     Chance((
-                        percent: 30,
+                        percent: 15,
                         axes: [("army", 0.4)],
                         then: [Axis("army", -15), Province(EventTarget, Loyalty, -10), Axis("loyalty_nobles", -5)],
                         otherwise: [Axis("army", -20), Secede(EventTarget), SetFlag("vassal_seceded")],
@@ -183,7 +183,7 @@
                     ClearFlag("succession_contested"),
                     Chance((
                         percent: 40,
-                        axes: [("army", 0.3)],
+                        axes: [("army", 0.5)],
                         then: [Axis("legitimacy", 10), Axis("army", -15)],
                         otherwise: [SetFlag("usurped")],
                     )),
@@ -304,7 +304,7 @@
         weight_bonus: [(Flag("vassal_seceded"), 2), (AxisBelow("legitimacy", 30), 2)],
         once: false,
         cooldown_years: 10,
-        importance: 3,
+        importance: 4,
         target: None,
         choices: [
             (
@@ -353,7 +353,7 @@
         weight: 3,
         once: false,
         cooldown_years: 15,
-        importance: 3,
+        importance: 4,
         sign: Good,
         target: None,
         choices: [

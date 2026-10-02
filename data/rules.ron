@@ -70,7 +70,8 @@
     // Neighbour AI, once a year per neighbour. Stance: relation below `hostile_below` is
     // Expand when strength >= the weakest crown power on the common border + expand_margin,
     // otherwise (or with no common border) Defend; above `friendly_above` Trade; else Wait.
-    // Then relation moves by the stance's `relation`, and one roll in 0..100 picks at most
+    // Then relation moves by the stance's `relation` and `drift` toward 0 (old grudges and
+    // friendships fade unless kept up), and one roll in 0..100 picks at most
     // one of its `events` (id, chance in percent per year; chances sum to <= 100).
     // Events targeting a province hit the weakest border province and name the neighbour
     // as its second target; others target the neighbour.
@@ -78,6 +79,7 @@
         hostile_below: -20,
         friendly_above: 30,
         expand_margin: 0,
+        drift: 1,
         // `invasion` is a simulation event (events/sim/): the reign drops it as unknown.
         expand: (relation: -2, events: [
             ("neighbour_raid", 25), ("neighbour_ultimatum", 10), ("neighbour_war_declared", 5),
@@ -159,8 +161,8 @@
             (flag: "law_elective", eldest: 0, others: 0, ability_k: 0.9),
             (flag: "law_none", eldest: 50, others: 50, ability_k: 0),
         ],
-        crisis_claim: 40,
-        birth: [(0, 0), (16, 20), (35, 10), (45, 3), (55, 0)],
+        crisis_claim: 50,
+        birth: [(0, 0), (16, 25), (35, 20), (45, 15), (55, 10), (65, 5)],
         married_flag: "married",
         unmarried: 0.2,
     ),
@@ -169,10 +171,10 @@
     // made by sim::AutoChooser, until a fall or `max_years` from tick 0.
     // Falls: no heir, the capital not held by the crown, `usurped_flag`, no crown province.
     sim: (
-        max_years: 500,
+        max_years: 300,
         // Events of this importance and above go to the chronicle; a new ruler and a
         // province lost or gained always do, with importance `notable`.
-        threshold: 3,
+        threshold: 4,
         notable: 5,
         // Every player decision marks what it changed with weight 1; the weight is
         // multiplied by `decay` every year. Chronicle entries collect these marks as causes.
@@ -204,15 +206,15 @@
         auto: (
             noise: 10,
             base: {
-                "treasury": 0.1, "income": 2, "army": 0.3, "legitimacy": 1, "stability": 1,
+                "treasury": 0.3, "income": 2, "army": 0.3, "legitimacy": 1, "stability": 1,
                 "bureaucracy": 0.5, "loyalty_nobles": 0.6, "loyalty_church": 0.4,
                 "loyalty_people": 0.5, "prestige": 0.3,
                 "province_income": 2, "province_population": 0.005, "province_loyalty": 0.2,
                 "health": 0.5, "relation": 0.1, "crown_power": 0.5,
-                "build": 3, "grant": -3, "revoke": -3, "secede": -40, "war": -10, "hostage": -10,
-                "death": -500, "abdicate": -500, "province": 40, "heir": 20,
+                "build": 3, "grant": -20, "revoke": -3, "secede": -10, "war": -10, "hostage": -10,
+                "death": -500, "abdicate": -500, "province": 20, "heir": 60,
                 "heir_ability": 0.3, "heir_claim": 0.2,
-                "usurped": -200, "plot": -20, "plague": -20,
+                "usurped": -22, "plot": -20, "plague": -20,
             },
             traits: {
                 "greedy": {"treasury": 0.3, "income": 2, "province_income": 2},

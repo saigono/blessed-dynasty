@@ -30,7 +30,12 @@ pub fn neighbour_tick(
     };
     let rules = ai.stance(&n.stance);
     let limit = Fx::from_int(100);
-    n.relation = (n.relation + rules.relation).clamp(Fx(0) - limit, limit);
+    let r = n.relation + rules.relation;
+    let r = match r < Fx(0) {
+        true => (r + ai.drift).min(Fx(0)),
+        false => (r - ai.drift).max(Fx(0)),
+    };
+    n.relation = r.clamp(Fx(0) - limit, limit);
 
     let mut roll = rng.range(0, 100) as u32;
     let (event, _) = rules.events.iter().find(|(_, chance)| {
@@ -118,11 +123,17 @@ mod tests {
     #[test]
     fn stance_moves_relation() {
         let relation = |r, s| run(r, s, 1).0.neighbours[&nordmark()].relation;
-        assert_eq!(relation(-50, 100), Fx::from_int(-52)); // Expand
-        assert_eq!(relation(-50, 0), Fx::from_int(-51)); // Defend
-        assert_eq!(relation(50, 0), Fx::from_int(51)); // Trade
-        assert_eq!(relation(0, 0), Fx::from_int(0)); // Wait
-        assert_eq!(relation(-100, 100), Fx::from_int(-100)); // clamped
+        // The stance's change, then the drift toward 0.
+        let d = setup().0.neighbour_ai.drift;
+        assert!(d > Fx(0) && d < Fx::from_int(10), "{d}");
+        let i = Fx::from_int;
+        assert_eq!(relation(-50, 100), i(-52) + d); // Expand
+        assert_eq!(relation(-50, 0), i(-51) + d); // Defend
+        assert_eq!(relation(50, 0), i(51) - d); // Trade
+        assert_eq!(relation(-10, 0), i(-10) + d); // Wait
+        assert_eq!(relation(10, 0), i(10) - d);
+        assert_eq!(relation(0, 0), i(0)); // the drift stops at 0
+        assert_eq!(relation(-100, 100), (i(-102) + d).max(i(-100))); // clamped
     }
 
     #[test]

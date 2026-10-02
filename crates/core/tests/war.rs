@@ -22,6 +22,7 @@ fn content() -> Data {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data");
     let mut files: Vec<_> = (fs::read_dir(dir.join("events")).unwrap())
         .map(|e| e.unwrap().path())
+        .filter(|p| p.is_file())
         .collect();
     files.sort();
     for f in files {

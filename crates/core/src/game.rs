@@ -5,7 +5,9 @@ use crate::fx::Fx;
 use crate::neighbour::neighbour_tick;
 use crate::rng::Rng;
 use crate::rules::{ActionTarget, Choice, Ctx, Effect, Event, EventTarget, Target, add_axis};
-use crate::state::{ActiveAction, HeirStatus, Holder, NeighbourId, Preset, ProvinceId, World};
+use crate::state::{
+    ActiveAction, CauseTag, HeirStatus, Holder, MarkKey, NeighbourId, Preset, ProvinceId, World,
+};
 use crate::time::Tick;
 use serde::{Deserialize, Serialize};
 
@@ -45,7 +47,8 @@ pub struct PendingEvent {
     pub neighbour: Option<NeighbourId>,
 }
 
-/// An event with `{province}`, `{neighbour}`, `{ruler}` filled in.
+/// An event with `{province}`, `{neighbour}`, `{ruler}`, `{heir}`, `{vassal}` (the holder of
+/// a target province) filled in.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EventView {
     pub event_id: String,
@@ -158,6 +161,17 @@ impl Game {
     }
 
     pub fn start_action(&mut self, id: &str, target: Option<Target>) -> Result<(), GameError> {
+        self.start(id, target, true)
+    }
+
+    /// `record`: a player decision, logged in `decisions` and marking what it touches.
+    /// The simulation's automaton passes false.
+    pub(crate) fn start(
+        &mut self,
+        id: &str,
+        target: Option<Target>,
+        record: bool,
+    ) -> Result<(), GameError> {
         if self.ended.is_some() {
             return Err(GameError::ReignEnded);
         }
@@ -192,6 +206,9 @@ impl Game {
             target: target.as_ref().map(target_key),
             ends_at: Tick(w.tick.0 + action.duration_years.ticks(w.time_unit).0),
         });
+        if !record {
+            return Ok(());
+        }
         self.decisions.push(Decision {
             tick: w.tick,
             kind: DecisionKind::ActionStarted {
@@ -256,26 +273,66 @@ impl Game {
     }
 
     pub fn choose(&mut self, idx: usize) -> Result<(), GameError> {
+        self.resolve(idx, true)
+    }
+
+    /// `record` as in `start`.
+    pub(crate) fn resolve(&mut self, idx: usize, record: bool) -> Result<(), GameError> {
         if self.ended.is_some() {
             return Err(GameError::ReignEnded);
         }
         let p = self.pending_event.clone().ok_or(GameError::NoEvent)?;
         let event = find_event(&self.data, &p.event_id).expect("pending events exist");
         let choice = event.choices.get(idx).ok_or(GameError::BadChoice)?.clone();
+        let before = record.then(|| self.world.clone());
         self.apply(&choice.effects, p.target.as_ref(), p.neighbour.as_ref());
+        self.pending_event = None;
+        if let Some(before) = &before {
+            self.mark(self.decisions.len(), &choice.cause_tag, before);
+            self.decisions.push(Decision {
+                tick: self.world.tick,
+                kind: DecisionKind::EventChoice {
+                    event_id: p.event_id,
+                    choice_idx: idx,
+                    target: p.target,
+                },
+                cause_tag: choice.cause_tag,
+            });
+        }
         self.world.recompute_loyalty(&self.data);
         self.world.recompute_crown_power(&self.data);
-        self.decisions.push(Decision {
-            tick: self.world.tick,
-            kind: DecisionKind::EventChoice {
-                event_id: p.event_id.clone(),
-                choice_idx: idx,
-                target: p.target.clone(),
-            },
-            cause_tag: choice.cause_tag.clone(),
-        });
-        self.pending_event = None;
         Ok(())
+    }
+
+    /// Marks what changed since `before` (axes, provinces with their crown modifiers, flags,
+    /// neighbours, heirs) as touched by decision `idx`, weight 1.
+    fn mark(&mut self, idx: usize, cause_tag: &str, before: &World) {
+        let w = &self.world;
+        let axes = (w.axes.iter()).filter(|(a, v)| before.axes.get(*a) != Some(*v));
+        let provinces = w.provinces.iter().filter(|(id, p)| {
+            before.provinces.get(*id) != Some(*p)
+                || before.crown_modifiers.get(*id) != w.crown_modifiers.get(*id)
+        });
+        let neighbours = w.neighbours.iter();
+        let neighbours = neighbours.filter(|(id, n)| before.neighbours.get(*id) != Some(*n));
+        let heirs = w.heirs.iter().filter(|h| !before.heirs.contains(h));
+        let keys: Vec<MarkKey> = (axes.map(|(a, _)| MarkKey::Axis(a.clone())))
+            .chain(provinces.map(|(id, _)| MarkKey::Province(id.clone())))
+            .chain(
+                w.flags
+                    .symmetric_difference(&before.flags)
+                    .map(|f| MarkKey::Flag(f.clone())),
+            )
+            .chain(neighbours.map(|(id, _)| MarkKey::Neighbour(id.clone())))
+            .chain(heirs.map(|h| MarkKey::Heir(h.id)))
+            .collect();
+        for k in keys {
+            self.world.marks.entry(k).or_default().push(CauseTag {
+                decision_idx: idx,
+                cause_tag: cause_tag.into(),
+                weight: Fx::from_int(1),
+            });
+        }
     }
 
     /// Treasury, aging, drift. Yearly amounts are spread over the ticks of a year.
@@ -292,6 +349,12 @@ impl Game {
             w.ruler.age += 1;
             w.heirs.iter_mut().for_each(|h| h.age += 1);
             heirs_year(d, w, &mut self.rng);
+            for tags in w.marks.values_mut() {
+                tags.iter_mut()
+                    .for_each(|t| t.weight = t.weight * d.sim.decay);
+                tags.retain(|t| t.weight > Fx(0));
+            }
+            w.marks.retain(|_, tags| !tags.is_empty());
         }
 
         let step = per_tick(d.drift.step);
@@ -326,14 +389,25 @@ impl Game {
         for a in done {
             let def = self.data.actions.iter().find(|x| x.id == a.id);
             let def = def.expect("only known actions start");
-            let target = a.target.map(|key| match def.target {
+            let target = a.target.clone().map(|key| match def.target {
                 ActionTarget::Province(_) => Target::Province(ProvinceId(key)),
                 ActionTarget::Neighbour => Target::Neighbour(NeighbourId(key)),
                 ActionTarget::Heir => Target::Heir(key.parse().expect("written by target_key")),
                 ActionTarget::None => unreachable!("untargeted actions store no target"),
             });
-            let effects = def.on_complete.clone();
+            let (effects, tag) = (def.on_complete.clone(), def.cause_tag.clone());
+            // The decision that started it; none for the simulation's automaton.
+            let started = self.decisions.iter().rposition(|d| match &d.kind {
+                DecisionKind::ActionStarted { action_id, target } => {
+                    *action_id == a.id && target.as_ref().map(target_key) == a.target
+                }
+                _ => false,
+            });
+            let before = started.map(|_| self.world.clone());
             self.apply(&effects, target.as_ref(), None);
+            if let (Some(idx), Some(before)) = (started, before) {
+                self.mark(idx, &tag, &before);
+            }
         }
     }
 
@@ -456,10 +530,18 @@ impl Game {
             _ => None,
         };
         let behind = (p.neighbour.as_ref()).and_then(|n| w.neighbours.get(n));
+        let vassal = match &p.target {
+            Some(Target::Province(id)) => match w.provinces.get(id).map(|p| &p.holder) {
+                Some(Holder::Vassal(v)) => w.vassals.get(v),
+                _ => None,
+            },
+            _ => None,
+        };
         let names = [
             Some(("{ruler}", &w.ruler.name)),
             name,
             behind.map(|n| ("{neighbour}", &n.name)),
+            vassal.map(|v| ("{vassal}", &v.name)),
         ];
         let fill = |s: &str| {
             names
@@ -566,7 +648,7 @@ fn candidates(target: &EventTarget, w: &World) -> Option<Vec<Target>> {
 /// At most one event per tick. Due deferred events go first, earliest due first, with the
 /// target they were spawned with, or a fresh one if they had none. Then a weighted pick over
 /// ready pool events off cooldown, the neighbours' `offers` (`neighbour_ai.weight` each, kept
-/// targets) and `quiet_weight` for no event. Any event is dropped when its `when` is false,
+/// targets) and `quiet_weight` for no event; events add their `Event::bonus`. Any event is dropped when its `when` is false,
 /// it already fired `once`, or it has no target; unpicked offers are dropped too.
 fn pick_event(
     data: &Data,
@@ -604,28 +686,33 @@ fn pick_event(
     let pool: Vec<&Event> = (data.events.iter())
         .filter(|e| e.weight > 0 && !cooling(e, w) && ready(e) && targets(e))
         .collect();
-    let offers: Vec<PendingEvent> = (offers.into_iter())
-        .filter(|p| find_event(data, &p.event_id).is_some_and(ready))
+    let pool: Vec<(&Event, u32)> = (pool.into_iter())
+        .map(|e| (e, e.weight + e.bonus(w)))
         .collect();
-    let offer_weight = data.neighbour_ai.weight;
+    let offers: Vec<(PendingEvent, u32)> = (offers.into_iter())
+        .filter_map(|p| {
+            let e = find_event(data, &p.event_id).filter(|e| ready(e))?;
+            Some((p, data.neighbour_ai.weight + e.bonus(w)))
+        })
+        .collect();
     let total = data.quiet_weight
-        + pool.iter().map(|e| e.weight).sum::<u32>()
-        + offer_weight * offers.len() as u32;
+        + pool.iter().map(|(_, wt)| wt).sum::<u32>()
+        + offers.iter().map(|(_, wt)| wt).sum::<u32>();
     if total == 0 {
         return None;
     }
     let mut roll = rng.range(0, total as i64) as u32;
-    for e in pool {
-        if roll < e.weight {
+    for (e, wt) in pool {
+        if roll < wt {
             return fire(e, rng);
         }
-        roll -= e.weight;
+        roll -= wt;
     }
-    for p in offers {
-        if roll < offer_weight {
+    for (p, wt) in offers {
+        if roll < wt {
             return Some(p);
         }
-        roll -= offer_weight;
+        roll -= wt;
     }
     None
 }
@@ -671,6 +758,7 @@ mod tests {
             text: String::new(),
             when: Predicate::All(vec![]),
             weight: 0,
+            weight_bonus: vec![],
             once: false,
             cooldown_years: Years(0),
             importance: 1,
@@ -1001,6 +1089,7 @@ mod tests {
         );
         local.weight = 1;
         local.title = "{ruler}: {province}".into();
+        local.text = "{vassal}".into();
         local.choices[0].hint = Some("{province}, {neighbour}".into());
         let filter = r#"(holder: Vassal, building: "road")"#; // holm only
         local.target = EventTarget::RandomProvince(crate::data::parse(filter).unwrap());
@@ -1013,6 +1102,7 @@ mod tests {
             panic!()
         };
         assert_eq!(v.title, "Ульрих: Хольм");
+        assert_eq!(v.text, "Вейр"); // the holder of the target province
         assert_eq!(v.choices[0].hint.as_deref(), Some("Хольм, {neighbour}"));
         assert_eq!(v.target, Some(Target::Province(pid("holm"))));
         g.choose(0).unwrap();
@@ -1033,6 +1123,48 @@ mod tests {
         let mut g = game(g.data.clone(), 1);
         g.world.provinces.get_mut(&pid("holm")).unwrap().holder = Holder::Crown;
         assert_eq!(g.wait().unwrap(), Step::Idle);
+    }
+
+    #[test]
+    fn weight_bonus_joins_the_pick() {
+        let mut data = bare();
+        data.quiet_weight = 1;
+        let mut e = event("risky", vec![]);
+        e.weight = 1;
+        e.weight_bonus = vec![(Predicate::Flag("plague".into()), 99)];
+        data.events = vec![e];
+        let hits = |plague: bool| {
+            let mut g = game(data.clone(), 1);
+            if plague {
+                g.world.flags.insert("plague".into());
+            }
+            let mut hits = 0;
+            for _ in 0..200 {
+                if fired(g.wait().unwrap()).is_some() {
+                    hits += 1;
+                    g.choose(0).unwrap();
+                }
+            }
+            hits
+        };
+        assert!((70..130).contains(&hits(false)), "{}", hits(false));
+        assert!(hits(true) > 190, "{}", hits(true));
+        // A neighbour's offer gets the bonus too.
+        let mut offer = event("offer", vec![]);
+        offer.weight_bonus = vec![(Predicate::All(vec![]), 5)];
+        (data.events, data.quiet_weight, data.neighbour_ai.weight) = (vec![offer], 0, 0);
+        let g = game(data.clone(), 1);
+        let p = PendingEvent {
+            event_id: "offer".into(),
+            target: None,
+            neighbour: None,
+        };
+        let mut rng = Rng::from_seed(1);
+        let pick = pick_event(&data, &g.world, &mut rng, &mut vec![], vec![p.clone()]);
+        assert_eq!(pick, Some(p.clone()));
+        data.events[0].weight_bonus.clear();
+        let pick = pick_event(&data, &g.world, &mut rng, &mut vec![], vec![p]);
+        assert_eq!(pick, None);
     }
 
     #[test]

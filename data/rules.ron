@@ -73,8 +73,10 @@
         hostile_below: -20,
         friendly_above: 30,
         expand_margin: 0,
+        // `invasion` is a simulation event (events/sim/): the reign drops it as unknown.
         expand: (relation: -2, events: [
             ("neighbour_raid", 25), ("neighbour_ultimatum", 10), ("neighbour_war_declared", 5),
+            ("invasion", 10),
         ]),
         defend: (relation: -1, events: [("neighbour_ultimatum", 10)]),
         trade: (relation: 1, events: [("neighbour_trade", 20)]),
@@ -156,5 +158,68 @@
         birth: [(0, 0), (16, 20), (35, 10), (45, 3), (55, 0)],
         married_flag: "married",
         unmarried: 0.2,
+    ),
+
+    // The dynasty after the founder (sim::run): the same rules year by year, the choices
+    // made by sim::AutoChooser, until a fall or `max_years` from tick 0.
+    // Falls: no heir, the capital not held by the crown, `usurped_flag`, no crown province.
+    sim: (
+        max_years: 500,
+        // Events of this importance and above go to the chronicle; a new ruler and a
+        // province lost or gained always do, with importance `notable`.
+        threshold: 3,
+        notable: 5,
+        // Every player decision marks what it changed with weight 1; the weight is
+        // multiplied by `decay` every year. Chronicle entries collect these marks as causes.
+        decay: 0.97,
+        // The hint of the main cause shows in the entry from this weight on: the founder's
+        // decisions fade from the chronicle along with their marks.
+        hint_weight: 0.3,
+        usurped_flag: "usurped",
+        // A ruler younger than regency_age reigns under the flag until he reaches it.
+        regency_flag: "regency",
+        regency_age: 16,
+        ruler_health: 80,
+        // Relation of the state a seceding vassal founds (Effect::Secede).
+        secession_relation: -50,
+        // Trait chance of a new ruler in percent: percent + ability * ability_k, plus
+        // `studying` or `hostage` by the heir's status.
+        traits: [
+            (id: "greedy", percent: 35, ability_k: -0.3, studying: 0, hostage: 10),
+            (id: "cautious", percent: 10, ability_k: 0.3, studying: 10, hostage: 15),
+            (id: "warlike", percent: 30, ability_k: 0, studying: -15, hostage: 10),
+            (id: "pious", percent: 10, ability_k: 0, studying: 35, hostage: -5),
+        ],
+        // AutoChooser: an option scores sum(weight[key] * amount) over its effects, plus a
+        // roll in 0..=noise. Keys: axis ids, flag ids (+1 set, -1 cleared) and effect kinds:
+        // province_income, province_population, province_loyalty, health, relation,
+        // crown_power, heir_ability, heir_claim (by the delta); build, grant, revoke, secede,
+        // war, hostage, death, abdicate (+1); province (+1 gained, -1 given); heir (+1, -1).
+        // Weights of the ruler's traits add to `base`.
+        auto: (
+            noise: 10,
+            base: {
+                "treasury": 0.1, "income": 2, "army": 0.3, "legitimacy": 1, "stability": 1,
+                "bureaucracy": 0.5, "loyalty_nobles": 0.6, "loyalty_church": 0.4,
+                "loyalty_people": 0.5, "prestige": 0.3,
+                "province_income": 2, "province_population": 0.005, "province_loyalty": 0.2,
+                "health": 0.5, "relation": 0.1, "crown_power": 0.5,
+                "build": 3, "grant": -3, "revoke": -3, "secede": -40, "war": -10, "hostage": -10,
+                "death": -500, "abdicate": -500, "province": 40, "heir": 20,
+                "heir_ability": 0.3, "heir_claim": 0.2,
+                "usurped": -200, "plot": -20, "plague": -20,
+            },
+            traits: {
+                "greedy": {"treasury": 0.3, "income": 2, "province_income": 2},
+                "cautious": {"war": -20, "army": 0.3, "stability": 1, "health": 1},
+                "warlike": {"war": 25, "army": 0.4, "prestige": 0.7, "province": 20},
+                "pious": {"loyalty_church": 1.2},
+            },
+        ),
+        texts: (
+            crowned: "На престол взошёл {ruler}.",
+            province_lost: "Земля {province} потеряна, ею владеет {neighbour}.",
+            province_gained: "Земля {province} отошла к короне. Прежний владелец: {neighbour}.",
+        ),
     ),
 )

@@ -64,6 +64,7 @@ fn event(id: &str, effects: Vec<Effect>) -> Event {
         text: String::new(),
         when: Predicate::All(vec![]),
         weight: 0,
+        weight_bonus: vec![],
         once: false,
         cooldown_years: Years(0),
         importance: 1,

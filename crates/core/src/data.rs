@@ -29,9 +29,16 @@ pub struct Data {
     pub neighbour_ai: NeighbourAi,
     pub grant: GrantRules,
     pub war: WarRules,
+    pub sim: SimRules,
     /// From `add_events`, not from `rules.ron`.
     #[serde(default)]
     pub events: Vec<Event>,
+    /// From `add_sim_events`: events only the simulation draws (`data/events/sim/`).
+    #[serde(default)]
+    pub sim_events: Vec<Event>,
+    /// From `add_hints`: chronicle hint per `cause_tag`.
+    #[serde(default)]
+    pub hints: BTreeMap<String, String>,
     /// From `add_actions`, not from `rules.ron`.
     #[serde(default)]
     pub actions: Vec<Action>,
@@ -87,13 +94,31 @@ impl Data {
 
     /// Appends a list of events (`data/events/*.ron`). Ids are unique across all files.
     pub fn add_events(&mut self, text: &str) -> Result<(), DataError> {
+        let events = self.parse_events(text)?;
+        self.events.extend(events);
+        Ok(())
+    }
+
+    /// Appends a list of simulation events (`data/events/sim/*.ron`), kept out of the reign.
+    pub fn add_sim_events(&mut self, text: &str) -> Result<(), DataError> {
+        let events = self.parse_events(text)?;
+        self.sim_events.extend(events);
+        Ok(())
+    }
+
+    fn parse_events(&self, text: &str) -> Result<Vec<Event>, DataError> {
         let events: Vec<Event> = parse(text)?;
-        let ids = self.events.iter().chain(&events).map(|e| e.id.as_str());
-        unique(ids)?;
+        let all = self.events.iter().chain(&self.sim_events).chain(&events);
+        unique(all.map(|e| e.id.as_str()))?;
         for e in &events {
             e.check(self).map_err(|m| invalid(&e.id, m))?;
         }
-        self.events.extend(events);
+        Ok(events)
+    }
+
+    /// Sets the chronicle hints (`data/hints.ron`).
+    pub fn add_hints(&mut self, text: &str) -> Result<(), DataError> {
+        self.hints = parse(text)?;
         Ok(())
     }
 
@@ -315,6 +340,61 @@ pub struct WarRules {
     pub end_strength: Vec<(WarOutcome, Fx)>,
 }
 
+/// The dynasty simulation after the reign, see `sim::run`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct SimRules {
+    /// The dynasty counts as alive after this many years from tick 0.
+    pub max_years: u32,
+    /// Events of this importance and above go to the chronicle.
+    pub threshold: u32,
+    /// Importance of the entries made always: a new ruler, a province lost or gained.
+    pub notable: u32,
+    /// Mark weights are multiplied by this every year.
+    pub decay: Fx,
+    /// An entry tells the hint of its main cause only from this weight on.
+    pub hint_weight: Fx,
+    /// The dynasty falls once this flag is set.
+    pub usurped_flag: String,
+    /// A ruler younger than `regency_age` reigns under `regency_flag` until he reaches it.
+    pub regency_flag: String,
+    pub regency_age: u32,
+    pub ruler_health: Fx,
+    /// Relation of a state born of a vassal revolt (`Effect::Secede`) with the kingdom.
+    pub secession_relation: Fx,
+    pub traits: Vec<TraitRule>,
+    pub auto: AutoRules,
+    pub texts: SimTexts,
+}
+
+/// A new ruler has the trait with chance `percent + ability * ability_k` in percent, plus
+/// `studying` or `hostage` when the heir was studying or a hostage.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct TraitRule {
+    pub id: String,
+    pub percent: Fx,
+    pub ability_k: Fx,
+    pub studying: Fx,
+    pub hostage: Fx,
+}
+
+/// Weights of `sim::AutoChooser`: `base` plus `traits[t]` of every trait of the ruler.
+/// Keys are axis ids, flag ids and effect kinds, see `sim::features`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct AutoRules {
+    /// Each option gets a roll in `0..=noise` on top of its score.
+    pub noise: Fx,
+    pub base: BTreeMap<String, Fx>,
+    pub traits: BTreeMap<String, BTreeMap<String, Fx>>,
+}
+
+/// Chronicle entries made by the simulation itself; `{ruler}`, `{province}`, `{neighbour}`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct SimTexts {
+    pub crowned: String,
+    pub province_lost: String,
+    pub province_gained: String,
+}
+
 #[derive(Debug)]
 pub enum DataError {
     Parse(ron::error::SpannedError),
@@ -454,10 +534,10 @@ mod tests {
             );
         }
         assert!(matches!(
-            broken(r#"("neighbour_raid", 25)"#, r#"("neighbour_raid", 86)"#),
+            broken(r#"("neighbour_raid", 25)"#, r#"("neighbour_raid", 76)"#),
             Err(DataError::Invalid(_))
         ));
-        assert!(broken(r#"("neighbour_raid", 25)"#, r#"("neighbour_raid", 85)"#).is_ok());
+        assert!(broken(r#"("neighbour_raid", 25)"#, r#"("neighbour_raid", 75)"#).is_ok());
         let no_weight = RULES
             .replace("weight: 2", "weight: 0")
             .replace("weight: 1", "weight: 0");
@@ -486,6 +566,30 @@ mod tests {
             Err(DataError::Invalid(_))
         ));
         assert_eq!(data.events.len(), 38);
+    }
+
+    #[test]
+    fn sim_events_stay_apart() {
+        let mut data = load(RULES).unwrap();
+        data.add_events(EVENTS).unwrap();
+        let sim = include_str!("../../../data/events/sim/sim.ron");
+        data.add_sim_events(sim).unwrap();
+        assert_eq!(data.events.len(), 34);
+        assert!(data.sim_events.iter().any(|e| e.id == "vassal_revolt"));
+        // Ids are unique across both lists, whichever comes first.
+        assert!(matches!(
+            data.add_sim_events(sim),
+            Err(DataError::Invalid(_))
+        ));
+        assert!(matches!(
+            data.add_sim_events(EVENTS),
+            Err(DataError::Invalid(_))
+        ));
+        let mut data = load(RULES).unwrap();
+        data.add_sim_events(sim).unwrap();
+        assert!(matches!(data.add_events(sim), Err(DataError::Invalid(_))));
+        data.add_hints(r#"{"a": "b"}"#).unwrap();
+        assert_eq!(data.hints["a"], "b");
     }
 
     #[test]

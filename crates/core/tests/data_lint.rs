@@ -33,12 +33,17 @@ fn rules() -> Data {
 }
 
 /// `rules.ron`, every `events/*.ron`, `actions.ron` and `names.ron` in one `Data`, as the
-/// game sees them.
+/// game sees them, plus the simulation's `events/sim/*.ron` in `sim_events`.
 fn load_all() -> Data {
     let mut data = rules();
     for f in files("events") {
         let text = fs::read_to_string(&f).unwrap();
         data.add_events(&text)
+            .unwrap_or_else(|e| panic!("{f:?}: {e:?}"));
+    }
+    for f in files("events/sim") {
+        let text = fs::read_to_string(&f).unwrap();
+        data.add_sim_events(&text)
             .unwrap_or_else(|e| panic!("{f:?}: {e:?}"));
     }
     data.add_actions(&read("actions.ron")).unwrap();
@@ -94,8 +99,9 @@ fn every_cause_tag_has_a_hint() {
 #[test]
 fn every_spawned_event_exists() {
     let data = load_all();
-    let ids: BTreeSet<_> = data.events.iter().map(|e| e.id.as_str()).collect();
-    let choices = data.events.iter().flat_map(|e| &e.choices);
+    let all = || data.events.iter().chain(&data.sim_events);
+    let ids: BTreeSet<_> = all().map(|e| e.id.as_str()).collect();
+    let choices = all().flat_map(|e| &e.choices);
     let effects = choices.flat_map(|c| &c.effects);
     let effects = effects.chain(data.actions.iter().flat_map(|a| &a.on_complete));
     let missing: Vec<_> = effects
@@ -107,7 +113,8 @@ fn every_spawned_event_exists() {
     assert!(missing.is_empty(), "spawned but undefined: {missing:?}");
 }
 
-/// Events `rules.ron` names: the war start, neighbour AI events, death and abdication.
+/// Events `rules.ron` names: the war start, neighbour AI events (simulation ones included),
+/// death and abdication.
 #[test]
 fn every_event_named_by_the_rules_exists() {
     let data = load_all();
@@ -120,8 +127,9 @@ fn every_event_named_by_the_rules_exists() {
         &data.death.event,
         &data.abdication.event,
     ];
+    let all = data.events.iter().chain(&data.sim_events);
     let missing: BTreeSet<_> = (named.chain(death).chain(fixed))
-        .filter(|id| !data.events.iter().any(|e| e.id == **id))
+        .filter(|id| !all.clone().any(|e| e.id == **id))
         .collect();
     assert!(missing.is_empty(), "named but undefined: {missing:?}");
 }

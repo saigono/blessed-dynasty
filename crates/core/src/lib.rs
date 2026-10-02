@@ -4,6 +4,7 @@ pub mod game;
 pub mod neighbour;
 pub mod rng;
 pub mod rules;
+pub mod sim;
 pub mod state;
 pub mod time;
 pub mod war;

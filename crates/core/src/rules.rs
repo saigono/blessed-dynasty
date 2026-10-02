@@ -4,7 +4,8 @@ use crate::data::Data;
 use crate::fx::Fx;
 use crate::game::PendingEvent;
 use crate::state::{
-    AxisId, HeirStatus, Holder, NeighbourId, Province, ProvinceId, Vassal, VassalId, World,
+    AxisId, HeirStatus, Holder, Neighbour, NeighbourId, Province, ProvinceId, Stance, Vassal,
+    VassalId, World,
 };
 use crate::time::{Tick, Years};
 use crate::war::{War, WarOutcome, WarStage};
@@ -109,6 +110,9 @@ pub struct ProvinceFilter {
     pub borders_foreign: Option<bool>,
     /// Is the capital.
     pub capital: Option<bool>,
+    /// Held by a vassal whose strength times the number of his provinces exceeds the crown
+    /// power here.
+    pub vassal_stronger: Option<bool>,
 }
 
 impl ProvinceFilter {
@@ -118,7 +122,17 @@ impl ProvinceFilter {
             Holder::Vassal(_) => HolderKind::Vassal,
             Holder::Foreign(_) => HolderKind::Foreign,
         };
-        let borders = !w.foreign_neighbours(&p.id).is_empty();
+        let stronger = || match &p.holder {
+            Holder::Vassal(v) => w.vassals.get(v).is_some_and(|x| {
+                let held = w
+                    .provinces
+                    .values()
+                    .filter(|q| q.holder == p.holder)
+                    .count();
+                x.strength * Fx::from_int(held as i64) > p.crown_power
+            }),
+            _ => false,
+        };
         self.holder.is_none_or(|h| h == kind)
             && self.loyalty_below.is_none_or(|v| p.loyalty < v)
             && self.loyalty_above.is_none_or(|v| p.loyalty > v)
@@ -127,8 +141,9 @@ impl ProvinceFilter {
                 .as_ref()
                 .is_none_or(|b| p.buildings.contains(b))
             && (self.without_building.as_ref()).is_none_or(|b| !p.buildings.contains(b))
-            && self.borders_foreign.is_none_or(|b| b == borders)
+            && (self.borders_foreign).is_none_or(|b| b == !w.foreign_neighbours(&p.id).is_empty())
             && (self.capital).is_none_or(|c| c == (p.id == w.capital.province))
+            && self.vassal_stronger.is_none_or(|b| b == stronger())
     }
 }
 
@@ -179,6 +194,9 @@ pub enum Effect {
     IfFriendly(Vec<Effect>),
     /// Relation change with every neighbour but the one of the event or action.
     OtherRelations(Fx),
+    /// The vassal holding the province breaks away with all his provinces as a new foreign
+    /// state of his name, strength `strength * provinces`, relation `sim.secession_relation`.
+    Secede(ProvinceTarget),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -497,6 +515,31 @@ impl Effect {
                 };
                 w.provinces.get_mut(&id).expect("checked above").holder = Holder::Vassal(vassal);
             }
+            Effect::Secede(t) => {
+                let held = t.resolve(w, ctx).and_then(|id| w.provinces.get(&id));
+                let Some(Holder::Vassal(v)) = held.map(|p| p.holder.clone()) else {
+                    return;
+                };
+                let holder = Holder::Vassal(v.clone());
+                let Some(vassal) = w.vassals.remove(&v) else {
+                    return;
+                };
+                // ponytail: a later house of the same name would merge into this state.
+                let id = NeighbourId(v.0);
+                let mut count = 0;
+                for p in w.provinces.values_mut().filter(|p| p.holder == holder) {
+                    p.holder = Holder::Foreign(id.clone());
+                    count += 1;
+                }
+                let n = Neighbour {
+                    id: id.clone(),
+                    name: vassal.name,
+                    relation: ctx.data.sim.secession_relation,
+                    strength: vassal.strength * Fx::from_int(count),
+                    stance: Stance::Defend,
+                };
+                w.neighbours.insert(id, n);
+            }
             Effect::Revoke(t) => {
                 let id = t.resolve(w, ctx);
                 if let Some(p) = id.and_then(|id| w.provinces.get_mut(&id))
@@ -578,6 +621,10 @@ pub struct Event {
     pub when: Predicate,
     /// 0 keeps the event out of the random pool: it only fires via `SpawnEvent`.
     pub weight: u32,
+    /// Added to the weight in the pick while the predicate holds (also to an offer's weight
+    /// from `neighbour_ai`): risks that grow with a bad state. Weight 0 stays out of the pool.
+    #[serde(default)]
+    pub weight_bonus: Vec<(Predicate, u32)>,
     pub once: bool,
     pub cooldown_years: Years,
     pub importance: u32,
@@ -614,11 +661,20 @@ pub struct Choice {
 }
 
 impl Event {
+    /// Sum of the `weight_bonus` that hold now.
+    pub fn bonus(&self, w: &World) -> u32 {
+        let holding = self.weight_bonus.iter().filter(|(p, _)| p.eval(w));
+        holding.map(|(_, b)| b).sum()
+    }
+
     pub(crate) fn check(&self, data: &Data) -> Result<(), String> {
         if self.choices.is_empty() {
             return Err("an event needs at least one choice".into());
         }
         self.when.check(data)?;
+        self.weight_bonus
+            .iter()
+            .try_for_each(|(p, _)| p.check(data))?;
         let mut effects = self.choices.iter().flat_map(|c| &c.effects);
         effects.try_for_each(|e| e.check(data))
     }
@@ -903,6 +959,89 @@ mod tests {
             holder(&w, "nordheim"),
             Holder::Foreign(NeighbourId("nordmark".into()))
         );
+    }
+
+    #[test]
+    fn vassal_stronger_than_the_crown() {
+        let (data, mut w) = world();
+        let f = filter("(vassal_stronger: true)");
+        let stronger = |w: &World| {
+            let ps = w.provinces.values().filter(|p| f.matches(p, w));
+            ps.map(|p| p.id.0.clone()).collect::<Vec<_>>()
+        };
+        // Weir holds holm (crown power 25) and weir: his strength counts twice.
+        let weir = VassalId("weir".into());
+        w.vassals.get_mut(&weir).unwrap().strength = Fx::from_int(12);
+        assert!(!stronger(&w).contains(&"holm".to_string())); // 24 vs 25
+        w.vassals.get_mut(&weir).unwrap().strength = Fx(12_501);
+        assert!(stronger(&w).contains(&"holm".to_string())); // 25.002 vs 25
+        // A third province makes him stronger still.
+        w.vassals.get_mut(&weir).unwrap().strength = Fx::from_int(9);
+        assert!(!stronger(&w).contains(&"holm".to_string())); // 18 vs 25
+        w.provinces.get_mut(&pid("gart")).unwrap().holder = Holder::Vassal(weir);
+        w.recompute_crown_power(&data);
+        assert!(stronger(&w).contains(&"holm".to_string())); // 27 vs 25
+        // Crown land never matches; `false` matches the rest.
+        assert!(!stronger(&w).contains(&"capital".to_string()));
+        let weaker = filter("(vassal_stronger: false)");
+        assert!(weaker.matches(&w.provinces[&pid("capital")], &w));
+    }
+
+    #[test]
+    fn secede() {
+        let (data, mut w) = world();
+        let mut queue = Vec::new();
+        apply(
+            &mut w,
+            &data,
+            &mut queue,
+            "Secede(ById(\"holm\"))",
+            None,
+            None,
+        );
+        let weir = NeighbourId("weir".into());
+        for p in ["holm", "weir"] {
+            assert_eq!(
+                w.provinces[&pid(p)].holder,
+                Holder::Foreign(weir.clone()),
+                "{p}"
+            );
+        }
+        assert!(!w.vassals.contains_key(&VassalId("weir".into())));
+        let n = &w.neighbours[&weir];
+        assert_eq!((n.name.as_str(), n.strength), ("Вейр", Fx::from_int(40)));
+        assert_eq!(
+            (n.relation, &n.stance),
+            (data.sim.secession_relation, &Stance::Defend)
+        );
+        // Crown or foreign land: no-op.
+        let before = w.clone();
+        apply(&mut w, &data, &mut queue, "Secede(Capital)", None, None);
+        apply(
+            &mut w,
+            &data,
+            &mut queue,
+            "Secede(ById(\"holm\"))",
+            None,
+            None,
+        );
+        assert_eq!(w, before);
+    }
+
+    #[test]
+    fn weight_bonus_counts_while_it_holds() {
+        let (_, mut w) = world();
+        let e: Event = crate::data::parse(
+            r#"(id: "e", title: "", text: "", when: All([]), weight: 2, once: false,
+            cooldown_years: 0, importance: 0, target: None, choices: [],
+            weight_bonus: [(AxisBelow("stability", 50), 3), (Flag("plague"), 10)])"#,
+        )
+        .unwrap();
+        assert_eq!(e.bonus(&w), 0); // stability 55
+        w.axes.insert(ax("stability"), Fx::from_int(40));
+        assert_eq!(e.bonus(&w), 3);
+        w.flags.insert("plague".into());
+        assert_eq!(e.bonus(&w), 13);
     }
 
     fn apply(

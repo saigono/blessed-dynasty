@@ -216,9 +216,10 @@
                 "pious": {"loyalty_church": 1.2},
             },
         ),
-        // (title, text) of the entries the simulation makes itself.
+        // (title, text) of the entries the simulation makes itself. Rulers of either sex:
+        // no gendered verb with {ruler}, and names stay in the nominative (they do not decline).
         texts: (
-            crowned: ("Новый государь", "На престол взошёл {ruler}."),
+            crowned: ("Новое правление", "Престол наследует {ruler}."),
             province_lost: ("Потеря земли", "Земля {province} потеряна, ею владеет {neighbour}."),
             province_gained: ("Земля возвращена", "Земля {province} отошла к короне. Прежний владелец: {neighbour}."),
         ),

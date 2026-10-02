@@ -1,13 +1,21 @@
 // Simulation events: only sim::run draws them (Data::add_sim_events), the reign never does.
-// The minimum stage 6 needs; stage 9 writes the chronicle set (two per type, annalistic
-// texts). `weight_bonus` raises the weight while its predicate holds: risks grow with a bad
-// state. Choices are made by sim::AutoChooser, so cause_tags here need no hints.
+// Twelve, two per risk of DESIGN 7.1: revolt (vassal_revolt, peasant_war), invasion
+// (invasion, nomad_raid), succession crisis (succession_crisis, regency_council), disaster
+// (disaster, great_famine), decline (unrest -> decline), rise (prosperity -> golden_age).
+// The long ones start an outcome with SpawnEvent; it fires only if its `when` still holds.
+// `weight_bonus` raises the weight while its predicate holds: risks grow with a bad state.
+// Thresholds follow what the simulation reaches (stage 9 probe over 200 dynasties):
+// stability stays within 30..70, people's loyalty within 35..65, legitimacy goes up to 100.
+// Choices are made by sim::AutoChooser and mark nothing, so they carry no `hint`; their
+// cause_tags still have one in hints.ron (data_lint). Texts never name the ruler's sex and
+// keep `{ruler}` and `{neighbour}` in the nominative: names do not decline.
 [
+    // ------------------------------------------------------------------ revolt
     (
         // A vassal stronger than the crown in his land (strength times provinces held).
         id: "vassal_revolt",
-        title: "Мятеж вассала",
-        text: "Дом {vassal} поднял мятеж в земле {province} и не признаёт власти {ruler}.",
+        title: "Мятеж дома {vassal}",
+        text: "В тот год дом {vassal} поднял мятеж в земле {province} и отказался присягать короне.",
         when: ProvinceWhere((holder: Vassal, vassal_stronger: true)),
         weight: 1,
         weight_bonus: [
@@ -46,11 +54,52 @@
         ],
     ),
     (
+        id: "peasant_war",
+        title: "Мужицкая война",
+        text: "В тот год поднялись сёла. Горят усадьбы, сборщиков подати вешают на воротах, и пожар дошёл до земли {province}.",
+        when: AxisBelow("loyalty_people", 45),
+        weight: 1,
+        weight_bonus: [
+            (AxisBelow("loyalty_people", 35), 3),
+            (AxisBelow("stability", 35), 2),
+            (ProvinceWhere((holder: Crown, loyalty_below: 30)), 2),
+        ],
+        once: false,
+        cooldown_years: 15,
+        importance: 4,
+        target: RandomProvince((holder: Crown, capital: false)),
+        choices: [
+            (
+                text: "Бросить на мятежников войско",
+                effects: [
+                    Chance((
+                        percent: 50,
+                        axes: [("army", 0.3)],
+                        then: [Axis("army", -10), Province(EventTarget, Population, -1500), Province(EventTarget, Loyalty, -10), Axis("loyalty_people", -5)],
+                        otherwise: [Axis("army", -20), Axis("stability", -10), Province(EventTarget, Income, -2)],
+                    )),
+                ],
+                cause_tag: "peasants_crushed",
+            ),
+            (
+                text: "Простить недоимки и убавить подать",
+                effects: [Axis("treasury", -60), Axis("income", -1), Axis("loyalty_people", 12), Province(EventTarget, Loyalty, 15), Axis("legitimacy", -3)],
+                cause_tag: "peasants_appeased",
+            ),
+            (
+                text: "Выдать мятежникам ненавистных мытарей",
+                effects: [Axis("loyalty_people", 6), Axis("bureaucracy", -5), Axis("loyalty_nobles", -3), Axis("stability", -3)],
+                cause_tag: "peasants_scapegoat",
+            ),
+        ],
+    ),
+    // ---------------------------------------------------------------- invasion
+    (
         // Offered by a neighbour in the Expand stance (rules.ron neighbour_ai), never drawn
         // from the pool; leads into the war chain of events/war.ron.
         id: "invasion",
         title: "Вторжение",
-        text: "Войско {neighbour} перешло границу. Порубежные крепости просят помощи у {ruler}.",
+        text: "В тот год вражья рать перешла рубеж. Ведёт её {neighbour}, и порубежные крепости шлют гонцов за помощью.",
         when: Not(AtWar),
         weight: 0,
         weight_bonus: [(AxisBelow("army", 30), 30), (AxisBelow("stability", 30), 20)],
@@ -77,11 +126,49 @@
         ],
     ),
     (
+        // Nomads from beyond the map: no neighbour, the army alone decides.
+        id: "nomad_raid",
+        title: "Набег из степи",
+        text: "В тот год из степи пришла конная орда. Кочевники жгут сёла земли {province} и уводят людей в полон.",
+        when: All([]),
+        weight: 1,
+        weight_bonus: [(AxisBelow("army", 30), 3), (AxisBelow("stability", 30), 1)],
+        once: false,
+        cooldown_years: 20,
+        importance: 4,
+        target: RandomProvince((holder: Crown)),
+        choices: [
+            (
+                text: "Встретить орду в поле",
+                effects: [
+                    Chance((
+                        percent: 35,
+                        axes: [("army", 0.4)],
+                        then: [Axis("army", -10), Axis("prestige", 10)],
+                        otherwise: [Axis("army", -25), Province(EventTarget, Population, -2000), Axis("prestige", -5)],
+                    )),
+                ],
+                cause_tag: "nomads_fought",
+            ),
+            (
+                text: "Откупиться серебром",
+                effects: [Axis("treasury", -100), Axis("prestige", -5)],
+                cause_tag: "nomads_paid",
+            ),
+            (
+                text: "Отсидеться за стенами",
+                effects: [Province(EventTarget, Population, -2500), Province(EventTarget, Income, -2), Axis("loyalty_people", -4)],
+                cause_tag: "nomads_waited",
+            ),
+        ],
+    ),
+    // ------------------------------------------------------- succession crisis
+    (
         // A contested succession (claim below heirs.crisis_claim, or an abdication), or
         // rival heirs under a weak crown.
         id: "succession_crisis",
         title: "Смута",
-        text: "Не все признали {ruler}. Претенденты собирают сторонников, знать выжидает.",
+        text: "На престоле {ruler}, но присягнули не все. Претенденты собирают сторонников, знать выжидает.",
         when: Any([Flag("succession_contested"), All([HeirCount(2, 99), AxisBelow("legitimacy", 30)])]),
         weight: 2,
         weight_bonus: [(Flag("succession_contested"), 30), (Flag("regency"), 5), (AxisBelow("legitimacy", 20), 5)],
@@ -116,9 +203,47 @@
         ],
     ),
     (
+        // A child on the throne (sim.regency_flag until sim.regency_age).
+        id: "regency_council",
+        title: "Регентство",
+        text: "На престоле дитя, {ruler}. Именем ребёнка правит регентский совет, и каждый в нём тянет казну к себе.",
+        when: Flag("regency"),
+        weight: 3,
+        weight_bonus: [(AxisBelow("legitimacy", 40), 3), (AxisBelow("loyalty_nobles", 40), 2)],
+        once: false,
+        cooldown_years: 8,
+        importance: 4,
+        target: None,
+        choices: [
+            (
+                text: "Вручить всю власть одному регенту",
+                effects: [
+                    Chance((
+                        percent: 75,
+                        axes: [("legitimacy", 0.2)],
+                        then: [Axis("bureaucracy", 5), Axis("stability", 3)],
+                        otherwise: [SetFlag("usurped")],
+                    )),
+                ],
+                cause_tag: "regency_single",
+            ),
+            (
+                text: "Поделить опеку между баронами",
+                effects: [Axis("loyalty_nobles", 6), Axis("treasury", -50), Axis("bureaucracy", -4)],
+                cause_tag: "regency_nobles",
+            ),
+            (
+                text: "Отдать опеку церкви",
+                effects: [Axis("loyalty_church", 6), Axis("loyalty_nobles", -4), Axis("legitimacy", 3)],
+                cause_tag: "regency_church",
+            ),
+        ],
+    ),
+    // ---------------------------------------------------------------- disaster
+    (
         id: "disaster",
-        title: "Бедствие",
-        text: "Великое наводнение и за ним мор опустошили {province}.",
+        title: "Великое бедствие",
+        text: "В тот год великое наводнение, а за ним мор опустошили землю {province}.",
         when: All([]),
         weight: 2,
         weight_bonus: [(AxisBelow("stability", 30), 2)],
@@ -140,15 +265,46 @@
         ],
     ),
     (
+        id: "great_famine",
+        title: "Великий голод",
+        text: "В тот год хлеб не уродился по всему королевству. Люди едят лебеду и кору, по дорогам бредут толпы нищих.",
+        when: All([]),
+        weight: 1,
+        weight_bonus: [(AxisBelow("treasury", 0), 2), (AxisBelow("stability", 30), 2)],
+        once: false,
+        cooldown_years: 25,
+        importance: 4,
+        target: None,
+        choices: [
+            (
+                text: "Открыть казённые амбары",
+                effects: [Axis("treasury", -80), Axis("loyalty_people", 5), Axis("stability", 2)],
+                cause_tag: "famine_granaries",
+            ),
+            (
+                text: "Поручить голодных монастырям",
+                effects: [Axis("treasury", -20), Axis("loyalty_church", 4), Axis("loyalty_people", -2), Province(Capital, Population, -1000)],
+                cause_tag: "famine_monasteries",
+            ),
+            (
+                text: "Ждать нового урожая",
+                effects: [Axis("loyalty_people", -10), Axis("stability", -6), Province(Capital, Population, -3000)],
+                cause_tag: "famine_waited",
+            ),
+        ],
+    ),
+    // ----------------------------------------------------------------- decline
+    (
         // Low stability now; if it still holds when `decline` is due, the realm declines.
         id: "unrest",
         title: "Смутные времена",
-        text: "В королевстве неспокойно: дороги опустели, подати собирают с трудом.",
-        when: AxisBelow("stability", 25),
+        text: "В тот год в королевстве стало неспокойно: дороги опустели, подати собирают с трудом.",
+        when: AxisBelow("stability", 40),
         weight: 3,
+        weight_bonus: [(Flag("vassal_seceded"), 2), (AxisBelow("legitimacy", 30), 2)],
         once: false,
         cooldown_years: 10,
-        importance: 2,
+        importance: 3,
         target: None,
         choices: [
             (
@@ -166,8 +322,8 @@
     (
         id: "decline",
         title: "Упадок",
-        text: "Годы смуты не прошли даром: казна пуста, слава дома {ruler} меркнет.",
-        when: AxisBelow("stability", 25),
+        text: "Смута не прошла даром: казна пуста, дружина разбрелась, и слава дома меркнет.",
+        when: AxisBelow("stability", 40),
         weight: 0,
         once: false,
         cooldown_years: 0,
@@ -186,17 +342,18 @@
             ),
         ],
     ),
+    // -------------------------------------------------------------------- rise
     (
         // High stability and legitimacy now; if they still hold when `golden_age` is due,
         // a golden age.
         id: "prosperity",
         title: "Мирные годы",
-        text: "Урожаи обильны, дороги безопасны, при дворе {ruler} тесно от гостей.",
-        when: All([AxisAbove("stability", 70), AxisAbove("legitimacy", 70)]),
+        text: "В тот год урожаи были обильны, дороги безопасны, и ко двору съезжались гости из дальних земель.",
+        when: All([AxisAbove("stability", 55), AxisAbove("legitimacy", 70)]),
         weight: 3,
         once: false,
         cooldown_years: 15,
-        importance: 2,
+        importance: 3,
         sign: Good,
         target: None,
         choices: [
@@ -215,8 +372,8 @@
     (
         id: "golden_age",
         title: "Золотой век",
-        text: "Летописцы назовут эти годы золотым веком дома {ruler}.",
-        when: All([AxisAbove("stability", 70), AxisAbove("legitimacy", 70)]),
+        text: "Десять лет мира и изобилия. Летописцы назовут эти годы золотым веком династии.",
+        when: All([AxisAbove("stability", 55), AxisAbove("legitimacy", 70)]),
         weight: 0,
         once: false,
         cooldown_years: 0,

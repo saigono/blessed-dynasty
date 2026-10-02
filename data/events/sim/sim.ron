@@ -164,14 +164,14 @@
     ),
     // ------------------------------------------------------- succession crisis
     (
-        // A contested succession (claim below heirs.crisis_claim, or an abdication), or
-        // rival heirs under a weak crown.
+        // A contested succession (claim below heirs.crisis_claim, or an abdication), a child
+        // on the throne (sim.regency_flag), or rival heirs under a weak crown.
         id: "succession_crisis",
         title: "Смута",
         text: "На престоле {ruler}, но присягнули не все. Претенденты собирают сторонников, знать выжидает.",
-        when: Any([Flag("succession_contested"), All([HeirCount(2, 99), AxisBelow("legitimacy", 30)])]),
+        when: Any([Flag("succession_contested"), Flag("regency"), All([HeirCount(2, 99), AxisBelow("legitimacy", 30)])]),
         weight: 2,
-        weight_bonus: [(Flag("succession_contested"), 30), (Flag("regency"), 5), (AxisBelow("legitimacy", 20), 5)],
+        weight_bonus: [(Flag("succession_contested"), 30), (Flag("regency"), 60), (AxisBelow("legitimacy", 20), 5)],
         once: false,
         cooldown_years: 10,
         importance: 5,
@@ -208,7 +208,7 @@
         title: "Регентство",
         text: "На престоле дитя, {ruler}. Именем ребёнка правит регентский совет, и каждый в нём тянет казну к себе.",
         when: Flag("regency"),
-        weight: 3,
+        weight: 20,
         weight_bonus: [(AxisBelow("legitimacy", 40), 3), (AxisBelow("loyalty_nobles", 40), 2)],
         once: false,
         cooldown_years: 8,
@@ -219,7 +219,7 @@
                 text: "Вручить всю власть одному регенту",
                 effects: [
                     Chance((
-                        percent: 75,
+                        percent: 50,
                         axes: [("legitimacy", 0.2)],
                         then: [Axis("bureaucracy", 5), Axis("stability", 3)],
                         otherwise: [SetFlag("usurped")],

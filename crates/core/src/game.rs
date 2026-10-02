@@ -112,8 +112,11 @@ pub struct Game {
 }
 
 impl Game {
-    /// `data` must already hold the events and actions.
-    pub fn new(data: Data, preset: &Preset, seed: u64) -> Game {
+    /// `data` must already hold the events and actions. It takes the neighbours' start
+    /// strengths from the preset (`neighbour_ai.start`).
+    pub fn new(mut data: Data, preset: &Preset, seed: u64) -> Game {
+        let start = preset.neighbours.iter().map(|n| (n.id.clone(), n.strength));
+        data.neighbour_ai.start = start.collect();
         Game {
             world: World::from_preset(&data, preset),
             rng: Rng::from_seed(seed),
@@ -587,10 +590,15 @@ fn target_key(t: &Target) -> String {
     }
 }
 
-/// Yearly: ability grows by status until adulthood, claims follow the succession law,
-/// hostages lose claim, a child may be born.
+/// Yearly: heirs may die by age, ability grows by status until adulthood, claims follow the
+/// succession law, hostages lose claim, a child may be born.
 fn heirs_year(d: &Data, w: &mut World, rng: &mut Rng) {
     let r = &d.heirs;
+    // No roll at zero risk: the rng stream stays as it was without the table.
+    w.heirs.retain(|h| {
+        let risk = by_age(&r.death, h.age);
+        risk <= Fx(0) || rng.range(0, 1000 * Fx::SCALE) >= risk.0
+    });
     let pct = |v: Fx| v.clamp(Fx(0), Fx::from_int(100));
     let law = r.laws.iter().find(|l| w.flags.contains(&l.flag));
     for (i, h) in w.heirs.iter_mut().enumerate() {

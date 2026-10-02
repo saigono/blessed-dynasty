@@ -1,7 +1,7 @@
 use crate::fx::Fx;
 use crate::rules::{Action, Event, Predicate};
 use crate::sim::FallReason;
-use crate::state::{AxisId, Heir, Holder, Stance, World};
+use crate::state::{AxisId, Heir, Holder, NeighbourId, Stance, World};
 use crate::time::TimeUnit;
 use crate::war::WarOutcome;
 use serde::Deserialize;
@@ -240,6 +240,9 @@ pub struct HeirRules {
     pub birth: Vec<(u32, Fx)>,
     pub married_flag: String,
     pub unmarried: Fx,
+    /// Yearly death risk of every heir in per mille: the row of the largest
+    /// `age_from <= heir age`. The dead leave the list.
+    pub death: Vec<(u32, Fx)>,
 }
 
 /// Claim target: `eldest` for heir 0, `others` for the rest, plus `ability * ability_k`.
@@ -310,6 +313,12 @@ pub struct NeighbourAi {
     pub expand_margin: Fx,
     /// Every year the relation moves this much toward 0, after the stance's own change.
     pub drift: Fx,
+    /// Every year the strength moves this much toward the start strength in `start`.
+    pub recover: Fx,
+    /// Start strength per neighbour, from the preset (`Game::new`), not from `rules.ron`.
+    /// A state born later (`Effect::Secede`) has none and does not recover.
+    #[serde(default)]
+    pub start: BTreeMap<NeighbourId, Fx>,
     pub expand: StanceRules,
     pub defend: StanceRules,
     pub trade: StanceRules,
@@ -419,12 +428,14 @@ pub struct AutoRules {
 }
 
 /// `(title, text)` of the chronicle entries made by the simulation itself; `{ruler}`,
-/// `{province}`, `{neighbour}`.
+/// `{province}`, `{neighbour}`, `{heir}`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct SimTexts {
     pub crowned: (String, String),
     pub province_lost: (String, String),
     pub province_gained: (String, String),
+    /// The heir first in line died (`heirs.death`); `{heir}`.
+    pub heir_died: (String, String),
     /// Display text per reign end cause (`Game.ended`: a `RulerDies` cause or the
     /// abdication event id).
     #[serde(default)]

@@ -67,12 +67,14 @@
     // A newborn from HeirOp(Add).
     new_heir: (name: "Младенец", age: 0, ability: 50, claim: 50, status: Home),
 
-    // Neighbour AI, once a year per neighbour. Stance: relation below `hostile_below` is
-    // Expand when strength >= the weakest crown power on the common border + expand_margin,
-    // otherwise (or with no common border) Defend; above `friendly_above` Trade; else Wait.
-    // Then relation moves by the stance's `relation` and `drift` toward 0 (old grudges and
-    // friendships fade unless kept up), and one roll in 0..100 picks at most
-    // one of its `events` (id, chance in percent per year; chances sum to <= 100).
+    // Neighbour AI, once a year per neighbour. First its strength moves by `recover` toward
+    // its start strength in the preset: losses to wars and tribute heal. Stance: relation
+    // below `hostile_below` is Expand when strength >= the weakest crown power on the common
+    // border + expand_margin, otherwise (or with no common border) Defend; above
+    // `friendly_above` Trade; else Wait. Then relation moves by the stance's `relation` and
+    // `drift` toward 0 (old grudges and friendships fade unless kept up), and one roll in
+    // 0..100 picks at most one of its `events` (id, chance in percent per year; chances sum
+    // to <= 100).
     // Events targeting a province hit the weakest border province and name the neighbour
     // as its second target; others target the neighbour.
     neighbour_ai: (
@@ -80,6 +82,7 @@
         friendly_above: 30,
         expand_margin: 0,
         drift: 1,
+        recover: 1,
         // `invasion` is a simulation event (events/sim/): the reign drops it as unknown.
         expand: (relation: -2, events: [
             ("neighbour_raid", 25), ("neighbour_ultimatum", 10), ("neighbour_war_declared", 5),
@@ -148,7 +151,9 @@
     // Per year. Ability grows by status until adult_age. Claims move by claim_step toward
     // the target of the current law: eldest (heirs[0]) or others, plus ability * ability_k;
     // a hostage also loses hostage_claim. Birth chance in percent by ruler age, times
-    // `unmarried` without the married flag.
+    // `unmarried` without the married flag. The ruler's children (World.line_from) stand
+    // first, in birth order, then the collateral line; "eldest" is heirs[0].
+    // `death`: yearly risk of every heir in per mille by age, like death.base.
     heirs: (
         adult_age: 16,
         growth_home: 2,
@@ -161,10 +166,11 @@
             (flag: "law_elective", eldest: 0, others: 0, ability_k: 0.9),
             (flag: "law_none", eldest: 50, others: 50, ability_k: 0),
         ],
-        crisis_claim: 50,
+        crisis_claim: 70,
         birth: [(0, 0), (16, 25), (35, 20), (45, 15), (55, 10), (65, 5)],
         married_flag: "married",
         unmarried: 0.2,
+        death: [(0, 120), (1, 40), (5, 15), (16, 10), (30, 15), (40, 20), (50, 30), (55, 60), (60, 90), (65, 130), (70, 180), (80, 300)],
     ),
 
     // The dynasty after the founder (sim::run): the same rules year by year, the choices
@@ -229,6 +235,8 @@
             crowned: ("Новое правление", "Престол наследует {ruler}."),
             province_lost: ("Потеря земли", "Земля {province} потеряна, ею владеет {neighbour}."),
             province_gained: ("Земля возвращена", "Земля {province} отошла к короне. Прежний владелец: {neighbour}."),
+            // The heir first in line died of age risk (heirs.death).
+            heir_died: ("Смерть наследника", "Не стало первого в очереди на престол: {heir}."),
             // What ended a reign (a RulerDies cause or the abdication event id) and the dynasty,
             // as shown to the player.
             reign_ends: {

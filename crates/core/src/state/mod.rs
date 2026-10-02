@@ -153,6 +153,10 @@ pub struct World {
     /// The id `add_heir` gives next.
     #[serde(default)]
     pub next_heir_id: u32,
+    /// Heirs with an id from this on are the reigning ruler's children; older ones are the
+    /// collateral line (his brothers and sisters and theirs) and stand after them in `heirs`.
+    #[serde(default)]
+    pub line_from: u32,
     /// What the player's decisions touched, for the causes of chronicle entries.
     /// Weights decay yearly by `Data.sim.decay`.
     #[serde(default)]
@@ -206,6 +210,7 @@ impl World {
             crown_modifiers: BTreeMap::new(),
             war: None,
             next_heir_id: 0,
+            line_from: 0,
             marks: BTreeMap::new(),
         };
         for h in std::mem::take(&mut world.heirs) {
@@ -221,11 +226,13 @@ impl World {
         world
     }
 
-    /// Appends the heir under the next free id.
+    /// Adds the heir under the next free id, after the ruler's children and before the
+    /// collateral line (`line_from`).
     pub fn add_heir(&mut self, mut heir: Heir) {
         heir.id = self.next_heir_id;
         self.next_heir_id += 1;
-        self.heirs.push(heir);
+        let at = self.heirs.iter().position(|h| h.id < self.line_from);
+        self.heirs.insert(at.unwrap_or(self.heirs.len()), heir);
     }
 
     /// Index in `heirs` of the heir with this id.

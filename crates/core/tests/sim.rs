@@ -116,29 +116,29 @@ fn texts(c: &Chronicle) -> Vec<(&str, &str, Option<&str>)> {
 fn golden_seed_42_script_a() {
     let (g, end) = script_a(42);
     let c = sim::run(end, &g.data, g.rng.clone());
-    assert_eq!((c.years, &c.fall), (142, &FallReason::Usurped));
+    // Stage 12: Конрад does not live to reign (heirs.death), Агнесса does; her first in
+    // line dies of age risk and is told in the chronicle.
+    assert_eq!((c.years, &c.fall), (69, &FallReason::Usurped));
     let hint = |h: &'static str| Some(h);
-    let monks = hint("Монахи, посланные основателем к больным, остались в памяти народа.");
     assert_eq!(
-        texts(&c)[..5],
+        texts(&c)[..4],
         [
-            ("Новое правление", "Престол наследует Конрад.", None),
             (
-                "Спор наследников",
-                "Двое королевских детей не уступают друг другу, у каждого свои сторонники при дворе.",
-                None,
+                "Новое правление",
+                "Престол наследует Агнесса.",
+                hint("Основатель породнил наследника с домом своего барона."),
             ),
             (
-                "Мятеж дома Вейр",
-                "В тот год дом Вейр поднял мятеж в земле Берг и отказался присягать короне.",
-                monks,
+                "Набег из степи",
+                "В тот год из степи пришла конная орда. Кочевники жгут сёла земли Оствик и уводят людей в полон.",
+                hint("Набег, отбитый при основателе, научил соседа осторожности."),
             ),
             (
-                "Мятеж дома Вейр",
-                "В тот год дом Вейр поднял мятеж в земле Вейр и отказался присягать короне.",
-                monks,
+                "Смерть наследника",
+                "Не стало первого в очереди на престол: Матильда.",
+                hint("Наследник основателя учился власти в королевском совете."),
             ),
-            ("Новое правление", "Престол наследует Агнесса.", None),
+            ("Новое правление", "Престол наследует Освальд.", None),
         ]
     );
     // The same seed and decisions give the same chronicle.
@@ -292,6 +292,7 @@ fn quiet(data: &mut Data) {
     data.quiet_weight = 0;
     (data.death.base, data.death.health_k) = (vec![], Fx(0));
     data.heirs.birth = vec![];
+    data.heirs.death = vec![];
     data.actions.clear();
     let ai = &mut data.neighbour_ai;
     for s in [&mut ai.expand, &mut ai.defend, &mut ai.trade, &mut ai.wait] {
@@ -378,7 +379,8 @@ fn falls() {
 #[test]
 fn decisions_mark_what_they_touch_and_marks_fade() {
     let data = content();
-    let mut g = game(&data, 1);
+    // Seed 1 loses Конрад in the first year (heirs.death).
+    let mut g = game(&data, 2);
     g.pending_event = Some(PendingEvent {
         event_id: "cap_court_intrigue".into(),
         target: None,
@@ -418,8 +420,9 @@ fn decisions_mark_what_they_touch_and_marks_fade() {
     // Marks follow the world into the simulation, which adds none of its own: their number
     // only falls as weights fade to nothing.
     let count = |w: &bd_core::state::World| w.marks.values().flatten().count();
-    let c = sim::run(end_now(&g), &data, Rng::from_seed(1));
-    assert!(c.entries.len() > 10);
+    // Any long enough dynasty: heirs die and child rulers fall, so not every seed has one.
+    let long = (0..20).map(|seed| sim::run(end_now(&g), &data, Rng::from_seed(seed)));
+    let c = long.into_iter().find(|c| c.entries.len() > 10).expect("a long dynasty");
     let counts: Vec<usize> = c.entries.iter().map(|e| count(&e.snapshot)).collect();
     assert!(counts[0] > 0 && counts[0] <= count(&g.world));
     assert!(counts.windows(2).all(|w| w[1] <= w[0]), "{counts:?}");

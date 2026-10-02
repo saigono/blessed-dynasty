@@ -127,7 +127,16 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
                 .values()
                 .map(|p| p.holder.clone())
                 .collect();
-            match g.wait().expect("the reign goes on") {
+            let first = next_heir(&g.world).map(|i| g.world.heirs[i].clone());
+            let step = g.wait().expect("the reign goes on");
+            // Within a tick only the yearly age risk takes an heir; events do on resolve.
+            if let Some(h) = first.filter(|h| g.world.heir_index(h.id).is_none()) {
+                let (title, text) = &s.texts.heir_died;
+                let told = (title.replace("{heir}", &h.name), text.replace("{heir}", &h.name));
+                let causes = causes(&g.world, [MarkKey::Heir(h.id)].into());
+                c.entries.push(entry(&g, told, s.notable, causes));
+            }
+            match step {
                 Step::Idle => {}
                 Step::Event(v) => {
                     // Causes as the world stood before the choice; only entries need them.
@@ -203,13 +212,16 @@ fn next_heir(w: &World) -> Option<usize> {
 }
 
 /// Crowns the next heir: a claim below `heirs.crisis_claim` contests the succession
-/// (`abdication.contested_flag`), a child reigns under the regency flag. False: no heir.
+/// (`abdication.contested_flag`), a child reigns under the regency flag, the other heirs
+/// become the collateral line. False: no heir.
 fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     let Some(ruler) = succession(&g.world, &g.data, &mut g.rng) else {
         return false;
     };
     let (d, w) = (&g.data, &mut g.world);
     let heir = w.heirs.remove(next_heir(w).expect("succession found one"));
+    // His brothers and sisters become the collateral line, behind his children to come.
+    w.line_from = w.next_heir_id;
     if heir.claim < d.heirs.crisis_claim {
         w.flags.insert(d.abdication.contested_flag.clone());
     }

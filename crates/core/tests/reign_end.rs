@@ -36,6 +36,7 @@ fn bare() -> Data {
     data.quiet_weight = 0;
     data.death.base = vec![];
     data.death.health_k = Fx(0);
+    data.heirs.death = vec![];
     data
 }
 

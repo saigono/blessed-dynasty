@@ -18,6 +18,12 @@ pub fn neighbour_tick(
     let ai = &data.neighbour_ai;
     let border = (w.weakest_border(&id)).map(|p| (p.id.clone(), p.crown_power));
     let n = w.neighbours.get_mut(&id)?;
+    if let Some(&start) = ai.start.get(&id) {
+        n.strength = match n.strength < start {
+            true => (n.strength + ai.recover).min(start),
+            false => (n.strength - ai.recover).max(start),
+        };
+    }
     n.stance = if n.relation < ai.hostile_below {
         match &border {
             Some((_, power)) if n.strength >= *power + ai.expand_margin => Stance::Expand,

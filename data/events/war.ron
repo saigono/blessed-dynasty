@@ -1,0 +1,196 @@
+// The war chain. StartWar (action declare_war, event neighbour_war_declared) queues
+// war_declared at the enemy; every step spawns the next and passes the enemy on as its target.
+// Each step waits for its stage (rules.ron `war`): war_declared at Declared, war_clash at
+// Fighting, then war_siege (winning) or war_talks (not winning) at Fighting, then exactly one
+// of war_victory, war_defeat, war_draw at Peace by war_score. The sibling that does not fit
+// is dropped. Nominally four years from the declaration.
+[
+    (
+        id: "war_declared",
+        title: "Война с {neighbour}",
+        text: "Между {ruler} и {neighbour} война. Войско надо собрать прежде, чем враг перейдёт границу.",
+        when: WarStage(Declared),
+        weight: 0,
+        once: false,
+        cooldown_years: 0,
+        importance: 4,
+        target: Neighbour,
+        choices: [
+            (
+                text: "Нанять наёмников",
+                effects: [Axis("treasury", -60), Axis("army", 25), SetWarStage(Fighting), SpawnEvent("war_clash", 1)],
+                cause_tag: "war_mercenaries",
+                hint: "Наёмник верен, пока ему платят.",
+            ),
+            (
+                text: "Созвать вассалов",
+                effects: [Axis("loyalty_nobles", -5), Axis("army", 15), SetWarStage(Fighting), SpawnEvent("war_clash", 1)],
+                cause_tag: "war_levy",
+                hint: "Бароны, пролившие кровь за корону, потребуют награды.",
+            ),
+            (
+                text: "Выступить малым войском",
+                effects: [Axis("prestige", -2), SetWarStage(Fighting), SpawnEvent("war_clash", 1)],
+                cause_tag: "war_small_army",
+            ),
+        ],
+    ),
+    (
+        id: "war_clash",
+        title: "Битва с {neighbour}",
+        text: "Войска сошлись у границы. Воеводы ждут слова {ruler}.",
+        when: WarStage(Fighting),
+        weight: 0,
+        once: false,
+        cooldown_years: 0,
+        importance: 4,
+        target: Neighbour,
+        choices: [
+            (
+                text: "Наступать",
+                effects: [Clash, Clash, Axis("army", -10), SpawnEvent("war_siege", 1), SpawnEvent("war_talks", 1)],
+                cause_tag: "war_attack",
+                hint: "Смелый удар решает войну быстрее, но кровью.",
+            ),
+            (
+                text: "Держать позиции",
+                effects: [Clash, Axis("army", -5), SpawnEvent("war_siege", 1), SpawnEvent("war_talks", 1)],
+                cause_tag: "war_hold",
+            ),
+            (
+                text: "Отступить",
+                effects: [Axis("prestige", -5), Axis("loyalty_nobles", -3), SpawnEvent("war_siege", 1), SpawnEvent("war_talks", 1)],
+                cause_tag: "war_retreat",
+                hint: "Отступление сберегает войско, но не славу.",
+            ),
+        ],
+    ),
+    (
+        id: "war_siege",
+        title: "Осада",
+        text: "Войско {ruler} стоит под стенами пограничной крепости {neighbour}. Осада затягивается.",
+        when: All([WarStage(Fighting), WarScoreAbove(0)]),
+        weight: 0,
+        once: false,
+        cooldown_years: 0,
+        importance: 4,
+        target: Neighbour,
+        choices: [
+            (
+                text: "Идти на штурм",
+                effects: [Clash, Clash, Axis("army", -10), SetWarStage(Peace), SpawnEvent("war_victory", 1), SpawnEvent("war_defeat", 1), SpawnEvent("war_draw", 1)],
+                cause_tag: "war_storm",
+                hint: "Штурм берёт стены, но кладёт под ними лучших.",
+            ),
+            (
+                text: "Вести правильную осаду",
+                effects: [Clash, Axis("treasury", -30), SetWarStage(Peace), SpawnEvent("war_victory", 1), SpawnEvent("war_defeat", 1), SpawnEvent("war_draw", 1)],
+                cause_tag: "war_siege",
+            ),
+            (
+                text: "Снять осаду и начать переговоры",
+                effects: [SetWarStage(Peace), SpawnEvent("war_victory", 1), SpawnEvent("war_defeat", 1), SpawnEvent("war_draw", 1)],
+                cause_tag: "war_siege_lifted",
+                hint: "Победу, оставленную недобитой, враг не признаёт.",
+            ),
+        ],
+    ),
+    (
+        id: "war_talks",
+        title: "Переговоры с {neighbour}",
+        text: "{neighbour} теснит войско {ruler}. Воеводы советуют искать мира, пока не поздно.",
+        when: All([WarStage(Fighting), Not(WarScoreAbove(0))]),
+        weight: 0,
+        once: false,
+        cooldown_years: 0,
+        importance: 4,
+        target: Neighbour,
+        choices: [
+            (
+                text: "Дать решающий бой",
+                effects: [Clash, Axis("army", -5), SetWarStage(Peace), SpawnEvent("war_victory", 1), SpawnEvent("war_defeat", 1), SpawnEvent("war_draw", 1)],
+                cause_tag: "war_last_stand",
+                hint: "Последний бой либо спасает войну, либо проигрывает её до конца.",
+            ),
+            (
+                text: "Просить мира",
+                effects: [Axis("prestige", -5), SetWarStage(Peace), SpawnEvent("war_victory", 1), SpawnEvent("war_defeat", 1), SpawnEvent("war_draw", 1)],
+                cause_tag: "war_sue_for_peace",
+            ),
+        ],
+    ),
+    (
+        id: "war_victory",
+        title: "Победа над {neighbour}",
+        text: "{neighbour} просит мира. Войско {ruler} победило, и враг готов платить.",
+        when: All([WarStage(Peace), WarScoreAbove(15)]),
+        weight: 0,
+        once: false,
+        cooldown_years: 0,
+        importance: 5,
+        sign: Good,
+        target: Neighbour,
+        choices: [
+            (
+                text: "Взять пограничную провинцию и контрибуцию",
+                effects: [TransferProvince(EnemyBorder, Crown), Tribute(60), Axis("prestige", 15), Axis("legitimacy", 5), Relation(EventTarget, -20), EndWar(Victory)],
+                cause_tag: "war_won_land",
+                hint: "Взятая земля долго помнит, чьей была.",
+            ),
+            (
+                text: "Взять только контрибуцию",
+                effects: [Tribute(120), Axis("prestige", 8), Axis("legitimacy", 3), EndWar(Victory)],
+                cause_tag: "war_won_gold",
+            ),
+        ],
+    ),
+    (
+        id: "war_defeat",
+        title: "Поражение",
+        text: "Войско {ruler} разбито. Послы {neighbour} диктуют условия мира.",
+        when: All([WarStage(Peace), WarScoreBelow(-15)]),
+        weight: 0,
+        once: false,
+        cooldown_years: 0,
+        importance: 5,
+        target: Neighbour,
+        choices: [
+            (
+                text: "Уступить пограничную провинцию",
+                effects: [TransferProvince(OwnBorder, Foreign(EventTarget)), Tribute(-50), RulerHealth(-10), Axis("legitimacy", -10), Axis("prestige", -10), EndWar(Defeat)],
+                cause_tag: "war_lost_land",
+                hint: "Отданная земля станет причиной новой войны.",
+            ),
+            (
+                text: "Отдать наследника в заложники",
+                effects: [TakeHostage(0, EventTarget), Tribute(-100), RulerHealth(-10), Axis("legitimacy", -8), Axis("prestige", -10), EndWar(Defeat)],
+                cause_tag: "war_lost_hostage",
+                hint: "Наследник, выросший у врага, вернётся чужим.",
+            ),
+        ],
+    ),
+    (
+        id: "war_draw",
+        title: "Мир с {neighbour}",
+        text: "Ни одна сторона не одолела. {neighbour} готов к миру на прежних границах.",
+        when: All([WarStage(Peace), Not(WarScoreAbove(15)), Not(WarScoreBelow(-15))]),
+        weight: 0,
+        once: false,
+        cooldown_years: 0,
+        importance: 4,
+        target: Neighbour,
+        choices: [
+            (
+                text: "Мир на прежних границах",
+                effects: [Axis("prestige", -2), EndWar(Draw)],
+                cause_tag: "war_draw_peace",
+            ),
+            (
+                text: "Скрепить мир подарками",
+                effects: [Tribute(-30), Relation(EventTarget, 15), EndWar(Draw)],
+                cause_tag: "war_draw_gifts",
+                hint: "Подарки после войны соседи принимают за слабость или за дружбу.",
+            ),
+        ],
+    ),
+]

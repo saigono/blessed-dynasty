@@ -1762,6 +1762,7 @@ mod tests {
         let mut data = bare();
         data.time_unit = TimeUnit { ticks_per_year: 4 };
         data.economy.flows = vec![(ax("income"), Fx::from_int(1)), (ax("army"), Fx(-100))];
+        data.influences.clear(); // the flows above only
         data.war.army_upkeep.clear(); // the linear upkeep above only
         data.drift.step = Fx::from_int(1);
         data.drift.province_loyalty = Fx::from_int(50);

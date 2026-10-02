@@ -1,4 +1,5 @@
 use crate::fx::Fx;
+use crate::graph::Influence;
 use crate::rng::Rng;
 use crate::rules::{Action, ActionTarget, Event, Predicate};
 use crate::sim::FallReason;
@@ -21,6 +22,9 @@ pub struct Data {
     pub action_slots: ActionSlots,
     pub economy: Economy,
     pub drift: Drift,
+    /// The influence graph's edges, counted in this order (`graph::tick`).
+    #[serde(default)]
+    pub influences: Vec<Influence>,
     /// Weight of "nothing happens" in the random event pick.
     pub quiet_weight: u32,
     /// Province loyalty below this shows as unrest. Display only.
@@ -112,10 +116,12 @@ impl ActionSlots {
     }
 }
 
-/// Per year: `treasury += crown province income + sum(axis * coefficient over flows)`.
+/// Per year: `treasury += crown province income + sum(axis * coefficient over flows)`, plus
+/// the `Flow` edges into the treasury (`war::income_parts`). New data writes flows as edges.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Economy {
     pub treasury: AxisId,
+    #[serde(default)]
     pub flows: Vec<(AxisId, Fx)>,
 }
 
@@ -846,6 +852,11 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
             return Err(DataError::Invalid(format!("unknown axis {}", a.0)));
         }
     }
+    for e in &data.influences {
+        if !is_axis(&e.from) || !is_axis(&e.to) || data.is_derived(&e.to) {
+            return Err(invalid(&e.id, "influences: unknown or derived axis".into()));
+        }
+    }
     let w = &data.war;
     if w.treasury_full <= Fx(0) || w.roll.0 > w.roll.1 {
         return Err(DataError::Invalid(
@@ -935,7 +946,7 @@ mod tests {
             (r#"axis: "bureaucracy""#, r#"axis: "nothing""#),
             (r#"treasury: "treasury""#, r#"treasury: "nothing""#),
             (r#"treasury: "treasury""#, r#"treasury: "loyalty""#),
-            (r#"("income", 1)"#, r#"("nothing", 1)"#),
+            (r#"from: "income""#, r#"from: "nothing""#),
             (r#"army: "army""#, r#"army: "nothing""#),
             (r#"("loyalty_nobles", 0.005)"#, r#"("nothing", 0.005)"#),
             ("treasury_full: 100", "treasury_full: 0"),

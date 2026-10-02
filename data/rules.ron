@@ -48,12 +48,20 @@
     // The actions of a war going on (target Enemy) have `war_slots` of their own.
     action_slots: (axis: "bureaucracy", steps: [(0, 1), (40, 2), (70, 3)], war_slots: 1),
 
-    // Per year: treasury += income of crown provinces + sum(axis * coefficient).
-    // Negative coefficients are upkeep. The army's upkeep and the war's toll are in `war`.
+    // Per year: treasury += income of crown provinces + the Flow edges into it (influences).
+    // The army's upkeep and the war's toll are in `war`.
     economy: (
         treasury: "treasury",
-        flows: [("income", 1)],
     ),
+
+    // The influence graph, counted in this order once a year after the passive changes:
+    // lagged sources, then targets and steps, then flows. An edge adds k * (source - rest),
+    // or by its `curve` of (source, contribution) points; `delay`: years the source is
+    // smoothed over. Target: to the target of `to` (its anchor plus the edges; the axis steps
+    // toward it by its `step` a year). Flow: to the stock `to` every year.
+    influences: [
+        (id: "income", from: "income", to: "treasury", k: 1, kind: Flow),
+    ],
 
     // Per year: faction axes move by `step` toward their default, province loyalty toward
     // `province_loyalty`, crown power modifiers from effects toward 0.

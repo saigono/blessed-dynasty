@@ -103,13 +103,15 @@ pub fn yearly_income(w: &World, data: &Data) -> Fx {
     income - upkeep
 }
 
-/// `yearly_income` as (income, upkeep): the crown provinces and the positive `economy.flows`;
+/// `yearly_income` as (income, upkeep): the crown provinces and the positive `economy.flows`
+/// and treasury flow edges (`graph::treasury_flows`);
 /// the negative flows, the war's toll, the army and the land beyond the crown's room.
 pub fn income_parts(w: &World, data: &Data) -> (Fx, Fx) {
     let r = &data.war;
     let crown = w.provinces.values().filter(|p| p.holder == Holder::Crown);
     let land = crown.fold(Fx(0), |s, p| s + p.income);
     let flows = data.economy.flows.iter().map(|(a, k)| w.axes[a] * *k);
+    let flows = flows.chain(crate::graph::treasury_flows(data, w));
     let (gain, cost) = flows.fold((Fx(0), Fx(0)), |(g, c), f| match f > Fx(0) {
         true => (g + f, c),
         false => (g, c - f),
@@ -211,7 +213,11 @@ mod tests {
     fn war_and_a_big_army_cost_income() {
         let (data, mut w) = setup();
         let ax = |s: &str| AxisId(s.into());
-        let base = data.economy.yearly_income(&w);
+        let flows = |w: &World| {
+            let flows = crate::graph::treasury_flows(&data, w);
+            flows.fold(data.economy.yearly_income(w), |s, f| s + f)
+        };
+        let base = flows(&w);
         let upkeep = |army: i64| crate::data::curve(&data.war.army_upkeep, Fx::from_int(army));
         assert_eq!(yearly_income(&w, &data), base - upkeep(50));
         // At war the crown provinces (7 + 4 + 3 + 5 + 4 + 4) bring income_penalty less.
@@ -233,7 +239,7 @@ mod tests {
             assert!(upkeep(b) > upkeep(a) * Fx::from_int(2), "{a} -> {b}");
         }
         w.axes.insert(ax("army"), Fx::from_int(200));
-        let base = data.economy.yearly_income(&w);
+        let base = flows(&w);
         assert_eq!(yearly_income(&w, &data), base - upkeep(200) - penalty);
     }
 }

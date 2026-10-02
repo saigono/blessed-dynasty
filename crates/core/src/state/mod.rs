@@ -211,6 +211,10 @@ pub struct World {
     /// Children born out of wedlock, not recognized: out of the line, eldest first.
     #[serde(default)]
     pub bastards: Vec<Heir>,
+    /// The source of each edge of `Data.influences` smoothed over its `delay`
+    /// (`graph::tick`), in their order; filled on the first tick.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lagged: Vec<Fx>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -304,6 +308,7 @@ impl World {
             unions: BTreeMap::new(),
             designated: None,
             bastards: Vec::new(),
+            lagged: Vec::new(),
         };
         let r = &world.ruler;
         let founder = Kin {

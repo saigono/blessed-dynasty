@@ -92,6 +92,9 @@ struct App {
     /// The last refusal from the core.
     note: String,
     frame_ms: Option<f32>,
+    /// The address bar holds a `#p=...` link; a new start clears it, so a reload does not
+    /// bring the old game back.
+    linked: bool,
 }
 
 fn load_data() -> Data {
@@ -148,11 +151,19 @@ impl App {
             picking: None,
             note: String::new(),
             frame_ms: None,
+            linked: false,
         }
     }
 
     fn apply(&mut self, cmd: Cmd) {
         self.note.clear();
+        if matches!(cmd, Cmd::Start(_) | Cmd::Restart | Cmd::NewSeed) && self.linked {
+            self.linked = false;
+            #[cfg(target_arch = "wasm32")]
+            if let Some(w) = eframe::web_sys::window() {
+                let _ = w.location().set_hash("");
+            }
+        }
         match cmd {
             Cmd::Start(seed) => return self.start(seed),
             Cmd::Restart => return self.start(self.played),
@@ -218,6 +229,7 @@ impl App {
         let Some((_, text)) = url.split_once("#p=") else {
             return;
         };
+        self.linked = true;
         if let Err(e) = self.replay(text) {
             (self.game, self.screen) = (None, Screen::Start);
             self.note = format!("Ссылка не открылась: {e}");
@@ -987,6 +999,10 @@ mod tests {
         assert_eq!(other.game().decisions, h.game().decisions);
         assert_eq!(other.app.played, 7);
         other.frame(vec![]);
+        // A new start drops the link from the address bar.
+        assert!(other.app.linked);
+        other.click_label("Тот же старт, заново");
+        assert!(!other.app.linked && !h.app.linked);
     }
 
     /// From the reign screen the link reopens the same reign, years waited included.
@@ -1020,6 +1036,9 @@ mod tests {
         broken.frame(vec![]);
         broken.app.open("https://example.org/");
         assert!(matches!(broken.app.screen, Screen::Start));
+        assert!(broken.app.linked);
+        broken.app.apply(Cmd::Start(3));
+        assert!(!broken.app.linked);
     }
 
     #[test]

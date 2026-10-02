@@ -164,8 +164,8 @@
         // A new ruler's claim below the law's crisis_claim contests the succession.
         laws: [
             (flag: "law_primogeniture", eldest: 75, others: 35, ability_k: 0, crisis_claim: 70),
-            (flag: "law_elective", eldest: 0, others: 0, ability_k: 0.9, crisis_claim: 55),
-            (flag: "law_none", eldest: 50, others: 50, ability_k: 0, crisis_claim: 40),
+            (flag: "law_elective", eldest: 0, others: 0, ability_k: 0.9, crisis_claim: 65),
+            (flag: "law_none", eldest: 50, others: 50, ability_k: 0, crisis_claim: 45),
         ],
         birth: [(0, 0), (16, 25), (35, 20), (45, 15), (55, 10), (65, 5)],
         married_flag: "married",

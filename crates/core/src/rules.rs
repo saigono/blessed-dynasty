@@ -755,6 +755,10 @@ pub struct Event {
     pub sign: Sign,
     pub target: EventTarget,
     pub choices: Vec<Choice>,
+    /// A symptom of a loop of the influence graph («Знамение»): the year's summary marks it
+    /// and the simulation tells it in the chronicle whatever its importance.
+    #[serde(default)]
+    pub omen: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Default)]

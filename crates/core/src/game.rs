@@ -404,6 +404,7 @@ impl Game {
                 tags.retain(|t| t.weight > Fx(0));
             }
             w.marks.retain(|_, tags| !tags.is_empty());
+            crate::graph::flow_marks(d, w);
         }
 
         let step = per_tick(d.drift.step);
@@ -957,6 +958,7 @@ mod tests {
             importance: 1,
             sign: Sign::Bad,
             target: EventTarget::None,
+            omen: false,
             choices: vec![Choice {
                 text: id.into(),
                 effects,

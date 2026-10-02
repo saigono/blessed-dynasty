@@ -64,6 +64,23 @@ pub struct ChronicleEntry {
     /// The player's decisions behind the entry, one per decision, heaviest first.
     pub causes: Vec<CauseTag>,
     pub snapshot: World,
+    /// What led to the event through the influence graph (`chain`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain: Option<Chain>,
+}
+
+/// A chain of the influence graph behind an event, told in the chronicle.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Chain {
+    /// From the start of the chain to the node of the event's condition.
+    pub nodes: Vec<AxisId>,
+    /// The law at the start of the chain, if any.
+    pub law: Option<String>,
+    /// The player's decision at the start (an index into `Game.decisions`), if any: the one
+    /// that brought in `law`, else the heaviest mark on the nodes.
+    pub decision: Option<usize>,
+    /// The sentence (`data/hints.ron`, keys `chain:`).
+    pub text: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -206,20 +223,22 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
             match step {
                 Step::Idle => {}
                 Step::Event(v) => {
-                    // Causes as the world stood before the choice; only entries need them.
-                    let told = v.importance >= s.threshold;
-                    let causes = told.then(|| {
-                        let p = g.pending_event.as_ref().expect("an event waits");
-                        let e = g.data.events.iter().find(|e| e.id == p.event_id);
-                        let keys = event_keys(&g.world, e.expect("pending events exist"), p);
-                        causes(&g.world, keys)
+                    // Causes and chain as the world stood before the choice; only entries
+                    // need them. An omen is told whatever its importance.
+                    let p = g.pending_event.as_ref().expect("an event waits");
+                    let e = g.data.events.iter().find(|e| e.id == p.event_id);
+                    let e = e.expect("pending events exist");
+                    let told = (v.importance >= s.threshold || e.omen).then(|| {
+                        let keys = event_keys(&g.world, e, p);
+                        (causes(&g.world, keys), chain(&g.data, &g.world, e))
                     });
                     let idx = auto.choose(&mut g, &v.choices);
                     g.resolve(idx, false).expect("a listed choice");
-                    if let Some(causes) = causes {
+                    if let Some((causes, chain)) = told {
                         let e = entry(&g, (v.title, v.text), v.importance, causes);
                         c.entries.push(ChronicleEntry {
                             event: Some(v.event_id),
+                            chain,
                             ..e
                         });
                     }
@@ -619,11 +638,8 @@ fn entry(
         .first()
         .filter(|c| c.weight >= g.data.sim.hint_weight);
     // Hints are lowercase clauses; the entry tells one as a sentence of its own.
-    let hint = main.and_then(|c| g.data.hints.get(&c.cause_tag)).map(|h| {
-        let mut chars = h.chars();
-        let first = chars.next().into_iter().flat_map(char::to_uppercase);
-        format!("{}.", first.chain(chars).collect::<String>())
-    });
+    let hint = main.and_then(|c| g.data.hints.get(&c.cause_tag));
+    let hint = hint.map(|h| format!("{}.", capital(h)));
     ChronicleEntry {
         tick: g.world.tick,
         event: None,
@@ -633,8 +649,160 @@ fn entry(
         importance,
         causes,
         snapshot: g.world.snapshot(),
+        chain: None,
     }
 }
+
+fn capital(s: &str) -> String {
+    let mut chars = s.chars();
+    let first = chars.next().into_iter().flat_map(char::to_uppercase);
+    first.chain(chars).collect()
+}
+
+/// At most this many nodes in a `Chain`.
+const CHAIN: usize = 3;
+
+/// The chain behind event `e` (docs/design/hidden-state.html, section 7). It starts at the
+/// node of the condition: the first axis of `when`, then of the `weight_bonus` that hold,
+/// whose bound holds and which something pushes (`graph::pushes`), going the way the bound
+/// asks. From each node it goes back along the largest push that way above
+/// `graph::MARK_FLOW`, never to a node already in it, up to `CHAIN` nodes or a law. At its
+/// start, the law so reached, or one pushing the first node that way, or one scaling an edge
+/// on it; the decision behind that law (its mark), else the heaviest mark on the nodes.
+/// None without a second node or a start. Told by the `chain:` keys of `data/hints.ron`:
+/// `chain:<event>` the lead, `chain:<axis>+` and `-` the node going up or down,
+/// `chain:then` between nodes, `chain:since_decision`, `since_law` and `since_mark` the
+/// start ({year}, {law}, {hint}).
+fn chain(d: &Data, w: &World, e: &Event) -> Option<Chain> {
+    fn bounds(p: &Predicate, w: &World, out: &mut Vec<(AxisId, i64)>) {
+        match p {
+            Predicate::AxisAbove(a, _) if p.eval(w) => out.push((a.clone(), 1)),
+            Predicate::AxisBelow(a, _) if p.eval(w) => out.push((a.clone(), -1)),
+            Predicate::All(ps) | Predicate::Any(ps) => ps.iter().for_each(|p| bounds(p, w, out)),
+            _ => {}
+        }
+    }
+    let mut found = vec![];
+    let bonus = e.weight_bonus.iter().filter(|(b, _)| b.eval(w));
+    for p in std::iter::once(&e.when).chain(bonus.map(|(b, _)| b)) {
+        bounds(p, w, &mut found);
+    }
+    let pushed = |a: &AxisId| crate::graph::pushes(d, w, a).next().is_some();
+    let (first, mut dir) = found.into_iter().find(|(a, _)| pushed(a))?;
+    let (mut nodes, mut dirs, mut edges) = (vec![first], vec![dir], vec![]);
+    let way = |push: &(crate::graph::Push, Fx), dir: i64| push.1.0 * dir > MARK_FLOW_MILLI;
+    let mut law = None;
+    loop {
+        let at = nodes.last().expect("one node at least").clone();
+        let back = (crate::graph::pushes(d, w, &at)).filter(|p| {
+            way(p, dir)
+                && match p.0 {
+                    crate::graph::Push::Edge(i) => !nodes.contains(&d.influences[i].from),
+                    crate::graph::Push::Law(_) => true,
+                }
+        });
+        // The first of the largest.
+        let best = back.fold(None, |b: Option<(crate::graph::Push, Fx)>, p| match b {
+            Some(b) if b.1.0.abs() >= p.1.0.abs() => Some(b),
+            _ => Some(p),
+        });
+        match best {
+            Some((crate::graph::Push::Law(l), _)) => {
+                law = d.law(&l.id);
+                break;
+            }
+            Some((crate::graph::Push::Edge(i), _)) if nodes.len() < CHAIN => {
+                let edge = &d.influences[i];
+                dir = (edge.source(i, w) - edge.rest).0.signum();
+                if dir == 0 {
+                    break;
+                }
+                (nodes.push(edge.from.clone()), dirs.push(dir), edges.push(i));
+            }
+            _ => break,
+        }
+    }
+    // A law scaling an edge on the chain, the deepest first.
+    let scaling = edges.iter().rev().find_map(|i| {
+        let id = &d.influences[*i].id;
+        let mut laws = d.laws_in_force(w);
+        laws.find(|l| {
+            l.edges
+                .iter()
+                .any(|(e, k)| e == id && *k != Fx::from_int(1))
+        })
+    });
+    let law = law.or(scaling);
+    let heaviest = |keys: Vec<MarkKey>| {
+        let tags = keys.iter().filter_map(|k| w.marks.get(k)).flatten();
+        tags.fold(None, |b: Option<&CauseTag>, t| match b {
+            Some(b) if b.weight >= t.weight => Some(b),
+            _ => Some(t),
+        })
+    };
+    let mark = match law {
+        Some(l) => heaviest(vec![MarkKey::Flag(l.id.clone())]),
+        None => heaviest(
+            nodes
+                .iter()
+                .rev()
+                .map(|a| MarkKey::Axis(a.clone()))
+                .collect(),
+        ),
+    };
+    if nodes.len() < 2 && law.is_none() && mark.is_none() {
+        return None;
+    }
+    let say = |k: &str| d.hints.get(&format!("chain:{k}")).cloned();
+    let fill = |s: String, k: &str, v: &str| s.replace(k, v);
+    let year = |l: &LawDef| {
+        let at = w.laws.get(&l.id).map_or(0, |t| t.year(w.time_unit));
+        (w.start_year + at).to_string()
+    };
+    let hint = |t: &CauseTag| d.hints.get(&t.cause_tag).cloned().unwrap_or_default();
+    let since = match (law, mark) {
+        (Some(l), Some(t)) => {
+            say("since_decision").map(|s| fill(fill(s, "{year}", &year(l)), "{hint}", &hint(t)))
+        }
+        (Some(l), None) => {
+            say("since_law").map(|s| fill(fill(s, "{year}", &year(l)), "{law}", &l.name))
+        }
+        (None, Some(t)) => say("since_mark").map(|s| fill(s, "{hint}", &hint(t))),
+        (None, None) => None,
+    };
+    let name = |a: &AxisId| {
+        let def = d.axes.iter().find(|x| x.id == *a);
+        def.map_or(a.0.clone(), |x| x.name.to_lowercase())
+    };
+    let states = (nodes.iter().zip(&dirs).rev()).map(|(a, dir)| {
+        let way = if *dir > 0 { "+" } else { "-" };
+        say(&format!("{}{way}", a.0)).unwrap_or_else(|| name(a))
+    });
+    let then = say("then").map_or(String::new(), |t| format!("{t} "));
+    let mut text = String::new();
+    for (k, s) in states.enumerate() {
+        match k {
+            0 => text += &s,
+            _ => text += &format!(", {then}{s}"),
+        }
+        if let (0, Some(since)) = (k, &since) {
+            text += &format!(" ({since})");
+        }
+    }
+    let text = match say(&e.id) {
+        Some(lead) => format!("{}: {text}.", capital(&lead)),
+        None => format!("{}.", capital(&text)),
+    };
+    nodes.reverse();
+    Some(Chain {
+        nodes,
+        law: law.map(|l| l.id.clone()),
+        decision: mark.map(|t| t.decision_idx),
+        text,
+    })
+}
+
+const MARK_FLOW_MILLI: i64 = crate::graph::MARK_FLOW.0;
 
 /// The marks on `keys`, summed per decision, heaviest first, earlier decisions first on a tie.
 fn causes(w: &World, keys: BTreeSet<MarkKey>) -> Vec<CauseTag> {

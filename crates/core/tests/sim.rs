@@ -701,9 +701,11 @@ fn decisions_mark_what_they_touch_and_marks_fade() {
     );
     // A year on, the older marks have faded once.
     assert_eq!(tags(&g, MarkKey::Axis(ax("bureaucracy")))[0].2, decay);
-    // Marks follow the world into the simulation, which adds none of its own: their number
-    // only falls as weights fade to nothing.
+    // Marks follow the world into the simulation, which adds none of its own: every mark
+    // is of a founder's decision. Stage 20: they pass along the edges of the graph
+    // (`graph::flow_marks`), at most `MARKS_PER_KEY` on a node, and fade to nothing.
     let count = |w: &bd_core::state::World| w.marks.values().flatten().count();
+    let cap = count(&g.world) + bd_core::graph::MARKS_PER_KEY * data.axes.len();
     // Any long enough dynasty: heirs die and child rulers fall, so not every seed has one.
     let long = (0..20).map(|seed| sim::run(end_now(&g), &data, Rng::from_seed(seed)));
     let c = long
@@ -711,8 +713,17 @@ fn decisions_mark_what_they_touch_and_marks_fade() {
         .find(|c| c.entries.len() > 10)
         .expect("a long dynasty");
     let counts: Vec<usize> = c.entries.iter().map(|e| count(&e.snapshot)).collect();
-    assert!(counts[0] > 0 && counts[0] <= count(&g.world));
-    assert!(counts.windows(2).all(|w| w[1] <= w[0]), "{counts:?}");
+    assert!(
+        counts[0] > 0 && counts.iter().all(|n| *n <= cap),
+        "{counts:?}"
+    );
+    assert_eq!(counts.last(), Some(&0), "{counts:?}");
+    let founders = (c.entries.iter()).flat_map(|e| e.snapshot.marks.values().flatten());
+    assert!(
+        founders
+            .into_iter()
+            .all(|t| t.decision_idx < g.decisions.len())
+    );
 }
 
 /// Stage 17b: a war takes the year's event (its events are deferred and go first), and

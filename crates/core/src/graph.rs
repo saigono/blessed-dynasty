@@ -1,11 +1,12 @@
 //! The influence graph (docs/design/hidden-state.html): every axis steps toward its target,
 //! its anchor plus the `Target` edges into it; `Flow` edges add to stocks every year.
 
-use crate::data::{AxisDef, Data, ENACT, curve};
+use crate::data::{AxisDef, Data, ENACT, LawDef, curve};
 use crate::fx::Fx;
 use crate::rules::add_axis;
-use crate::state::{AxisId, World};
+use crate::state::{AxisId, CauseTag, MarkKey, World};
 use serde::Deserialize;
+use std::cmp::Reverse;
 
 /// An edge of `rules.ron` `influences`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -162,6 +163,84 @@ pub fn target(d: &Data, w: &World, a: &AxisDef) -> Fx {
     edges
         .fold(anchor(d, w, a), |s, (_, c)| s + c)
         .clamp(a.min, a.max)
+}
+
+/// A push on the target of a node: a `Target` edge into it (its index in `Data.influences`)
+/// or a law in force shifting its anchor.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Push<'a> {
+    Edge(usize),
+    Law(&'a LawDef),
+}
+
+impl Push<'_> {
+    /// Where the marks of what pushes lie: on the edge's source axis, on the law's flag.
+    pub fn key(&self, d: &Data) -> MarkKey {
+        match self {
+            Push::Edge(i) => MarkKey::Axis(d.influences[*i].from.clone()),
+            Push::Law(l) => MarkKey::Flag(l.id.clone()),
+        }
+    }
+}
+
+/// What pushes the target of `a` now and by how much: the `Target` edges into it, then the
+/// laws in force shifting its anchor, in data order.
+pub fn pushes<'a>(
+    d: &'a Data,
+    w: &'a World,
+    a: &'a AxisId,
+) -> impl Iterator<Item = (Push<'a>, Fx)> + 'a {
+    let edges = parts(d, w, a, InfluenceKind::Target).map(|(i, c)| (Push::Edge(i), c));
+    let laws = d.laws_in_force(w).flat_map(move |l| {
+        let shifts = l.anchors.iter().filter(move |(x, _)| x == a);
+        shifts.map(move |(_, s)| (Push::Law(l), *s))
+    });
+    edges.chain(laws)
+}
+
+/// A push passes marks only above this either way (docs/design/hidden-state.html, section 8).
+pub const MARK_FLOW: Fx = Fx::from_int(1);
+/// A node keeps at most this many marks that came to it by `flow_marks`.
+pub const MARKS_PER_KEY: usize = 4;
+
+/// Yearly: the marks of what pushes a node (`pushes`, `Push::key`) pass to the node, each
+/// times the share of its push in all the pushes on it, if the push is above `MARK_FLOW`
+/// either way. A node keeps the heaviest mark of a decision, and at most `MARKS_PER_KEY`
+/// marks, the heaviest, once one has come to it.
+pub fn flow_marks(d: &Data, w: &mut World) {
+    if w.marks.is_empty() {
+        return;
+    }
+    let abs = |c: Fx| Fx(c.0.abs());
+    let mut moved: Vec<(MarkKey, CauseTag)> = vec![];
+    for a in &d.axes {
+        let all: Vec<(Push, Fx)> = pushes(d, w, &a.id).collect();
+        let total = all.iter().fold(Fx(0), |s, (_, c)| s + abs(*c));
+        for (p, c) in all.iter().filter(|(_, c)| abs(*c) > MARK_FLOW) {
+            let Some(tags) = w.marks.get(&p.key(d)) else {
+                continue;
+            };
+            let share = abs(*c) / total;
+            moved.extend(tags.iter().map(|t| {
+                let t = CauseTag {
+                    weight: t.weight * share,
+                    ..t.clone()
+                };
+                (MarkKey::Axis(a.id.clone()), t)
+            }));
+        }
+    }
+    for (k, t) in moved.into_iter().filter(|(_, t)| t.weight > Fx(0)) {
+        let tags = w.marks.entry(k).or_default();
+        match tags.iter_mut().find(|x| x.decision_idx == t.decision_idx) {
+            Some(x) => x.weight = x.weight.max(t.weight),
+            None => tags.push(t),
+        }
+        if tags.len() > MARKS_PER_KEY {
+            tags.sort_by_key(|x| Reverse(x.weight));
+            tags.truncate(MARKS_PER_KEY);
+        }
+    }
 }
 
 /// The `Flow` edges into the treasury: they are part of the yearly income
@@ -340,6 +419,49 @@ mod tests {
         d.time_unit.ticks_per_year = 4;
         tick(&d, &mut w);
         assert_eq!(w.axes[&ax("prestige")], Fx::from_int(25));
+    }
+
+    fn mark(idx: usize, weight: Fx) -> CauseTag {
+        CauseTag {
+            decision_idx: idx,
+            cause_tag: format!("d{idx}"),
+            weight,
+        }
+    }
+
+    #[test]
+    fn a_mark_passes_an_edge_above_the_threshold_and_not_below() {
+        let (mut d, mut w) = setup(RULES);
+        d.laws.list.clear();
+        let e = r#"(from: "legitimacy", to: "army", k: 1, rest: 45)"#;
+        d.influences = vec![edge(e)];
+        let legitimacy = MarkKey::Axis(ax("legitimacy"));
+        let army = MarkKey::Axis(ax("army"));
+        let at = |d: &Data, w: &mut World, v: Fx| {
+            w.marks = [(legitimacy.clone(), vec![mark(0, Fx::from_int(1))])].into();
+            w.axes.insert(ax("legitimacy"), v);
+            flow_marks(d, w);
+            w.marks.get(&army).cloned()
+        };
+        let all = Some(vec![mark(0, Fx::from_int(1))]);
+        assert_eq!(at(&d, &mut w, Fx(46_001)), all);
+        assert_eq!(at(&d, &mut w, Fx(46_000)), None); // a push of 1 is not above 1
+        assert_eq!(at(&d, &mut w, Fx(43_999)), all); // -1.001
+        // Two pushes: each passes its share; the second, of 0.5, none.
+        d.influences
+            .push(edge(r#"(from: "prestige", to: "army", k: 0.025, rest: 0)"#));
+        let got = at(&d, &mut w, Fx::from_int(46) + Fx(500)); // 1.5 of 2
+        assert_eq!(got, Some(vec![mark(0, Fx(750))]));
+        // A node keeps a decision's heaviest mark and at most four marks.
+        let mut tags: Vec<CauseTag> = (1..=4).map(|i| mark(i, Fx(i as i64 * 100))).collect();
+        tags.push(mark(0, Fx(900)));
+        w.marks.insert(army.clone(), tags);
+        w.marks
+            .insert(legitimacy.clone(), vec![mark(0, Fx::from_int(1))]);
+        flow_marks(&d, &mut w);
+        let kept: Vec<_> = w.marks[&army].iter().map(|t| t.decision_idx).collect();
+        assert_eq!(kept, [0, 4, 3, 2]);
+        assert_eq!(w.marks[&army][0].weight, Fx(900));
     }
 
     #[test]

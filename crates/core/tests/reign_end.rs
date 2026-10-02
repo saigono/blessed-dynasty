@@ -76,6 +76,7 @@ fn event(id: &str, effects: Vec<Effect>) -> Event {
         importance: 1,
         sign: Sign::Bad,
         target: EventTarget::None,
+        omen: false,
         choices: vec![Choice {
             text: id.into(),
             effects,

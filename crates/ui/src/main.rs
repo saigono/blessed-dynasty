@@ -9,7 +9,7 @@ use bd_core::fx::Fx;
 use bd_core::game::{EventView, Game, GameError, ReignEnd, Step};
 use bd_core::link;
 use bd_core::rng::Rng;
-use bd_core::rules::{Action, ActionTarget, Effect, ProvinceField, Target};
+use bd_core::rules::{Action, ActionTarget, Effect, HeirOp, ProvinceField, Target};
 use bd_core::score::{self, Score, ScoreRules};
 use bd_core::sim::{self, Chronicle};
 use bd_core::state::{
@@ -610,16 +610,23 @@ impl App {
                         "Цель для «{}», на карте или из списка:",
                         action_name(w, d, id)
                     ));
-                    let suit = d
-                        .actions
-                        .iter()
-                        .find(|a| a.id == *id)
-                        .filter(|a| a.marries());
+                    let def = d.actions.iter().find(|a| a.id == *id);
+                    let suit = def.filter(|a| a.marries());
+                    let rightful = rightful_heir(g).filter(|_| def.is_some_and(designates));
                     for t in targets {
                         let label = match (suit, t) {
                             (Some(_), Target::Neighbour(n)) => {
                                 let chance = d.marriage.chance(w, d, n);
                                 format!("{} · {}%", target_name(w, t), round(chance))
+                            }
+                            (_, Target::Heir(id)) if rightful.is_some() => {
+                                let lawful = rightful.is_some_and(|r| r.id == *id);
+                                let how = if lawful {
+                                    "по закону"
+                                } else {
+                                    "в обход закона"
+                                };
+                                format!("{} · {how}", target_name(w, t))
                             }
                             _ => target_name(w, t),
                         };
@@ -647,7 +654,7 @@ impl App {
                         }
                         let button = ui.button(action_name(w, d, &id));
                         let button = match def {
-                            Some(a) => button.on_hover_ui(|ui| action_tip(ui, w, d, a)),
+                            Some(a) => button.on_hover_ui(|ui| action_tip(ui, g, a)),
                             None => button,
                         };
                         // A war action has one target, the enemy: no choice to make.
@@ -902,8 +909,19 @@ const HOW_TO_PLAY: [&str; 4] = [
      судьбу династии, а хроника покажет, к чему привели ваши решения.",
 ];
 
+/// An action that names the heir (`HeirOp::TargetDesignate`).
+fn designates(a: &Action) -> bool {
+    (a.on_complete).contains(&Effect::HeirOp(HeirOp::TargetDesignate))
+}
+
+/// The heir the law puts first (`sim::rightful`).
+fn rightful_heir(g: &Game) -> Option<&bd_core::state::Heir> {
+    sim::rightful(&g.world, &g.data).map(|i| &g.world.heirs[i])
+}
+
 /// What an action gives, costs and takes.
-fn action_tip(ui: &mut Ui, w: &World, d: &Data, a: &Action) {
+fn action_tip(ui: &mut Ui, g: &Game, a: &Action) {
+    let (w, d) = (&g.world, &g.data);
     ui.set_max_width(320.0);
     ui.strong(named(w, &a.name));
     if !a.description.is_empty() {
@@ -923,6 +941,23 @@ fn action_tip(ui: &mut Ui, w: &World, d: &Data, a: &Action) {
     let yearly = yearly.map(|(t, up)| (format!("пока идёт, в год: {t}"), up));
     for (text, up) in yearly.chain(effects(d, &a.on_complete)) {
         ui.small(RichText::new(text).color(tone(up)));
+    }
+    if designates(a) {
+        let name = rightful_heir(g).map_or("никто", |h| h.name.as_str());
+        ui.label(format!("По закону престол наследует: {name}"));
+        let penalty: Vec<Effect> = (d.heirs.designate_penalty.iter())
+            .map(|(a, v)| Effect::Axis(a.clone(), *v))
+            .collect();
+        let lines = effects(d, &penalty).into_iter().map(|(t, _)| t);
+        let lines: Vec<String> = lines.collect();
+        let dispute = round(d.heirs.designate_dispute);
+        ui.small(
+            RichText::new(format!(
+                "Назначить другого: {}, спор при воцарении вероятнее на {dispute}%",
+                lines.join(", ")
+            ))
+            .color(RUBRIC),
+        );
     }
     if a.marries() {
         // The chance of every court before the suit; 0: it turns any suit away.
@@ -1026,6 +1061,7 @@ fn side(ui: &mut Ui, g: &Game) {
     }
     heading(ui, "Наследники");
     let first = bd_core::sim::successor(w, d);
+    let rightful = bd_core::sim::rightful(w, d);
     match d.heirs.law(w) {
         Some(l) => {
             let law = ui.label(format!("Закон: {} (?)", l.name));
@@ -1047,7 +1083,11 @@ fn side(ui: &mut Ui, g: &Game) {
     Grid::new("heirs").show(ui, |ui| {
         for (i, h) in w.heirs.iter().enumerate() {
             let status = match &h.status {
+                HeirStatus::Home if Some(i) == first && first != rightful => {
+                    RichText::new("назначен").color(RUBRIC)
+                }
                 HeirStatus::Home if Some(i) == first => RichText::new("первый").color(FG2),
+                HeirStatus::Home if Some(i) == rightful => RichText::new("по закону").color(FG2),
                 HeirStatus::Home => RichText::new(""),
                 HeirStatus::Studying(place) => RichText::new(format!("учится: {place}")).color(FG2),
                 HeirStatus::Hostage(n) => {
@@ -1059,7 +1099,8 @@ fn side(ui: &mut Ui, g: &Game) {
                 Sex::Male => "♂",
                 Sex::Female => "♀",
             };
-            ui.label(format!("{sex} {}, {}", h.name, h.age));
+            let bastard = if h.bastard { " (бастард)" } else { "" };
+            ui.label(format!("{sex} {}{bastard}, {}", h.name, h.age));
             ui.small(status);
             ui.small(format!(
                 "спос. {} · прет. {}",
@@ -1069,6 +1110,13 @@ fn side(ui: &mut Ui, g: &Game) {
             ui.end_row();
         }
     });
+    if !w.bastards.is_empty() {
+        let names: Vec<String> = (w.bastards.iter())
+            .map(|h| format!("{}, {}", h.name, h.age))
+            .collect();
+        let line = ui.label(format!("Бастарды: {}", names.join("; ")));
+        line.on_hover_text("Рождены вне брака и не наследуют, пока их не признают.");
+    }
     heading(ui, "Соседи");
     let bonds = g.bonds();
     Grid::new("neighbours").show(ui, |ui| {
@@ -1305,7 +1353,7 @@ fn target_name(w: &World, t: &Target) -> String {
     let name = match t {
         Target::Province(id) => w.provinces.get(id).map(|p| &p.name),
         Target::Neighbour(id) => w.neighbours.get(id).map(|n| &n.name),
-        Target::Heir(i) => w.heirs.get(*i as usize).map(|h| &h.name),
+        Target::Heir(id) => w.heir_index(*id).map(|i| &w.heirs[i].name),
     };
     name.cloned().unwrap_or_else(|| format!("{t:?}"))
 }
@@ -2027,6 +2075,44 @@ mod tests {
         assert!(n.contains(&"брачный союз с 1188".to_string()), "{n:?}");
     }
 
+    /// Stage 17: «Назначить наследника» tells who the law names and what naming another
+    /// costs; the heirs to pick from are named by id (not by index) with the law's verdict.
+    #[test]
+    fn designating_an_heir_tells_the_law() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(1));
+        h.click_label("Править");
+        let g = h.app.game.as_mut().unwrap();
+        g.world.heirs.clear();
+        for name in ["Ада", "Бруно"] {
+            let mut x = g.data.new_heir.clone();
+            (x.name, x.age) = (name.into(), 10);
+            g.world.add_heir(x);
+        }
+        let tip = hover(&mut h, "Назначить наследника");
+        assert!(
+            tip.contains(&"По закону престол наследует: Ада".to_string()),
+            "{tip:?}"
+        );
+        let penalty = "Назначить другого: Легитимность -10, Знать -5, Церковь -5";
+        assert!(tip.iter().any(|t| t.starts_with(penalty)), "{tip:?}");
+        h.click_label("Назначить наследника");
+        let shown = texts_of(&mut h);
+        for t in ["Ада · по закону", "Бруно · в обход закона"] {
+            assert!(shown.contains(&t.to_string()), "{t}: {shown:?}");
+        }
+        h.click_label("Бруно · в обход закона");
+        h.app.apply(Cmd::Wait);
+        let shown = texts_of(&mut h);
+        assert!(
+            shown.contains(&"Первый в очереди: Бруно".to_string()),
+            "{shown:?}"
+        );
+        assert!(
+            shown.contains(&"назначен".to_string()) && shown.contains(&"по закону".to_string())
+        );
+    }
+
     /// Acceptance (stage 16): a law changes by mouse: «Сменить закон», the list with every
     /// other law's text and price, a pick; the law is in force once the years pass.
     #[test]
@@ -2162,6 +2248,83 @@ mod tests {
             assert!(shown.iter().any(|t| t.starts_with(&crowned)), "{crowned}");
         }
         assert_eq!(chronicle::family(&c.kin).len(), c.kin.len());
+    }
+
+    /// Stage 17: bastards show beside the heirs and in the family tree, out of the line.
+    #[test]
+    fn bastards_show_out_of_the_line() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(1));
+        h.click_label("Править");
+        let g = h.app.game.as_mut().unwrap();
+        let mut b = g.data.new_heir.clone();
+        (b.name, b.bastard) = ("Ольга".into(), true);
+        g.world.add_heir(b);
+        let shown = texts_of(&mut h);
+        assert!(
+            shown.contains(&"Бастарды: Ольга, 0".to_string()),
+            "{shown:?}"
+        );
+        assert!(shown.contains(&"Первый в очереди: Конрад".to_string()));
+        h.click_label("Родословная");
+        let shown = texts_of(&mut h);
+        assert!(
+            shown.contains(&"Ольга (р. 1187, бастард)".to_string()),
+            "{shown:?}"
+        );
+    }
+
+    /// Stage 17 bugs: an heir target is named by its id, not its index; a ruler who gave up
+    /// the crown has the year of it in the tree; a state breaking away does not repaint
+    /// the others.
+    #[test]
+    fn heir_names_abdication_years_and_state_colours_hold() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(1));
+        let g = h.app.game.as_mut().unwrap();
+        let mut x = g.data.new_heir.clone();
+        x.name = "Ада".into();
+        g.world.add_heir(x);
+        g.world.heirs.remove(0);
+        assert_eq!(target_name(&g.world, &Target::Heir(1)), "Ада");
+
+        let colour =
+            |w: &World, n: &str| map::holder_color(w, &Holder::Foreign(NeighbourId(n.into())));
+        let states = ["nordmark", "purpur", "vestrum"];
+        let before = states.map(|n| colour(&g.world, n));
+        // Арден, whose id sorts before every state, breaks away.
+        let mut queue = vec![];
+        let mut ctx = bd_core::rules::Ctx {
+            data: &g.data,
+            queue: &mut queue,
+            target: None,
+            neighbour: None,
+        };
+        let land = (g.world.provinces.values())
+            .find(|p| p.holder == Holder::Vassal(bd_core::state::VassalId("arden".into())))
+            .map(|p| p.id.clone())
+            .unwrap();
+        let secede = Effect::Secede(bd_core::rules::ProvinceTarget::ById(land));
+        secede.apply(&mut g.world, &mut ctx);
+        assert!(
+            g.world
+                .neighbours
+                .contains_key(&NeighbourId("arden".into()))
+        );
+        assert_eq!(states.map(|n| colour(&g.world, n)), before);
+        assert!(!before.contains(&colour(&g.world, "arden")));
+
+        h.app.apply(Cmd::Abdicate);
+        let id = h.app.data.abdication.event.clone();
+        let ev = h.app.data.events.iter().find(|e| e.id == id).unwrap();
+        let confirm = (ev.choices.iter())
+            .position(|c| c.effects.contains(&Effect::Abdicate))
+            .unwrap();
+        h.app.apply(Cmd::Choose(confirm));
+        (h.app.screen, h.app.tree) = (Screen::Chronicle, true);
+        let shown = texts_of(&mut h);
+        let founder = "♔ Ульрих (р. 1155, отрёкся в 1187)";
+        assert!(shown.iter().any(|t| t.starts_with(founder)), "{shown:?}");
     }
 
     /// Line segments painted in the holder border colour, in map coordinates.

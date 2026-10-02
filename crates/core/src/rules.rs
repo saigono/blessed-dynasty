@@ -35,6 +35,8 @@ pub enum Predicate {
     ProvinceWhere(ProvinceFilter),
     /// Inclusive range.
     HeirCount(u32, u32),
+    /// Unrecognized bastards (`World.bastards`), inclusive range.
+    BastardCount(u32, u32),
     /// Inclusive range.
     RulerAge(u32, u32),
     AtWar,
@@ -63,6 +65,7 @@ impl Predicate {
             Predicate::NotFlag(f) => !w.flags.contains(f),
             Predicate::ProvinceWhere(f) => w.provinces.values().any(|p| f.matches(p, w)),
             Predicate::HeirCount(lo, hi) => (*lo..=*hi).contains(&(w.heirs.len() as u32)),
+            Predicate::BastardCount(lo, hi) => (*lo..=*hi).contains(&(w.bastards.len() as u32)),
             Predicate::RulerAge(lo, hi) => (*lo..=*hi).contains(&w.ruler.age),
             Predicate::AtWar => w.war.is_some(),
             Predicate::WarScoreAbove(v) => w.war.as_ref().is_some_and(|x| x.war_score > *v),
@@ -299,6 +302,12 @@ pub enum HeirOp {
     TargetRemove,
     /// The heir of the event or action is married from now on (`Heir.married`).
     TargetMarry,
+    /// The ruler names this heir to succeed him (`World.designated`); one not rightful
+    /// (`sim::rightful`) costs `heirs.designate_penalty`. Naming the named again is nothing.
+    Designate(u32),
+    TargetDesignate,
+    /// The eldest bastard joins the line with `heirs.bastard_claim`; no-op without one.
+    Recognize,
 }
 
 /// What an effect may touch besides the world.
@@ -389,15 +398,23 @@ impl Effect {
                     HeirOp::TargetAbility(d) => HeirOp::Ability(t, d),
                     HeirOp::TargetClaim(d) => HeirOp::Claim(t, d),
                     HeirOp::TargetRemove => HeirOp::Remove(t),
+                    HeirOp::TargetDesignate => HeirOp::Designate(t),
                     op => op,
                 };
                 match &op {
                     HeirOp::Add => w.add_heir(ctx.data.newborn(w.next_heir_id)),
                     HeirOp::TargetMarry => {
+                        let year = w.year();
                         if let Some(h) = w.heirs.get_mut(heir(&t)) {
-                            h.married = true;
+                            (h.married, h.married_in) = (true, Some(year));
                         }
                     }
+                    HeirOp::Recognize if !w.bastards.is_empty() => {
+                        let mut h = w.bastards.remove(0);
+                        h.claim = ctx.data.heirs.bastard_claim;
+                        w.insert_heir(h);
+                    }
+                    HeirOp::Recognize => {}
                     HeirOp::Remove(i) if heir(i) < w.heirs.len() => {
                         w.heirs.remove(heir(i));
                     }
@@ -416,11 +433,26 @@ impl Effect {
                             h.claim = pct(h.claim + *d);
                         }
                     }
+                    HeirOp::Designate(i) => {
+                        let Some(id) = w.heirs.get(heir(i)).map(|h| h.id) else {
+                            return;
+                        };
+                        if w.designated == Some(id) {
+                            return;
+                        }
+                        w.designated = Some(id);
+                        if crate::sim::rightful(w, ctx.data) != Some(heir(i)) {
+                            for (a, v) in &ctx.data.heirs.designate_penalty {
+                                add_axis(w, ctx.data, a, *v);
+                            }
+                        }
+                    }
                     HeirOp::Remove(_) => {}
                     HeirOp::TargetStatus(_)
                     | HeirOp::TargetAbility(_)
                     | HeirOp::TargetClaim(_)
-                    | HeirOp::TargetRemove => {
+                    | HeirOp::TargetRemove
+                    | HeirOp::TargetDesignate => {
                         unreachable!("resolved above")
                     }
                 }
@@ -588,6 +620,7 @@ impl Effect {
                     strength: vassal.strength * Fx::from_int(count),
                     stance: Stance::Defend,
                     per_province: vassal.strength,
+                    ordinal: (w.neighbours.values().map(|n| n.ordinal + 1).max()).unwrap_or(0),
                 };
                 w.neighbours.insert(id, n);
             }

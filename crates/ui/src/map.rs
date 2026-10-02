@@ -248,15 +248,17 @@ pub fn holder_name(w: &World, h: &Holder) -> String {
     }
 }
 
-/// Crown gold; each vassal house and each foreign state a colour of its own by its order.
-fn holder_color(w: &World, h: &Holder) -> Color32 {
+/// Crown gold; each vassal house a colour by its order, each foreign state by its
+/// `Neighbour.ordinal`, so a new state does not repaint the old ones.
+pub(crate) fn holder_color(w: &World, h: &Holder) -> Color32 {
     match h {
         Holder::Crown => CROWN,
         Holder::Vassal(v) => {
             VASSALS[w.vassals.keys().position(|x| x == v).unwrap_or(0) % VASSALS.len()]
         }
         Holder::Foreign(n) => {
-            FOREIGN[w.neighbours.keys().position(|x| x == n).unwrap_or(0) % FOREIGN.len()]
+            let at = w.neighbours.get(n).map_or(0, |n| n.ordinal as usize);
+            FOREIGN[at % FOREIGN.len()]
         }
     }
 }

@@ -286,7 +286,7 @@ pub struct HeirRules {
     pub claim_step: Fx,
     pub laws: Vec<Law>,
     /// Birth chance in percent: the row of the largest `age_from <= ruler age`,
-    /// times `unmarried` without `married_flag`.
+    /// times `unmarried` without `married_flag`; a child out of wedlock is a bastard.
     pub birth: Vec<(u32, Fx)>,
     pub married_flag: String,
     pub unmarried: Fx,
@@ -296,6 +296,21 @@ pub struct HeirRules {
     /// Chance in percent that a child is a son.
     #[serde(default = "half")]
     pub male_percent: Fx,
+    /// Naming an heir other than the rightful one (`HeirOp::Designate`) shifts these axes
+    /// once, and his coronation is contested with `designate_dispute` percent more.
+    #[serde(default)]
+    pub designate_penalty: Vec<(AxisId, Fx)>,
+    #[serde(default)]
+    pub designate_dispute: Fx,
+    /// The claim of a bastard recognized (`HeirOp::Recognize`).
+    #[serde(default)]
+    pub bastard_claim: Fx,
+    /// Chance in percent that the coronation of a child (below `sim.regency_age`) is
+    /// contested; and of an heir of ability below the first number, the second.
+    #[serde(default)]
+    pub dispute_minor: Fx,
+    #[serde(default)]
+    pub dispute_weak: (Fx, Fx),
 }
 
 fn half() -> Fx {
@@ -371,8 +386,17 @@ pub struct Law {
     /// contested anyway: more heirs, more quarrels.
     #[serde(default)]
     pub dispute_per_heir: Fx,
+    /// The claim the heir the rule puts first (`sim::rightful`) has at once, not grown
+    /// toward: his right is plain to all. 0: none.
+    #[serde(default)]
+    pub rightful_claim: Fx,
+    /// A woman crowned under this law: the succession is contested and these axes shift
+    /// at the coronation. None: a queen is crowned like a king.
+    #[serde(default)]
+    pub female_heir: Option<Vec<(AxisId, Fx)>>,
     /// Display name and a plain-words explanation for the UI. `{eldest}`, `{others}`,
-    /// `{ability_k}`, `{crisis_claim}`, `{dispute_per_heir}` stand for the numbers above.
+    /// `{ability_k}`, `{crisis_claim}`, `{dispute_per_heir}`, `{rightful_claim}` stand for
+    /// the numbers above.
     #[serde(default)]
     pub name: String,
     #[serde(default)]
@@ -388,6 +412,7 @@ impl Law {
             ("{ability_k}", self.ability_k),
             ("{crisis_claim}", self.crisis_claim),
             ("{dispute_per_heir}", self.dispute_per_heir),
+            ("{rightful_claim}", self.rightful_claim),
         ];
         (numbers.iter()).fold(self.description.clone(), |s, (k, v)| {
             s.replace(k, &v.to_string())
@@ -786,11 +811,12 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
         .heirs
         .laws
         .iter()
-        .flat_map(|l| &l.coronation)
+        .flat_map(|l| l.coronation.iter().chain(l.female_heir.iter().flatten()))
         .chain(data.sim.traits.iter().flat_map(|t| &t.axes))
         .chain(&data.coronation.contested)
         .chain(&data.coronation.legitimacy_from_claim)
         .chain(&data.marriage.axes)
+        .chain(&data.heirs.designate_penalty)
         .map(|(a, _)| a);
     for a in [
         &data.action_slots.axis,
@@ -929,7 +955,7 @@ mod tests {
         data.add_events(NEIGHBOUR_EVENTS).unwrap();
         data.add_actions(ACTIONS).unwrap();
         assert_eq!(data.events.len(), 38);
-        assert_eq!(data.actions.len(), 18);
+        assert_eq!(data.actions.len(), 20);
         // Ids must be unique across files.
         assert!(matches!(
             data.add_events(EVENTS),

@@ -57,6 +57,8 @@ fn two_heirs(w: &mut World) {
         status: HeirStatus::Home,
         sex: Sex::Female,
         married: false,
+        married_in: None,
+        bastard: false,
     });
 }
 
@@ -278,14 +280,15 @@ fn claims(law: &str, years: u32, hostage: bool) -> (Fx, Fx) {
 
 #[test]
 fn claims_follow_the_law() {
-    // Start: Конрад 70, Агнесса 40; step 2 a year.
+    // Start: Конрад 70, Агнесса 40; step 2 a year. Stage 17: the rightful heir has
+    // rightful_claim (90) at once.
     assert_eq!(
         claims("law_primogeniture", 1, false),
-        (Fx::from_int(72), Fx::from_int(38))
+        (Fx::from_int(90), Fx::from_int(38))
     );
     assert_eq!(
         claims("law_primogeniture", 30, false),
-        (Fx::from_int(75), Fx::from_int(35))
+        (Fx::from_int(90), Fx::from_int(35))
     );
     // Stage 16: the heir the rule puts first takes the eldest's target. Under the male law a
     // younger son goes before his elder sister.
@@ -303,7 +306,7 @@ fn claims_follow_the_law() {
         }
         (g.world.heirs[0].claim, g.world.heirs[1].claim)
     };
-    assert_eq!(son_first(30), (Fx::from_int(35), Fx::from_int(75)));
+    assert_eq!(son_first(30), (Fx::from_int(35), Fx::from_int(90)));
     // Elective: toward ability * 0.9.
     let (a, b) = claims("law_elective", 1, false);
     assert_eq!((a, b), (Fx::from_int(68), Fx::from_int(42)));
@@ -313,7 +316,7 @@ fn claims_follow_the_law() {
         (Fx::from_int(70), Fx::from_int(40))
     );
     // A hostage loses claim even where the law pulls it up.
-    assert!(claims("law_primogeniture", 3, true).0 < Fx::from_int(70));
+    assert!(claims("law_primogeniture", 3, true).0 < claims("law_primogeniture", 3, false).0);
 }
 
 #[test]

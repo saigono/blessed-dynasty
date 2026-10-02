@@ -277,6 +277,9 @@ struct Row {
     successions: u32,
     contested: u32,
     law_changes: u32,
+    /// Coronations of an heir designated over the rightful one, and of bastards.
+    designated: u32,
+    bastards: u32,
 }
 
 /// Reign years `batch` reports the treasury at.
@@ -316,6 +319,10 @@ fn batch_row(
         successions: crowned.clone().count() as u32,
         contested: crowned.filter(contested).count() as u32,
         law_changes: laws.count() as u32,
+        designated: c.rulers.iter().filter(|r| r.designated).count() as u32,
+        bastards: (c.kin.iter())
+            .filter(|k| k.bastard && k.crowned.is_some())
+            .count() as u32,
         seed,
         reign,
         years: c.years,
@@ -385,6 +392,16 @@ fn batch_report(rows: &[Row]) -> String {
         "# спор о престоле: {}% воцарений, в {}% династий\n",
         percent(sum(|r| r.contested), sum(|r| r.successions)),
         percent(disputed, rows.len())
+    );
+    out += &format!(
+        "# воцарения назначенных в обход закона: {}% воцарений\n",
+        percent(sum(|r| r.designated), sum(|r| r.successions))
+    );
+    let bastards = rows.iter().filter(|r| r.bastards > 0).count();
+    out += &format!(
+        "# воцарения бастардов: {}% воцарений, в {}% династий\n",
+        percent(sum(|r| r.bastards), sum(|r| r.successions)),
+        percent(bastards, rows.len())
     );
     let changed = rows.iter().filter(|r| r.law_changes > 0).count();
     out += &format!(
@@ -782,6 +799,8 @@ mod tests {
             successions: 4,
             contested: seed as u32,
             law_changes: (seed == 3) as u32,
+            designated: (seed == 1) as u32,
+            bastards: 2 * (seed == 2) as u32,
         };
         let rows = [
             row(0, 5, 10, FallReason::NoHeir, 0),
@@ -820,6 +839,8 @@ mod tests {
                 "# ранняя смерть 25%",
                 "# дезертирство в 25% династий",
                 "# спор о престоле: 37% воцарений, в 75% династий",
+                "# воцарения назначенных в обход закона: 6% воцарений",
+                "# воцарения бастардов: 12% воцарений, в 25% династий",
                 "# закон сменён после основателя в 25% династий",
                 "# причины падения:",
                 "#   Usurped 50%",

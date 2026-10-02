@@ -106,6 +106,14 @@ pub struct Heir {
     /// Wed by a marriage (`Effect::Marry`) or the `heir_marriage` event: never twice.
     #[serde(default)]
     pub married: bool,
+    /// The calendar year of the wedding; None for one married from the start (a preset),
+    /// counted as wed since `heirs.adult_age`.
+    #[serde(default)]
+    pub married_in: Option<u32>,
+    /// Born out of wedlock. Unrecognized, he lives in `World.bastards`, out of the line;
+    /// recognized (`HeirOp::Recognize`), he stands in `heirs` after the lawful ones.
+    #[serde(default)]
+    pub bastard: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -128,6 +136,11 @@ pub struct Neighbour {
     /// over start provinces) and by `Effect::Secede`; 0 means no recovery.
     #[serde(default)]
     pub per_province: Fx,
+    /// The order the state came into the world: the preset's in their order, a new one
+    /// (`Effect::Secede`) after all. Stable, unlike the position among `World.neighbours`;
+    /// the map colours by it.
+    #[serde(default)]
+    pub ordinal: u32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -191,6 +204,13 @@ pub struct World {
     /// spouse (an heir dead, a ruler's reign over) or a war with that court.
     #[serde(default)]
     pub unions: BTreeMap<NeighbourId, Union>,
+    /// The heir the ruler named to succeed him (`Heir.id`, `HeirOp::Designate`), over the
+    /// rule of the law; cleared at a coronation.
+    #[serde(default)]
+    pub designated: Option<u32>,
+    /// Children born out of wedlock, not recognized: out of the line, eldest first.
+    #[serde(default)]
+    pub bastards: Vec<Heir>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -212,6 +232,8 @@ pub struct Kin {
     pub parent: Option<usize>,
     /// The year of the coronation, for rulers.
     pub crowned: Option<u32>,
+    #[serde(default)]
+    pub bastard: bool,
 }
 
 /// What changed between two worlds, see `World::changes`.
@@ -280,6 +302,8 @@ impl World {
             kin: Vec::new(),
             deserted: 0,
             unions: BTreeMap::new(),
+            designated: None,
+            bastards: Vec::new(),
         };
         let r = &world.ruler;
         let founder = Kin {
@@ -289,10 +313,15 @@ impl World {
             died: None,
             parent: None,
             crowned: Some(world.year()),
+            bastard: false,
         };
         world.kin.push(founder);
         for h in std::mem::take(&mut world.heirs) {
             world.add_heir(h);
+        }
+        for (i, n) in preset.neighbours.iter().enumerate() {
+            let n = world.neighbours.get_mut(&n.id).expect("from the preset");
+            n.ordinal = i as u32;
         }
         for n in world.neighbours.values_mut() {
             let holder = Holder::Foreign(n.id.clone());
@@ -310,7 +339,7 @@ impl World {
     }
 
     /// Adds the heir under the next free id, after the ruler's children and before the
-    /// collateral line (`line_from`).
+    /// collateral line (`line_from`); a bastard goes to `bastards` instead.
     pub fn add_heir(&mut self, mut heir: Heir) {
         heir.id = self.next_heir_id;
         self.next_heir_id += 1;
@@ -321,8 +350,22 @@ impl World {
             died: None,
             parent: self.kin.iter().rposition(|k| k.crowned.is_some()),
             crowned: None,
+            bastard: heir.bastard,
         });
-        let at = self.heirs.iter().position(|h| h.id < self.line_from);
+        match heir.bastard {
+            true => self.bastards.push(heir),
+            false => self.insert_heir(heir),
+        }
+    }
+
+    /// Puts the heir in the line: the ruler's child before the collateral line, the
+    /// collateral line at its end.
+    pub(crate) fn insert_heir(&mut self, heir: Heir) {
+        let collateral = |h: &Heir| h.id < self.line_from;
+        let at = match collateral(&heir) {
+            true => None,
+            false => self.heirs.iter().position(collateral),
+        };
         self.heirs.insert(at.unwrap_or(self.heirs.len()), heir);
     }
 
@@ -335,7 +378,7 @@ impl World {
     pub(crate) fn bury(&mut self) {
         let year = self.year();
         for k in &mut self.kin {
-            let gone = |id| !self.heirs.iter().any(|h| h.id == id);
+            let gone = |id| !self.heirs.iter().chain(&self.bastards).any(|h| h.id == id);
             if k.died.is_none() && k.crowned.is_none() && k.heir.is_some_and(gone) {
                 k.died = Some(year);
             }
@@ -359,9 +402,9 @@ impl World {
                 .map(|h| h.name.clone())
                 .collect::<Vec<_>>()
         };
-        let born = new(&self.heirs, &before.heirs)
-            .into_iter()
-            .map(Change::Born);
+        // A bastard recognized joins the heirs, but is no birth.
+        let lawful: Vec<Heir> = self.heirs.iter().filter(|h| !h.bastard).cloned().collect();
+        let born = new(&lawful, &before.heirs).into_iter().map(Change::Born);
         let gone = new(&before.heirs, &self.heirs)
             .into_iter()
             .map(Change::HeirGone);

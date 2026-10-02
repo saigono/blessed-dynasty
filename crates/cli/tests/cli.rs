@@ -238,6 +238,11 @@ fn batch_starts_on_a_law() {
     let out = batch(&["--runs", "3", "--law", "law_salic"]);
     assert!(out.contains("# спор о престоле: "), "{out}");
     assert!(out.contains("# закон сменён после основателя в "), "{out}");
+    assert!(
+        out.contains("# воцарения назначенных в обход закона: "),
+        "{out}"
+    );
+    assert!(out.contains("# воцарения бастардов: "), "{out}");
     assert_ne!(out, batch(&["--runs", "3"]));
     let out = Command::new(env!("CARGO_BIN_EXE_cli"))
         .args(["batch", "--runs", "1", "--law", "law_nope"])
@@ -317,4 +322,13 @@ fn law_profiles_differ() {
     assert_eq!(laws[worst(1)], "law_salic", "{rows:?}");
     assert_eq!(laws[worst(3)], "law_seniority", "{rows:?}");
     assert!(fall(&outs[5], "NoCrownLand") > fall(&outs[0], "NoCrownLand"));
+    // Stage 17: the rightful heir's claim cuts the disputes of absolute primogeniture below
+    // the 32% of stage 16 without letting NoHeir soar; male primogeniture has its own risk.
+    let disputes = |i: usize| -rows[i][3];
+    assert!(disputes(0) < 30, "{rows:?}");
+    assert!(fall(&outs[0], "NoHeir") <= 20, "{rows:?}");
+    assert!(disputes(1) >= disputes(0) + 10, "{rows:?}");
+    // Some heirs are named over the law, under the laws that leave rivals with a claim.
+    let named = |o: &str| number(o, "# воцарения назначенных в обход закона: ");
+    assert!(outs.iter().any(|o| named(o) > 0));
 }

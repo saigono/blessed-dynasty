@@ -72,6 +72,9 @@ pub struct RulerRecord {
     pub end: Tick,
     /// The cause of the reign end; None when the dynasty fell under him or lives on.
     pub cause: Option<String>,
+    /// Crowned as the designated heir over the rightful one (`World.designated`).
+    #[serde(default)]
+    pub designated: bool,
 }
 
 /// Plays the dynasty from the end of the founder's reign. Simulation events
@@ -249,16 +252,25 @@ pub fn succession(w: &World, data: &Data, rng: &mut Rng) -> Option<Ruler> {
     })
 }
 
-/// Who succeeds now by the rule of the law in force (`SuccessionRule`); `next_heir` without
-/// a law. None: nobody may.
+/// Who succeeds now: the designated heir (`World.designated`) while he lives and is no
+/// hostage, else `rightful`. None: nobody may.
 pub fn successor(w: &World, data: &Data) -> Option<usize> {
+    let named = w.designated.and_then(|id| w.heir_index(id));
+    let home = named.filter(|i| !matches!(w.heirs[*i].status, HeirStatus::Hostage(_)));
+    home.or_else(|| rightful(w, data))
+}
+
+/// Who the rule of the law in force puts first (`SuccessionRule`) among the lawful heirs, among
+/// recognized bastards only without one; `next_heir` without a law. None: nobody may.
+pub fn rightful(w: &World, data: &Data) -> Option<usize> {
     let Some(law) = data.heirs.law(w) else {
         return next_heir(w);
     };
     let h = &w.heirs;
     let son = |i: &usize| h[*i].sex == Sex::Male;
     let child = |i: &usize| h[*i].id >= w.line_from;
-    let mut all = 0..h.len();
+    let lawful = h.iter().any(|x| !x.bastard);
+    let mut all = (0..h.len()).filter(|i| !lawful || !h[*i].bastard);
     match law.rule {
         SuccessionRule::Absolute => all.next(),
         SuccessionRule::Male | SuccessionRule::Partition => {
@@ -278,8 +290,11 @@ pub fn next_heir(w: &World) -> Option<usize> {
     (0..w.heirs.len()).rev().max_by_key(|&i| w.heirs[i].claim)
 }
 
-/// Crowns the next heir: a claim below the law's `crisis_claim` contests the succession
-/// (`abdication.contested_flag`), and so may the rivals (`Law.dispute_per_heir`); a child
+/// Crowns the next heir, the rightful one with at least `Law.rightful_claim`: a claim below
+/// the law's `crisis_claim` contests the succession (`abdication.contested_flag`), and so
+/// may the rivals (`Law.dispute_per_heir`), a woman under `Law.female_heir`, an heir named
+/// over the law (`heirs.designate_dispute`), a child (`heirs.dispute_minor`) and a weak
+/// heir (`heirs.dispute_weak`); a child
 /// reigns under the regency flag, the other heirs become the collateral line, the flags of
 /// the last reign (`sim.reign_flags`) go. False: no heir.
 fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
@@ -287,9 +302,13 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
         return false;
     };
     let (d, w, rng) = (&g.data, &mut g.world, &mut g.rng);
-    let heir = w
-        .heirs
-        .remove(successor(w, d).expect("succession found one"));
+    let i = successor(w, d).expect("succession found one");
+    let lawful = rightful(w, d) == Some(i);
+    let mut heir = w.heirs.remove(i);
+    w.designated = None;
+    if let Some(l) = d.heirs.law(w).filter(|_| lawful && !heir.bastard) {
+        heir.claim = heir.claim.max(l.rightful_claim);
+    }
     // The late ruler's unions end with him; the new one's come with him to the throne.
     w.unions.retain(|_, u| u.spouse.is_some());
     for u in w.unions.values_mut().filter(|u| u.spouse == Some(heir.id)) {
@@ -306,19 +325,29 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     }
     // His brothers and sisters become the collateral line, behind his children.
     w.line_from = w.next_heir_id;
-    // Children before the coronation come as in wedlock, as heir marriages were never
-    // tracked year by year (stage 15); from now on births follow his own marriage.
-    let married = &d.heirs.married_flag;
-    w.flags.insert(married.clone());
-    born_before(d, w, rng, ruler.age);
-    if !heir.married {
-        w.flags.remove(married);
-    }
+    // Children before the coronation: lawful from his wedding on, bastards before it.
+    let wed = heir.married.then(|| {
+        let years = heir.married_in.map(|y| year.saturating_sub(y));
+        years.map_or(d.heirs.adult_age, |y| ruler.age.saturating_sub(y))
+    });
+    born_before(d, w, rng, ruler.age, wed);
+    let married = d.heirs.married_flag.clone();
+    match heir.married {
+        true => w.flags.insert(married),
+        false => w.flags.remove(&married),
+    };
     if let Some(l) = d.heirs.law(w) {
-        // Each heir left is a rival: a chance of dispute per head, rolled only if the law has one.
-        let rivals = l.dispute_per_heir * Fx::from_int(w.heirs.len() as i64);
-        let quarrel = rivals > Fx(0) && rng.range(0, Fx::from_int(100).0) < rivals.0;
-        if heir.claim < l.crisis_claim || quarrel {
+        // Chances in percent, rolled only where they apply and are above 0.
+        let mut roll = |p: Fx| p > Fx(0) && rng.range(0, Fx::from_int(100).0) < p.0;
+        // Each heir left is a rival: a chance of dispute per head.
+        let quarrel = roll(l.dispute_per_heir * Fx::from_int(w.heirs.len() as i64));
+        let queen = heir.sex == Sex::Female && l.female_heir.is_some();
+        // Named over the rightful heir, who keeps his claim: a rival.
+        let named = !lawful && roll(d.heirs.designate_dispute);
+        let h = &d.heirs;
+        let minor = ruler.age < d.sim.regency_age && roll(h.dispute_minor);
+        let weak = heir.ability < h.dispute_weak.0 && roll(h.dispute_weak.1);
+        if heir.claim < l.crisis_claim || quarrel || queen || named || minor || weak {
             w.flags.insert(d.abdication.contested_flag.clone());
         }
     }
@@ -343,7 +372,10 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     if let Some(cheer) = cheer {
         told.1 = format!("{} {cheer}", told.1);
     }
-    c.rulers.push(record(&ruler));
+    c.rulers.push(RulerRecord {
+        designated: !lawful,
+        ..record(&ruler)
+    });
     w.ruler = ruler;
     (g.ended, g.reported) = (None, false);
     let causes = causes(&g.world, [MarkKey::Heir(heir.id)].into());
@@ -356,8 +388,8 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     true
 }
 
-/// The axes at a coronation (`Data.coronation`, see `CoronationRules`) for a new ruler of
-/// `claim`. Returns how the chronicle tells the trait that moved an axis most, if it is told.
+/// The axes at a coronation (`Data.coronation`, see `CoronationRules`, then a queen's
+/// `Law.female_heir`) for a new ruler of `claim`. Returns how the chronicle tells the trait that moved an axis most, if it is told.
 fn coronation(w: &mut World, d: &Data, claim: Fx, ruler: &Ruler) -> Option<String> {
     let c = &d.coronation;
     for f in &d.factions {
@@ -374,8 +406,13 @@ fn coronation(w: &mut World, d: &Data, claim: Fx, ruler: &Ruler) -> Option<Strin
         add_axis(w, d, a, toward);
     }
     let contested = w.flags.contains(&d.abdication.contested_flag);
-    let law = d.heirs.law(w).map_or(&[][..], |l| &l.coronation);
-    for (a, v) in c.contested.iter().filter(|_| contested).chain(law) {
+    let law = d.heirs.law(w);
+    let queen = law
+        .and_then(|l| l.female_heir.as_ref())
+        .filter(|_| ruler.sex == Sex::Female);
+    let law = law.map_or(&[][..], |l| &l.coronation);
+    let shifts = c.contested.iter().filter(|_| contested).chain(law);
+    for (a, v) in shifts.chain(queen.into_iter().flatten()) {
         add_axis(w, d, a, *v);
     }
     let traits = d.sim.traits.iter().filter(|t| ruler.traits.contains(&t.id));
@@ -422,13 +459,20 @@ fn partition(w: &mut World, (loyalty, strength): (Fx, Fx), sons: &[(u32, String)
     told
 }
 
-/// The children a new ruler of `age` had before the coronation: a roll of
-/// `HeirRules::birth_chance` for every adult year, and each child born then a roll of
-/// `heirs.death` for every year of its own; ability grown at home until adulthood.
-fn born_before(d: &Data, w: &mut World, rng: &mut Rng, age: u32) {
+/// The children a new ruler of `age`, wed at age `wed`, had before the coronation: a roll of
+/// `heirs.birth` for every adult year (times `unmarried` before the wedding: a bastard), and
+/// each child born then a roll of `heirs.death` for every year of its own; ability grown at
+/// home until adulthood.
+fn born_before(d: &Data, w: &mut World, rng: &mut Rng, age: u32, wed: Option<u32>) {
     let r = &d.heirs;
     for at in r.adult_age..age {
-        if rng.range(0, Fx::from_int(100).0) >= r.birth_chance(w, at).0 {
+        let bastard = wed.is_none_or(|m| at < m);
+        let k = if bastard {
+            r.unmarried
+        } else {
+            Fx::from_int(1)
+        };
+        if rng.range(0, Fx::from_int(100).0) >= (crate::data::by_age(&r.birth, at) * k).0 {
             continue;
         }
         let years = age - at;
@@ -437,6 +481,7 @@ fn born_before(d: &Data, w: &mut World, rng: &mut Rng, age: u32) {
             continue;
         }
         let mut h = d.newborn_of(w.next_heir_id, r.sex(rng));
+        h.bastard = bastard;
         let grown = r.growth_home * Fx::from_int(years.min(r.adult_age).into());
         (h.age, h.ability) = (years, (h.ability + grown).min(Fx::from_int(100)));
         w.add_heir(h);
@@ -459,6 +504,7 @@ fn record(r: &Ruler) -> RulerRecord {
         start: r.reign_start,
         end: r.reign_start,
         cause: None,
+        designated: false,
     }
 }
 
@@ -761,6 +807,16 @@ impl AutoChooser {
                     ("heir_ability", *d)
                 }
                 Effect::HeirOp(HeirOp::Claim(_, d) | HeirOp::TargetClaim(d)) => ("heir_claim", *d),
+                Effect::HeirOp(HeirOp::Designate(i)) => {
+                    // Only the penalty of naming one not rightful weighs.
+                    let named = w.heirs.get(*i as usize).map(|h| h.id);
+                    let rightful = rightful(w, data).map(|r| w.heirs[r].id);
+                    if named.is_some() && named != rightful && named != w.designated {
+                        let p = &data.heirs.designate_penalty;
+                        sum = p.iter().fold(sum, |s, (a, v)| s + self.weight(&a.0) * *v);
+                    }
+                    continue;
+                }
                 Effect::Chance(c) => {
                     let hit = c.percent(w) / Fx::from_int(100);
                     sum = sum + self.worth(&c.then, w, data, nb) * hit;
@@ -778,7 +834,16 @@ impl AutoChooser {
                     sum = sum + self.worth(es, w, data, nb);
                     continue;
                 }
+                // A bastard to recognize: `recognize`, and an `heir` when there is none.
+                Effect::HeirOp(HeirOp::Recognize) if w.bastards.is_empty() => continue,
+                Effect::HeirOp(HeirOp::Recognize) => {
+                    if w.heirs.is_empty() {
+                        sum = sum + self.weight("heir");
+                    }
+                    ("recognize", one)
+                }
                 Effect::HeirOp(HeirOp::SetStatus(..) | HeirOp::TargetStatus(_))
+                | Effect::HeirOp(HeirOp::TargetDesignate)
                 | Effect::SpawnEvent(..)
                 | Effect::Clash
                 | Effect::EndWar(_)

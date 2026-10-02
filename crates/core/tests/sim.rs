@@ -116,10 +116,12 @@ fn texts(c: &Chronicle) -> Vec<(&str, &str, Option<&str>)> {
 fn golden_seed_42_script_a() {
     let (g, end) = script_a(42);
     let c = sim::run(end, &g.data, g.rng.clone());
-    // Stage 12: Конрад does not live to reign (heirs.death), Агнесса does; her first in
-    // line dies of age risk and is told in the chronicle.
-    assert_eq!((c.years, &c.fall), (69, &FallReason::Usurped));
+    // Stage 12: Конрад does not live to reign (heirs.death), Агнесса does. Round 3: revolt
+    // weight follows the vassal ratio, so Вейр, grown by script A's grants, and Арден rise
+    // early, and the realm ends with no crown land.
+    assert_eq!((c.years, &c.fall), (156, &FallReason::NoCrownLand));
     let hint = |h: &'static str| Some(h);
+    let spring = hint("Обитель у святого источника, поставленная основателем, кормила край.");
     assert_eq!(
         texts(&c)[..4],
         [
@@ -129,16 +131,20 @@ fn golden_seed_42_script_a() {
                 hint("Основатель породнил наследника с домом своего барона."),
             ),
             (
-                "Набег из степи",
-                "В тот год из степи пришла конная орда. Кочевники жгут сёла земли Оствик и уводят людей в полон.",
-                hint("Набег, отбитый при основателе, научил соседа осторожности."),
+                "Мятеж дома Арден",
+                "В тот год дом Арден поднял мятеж в земле Мар и отказался присягать короне.",
+                spring,
             ),
             (
-                "Смерть наследника",
-                "Не стало первого в очереди на престол: Матильда.",
-                hint("Наследник основателя учился власти в королевском совете."),
+                "Чума в городе",
+                "В портовом квартале люди падают прямо на улицах. Лекари говорят о чёрной смерти.",
+                hint("Пережитый при основателе мор сплотил страну."),
             ),
-            ("Новое правление", "Престол наследует Освальд.", None),
+            (
+                "Мятеж дома Вейр",
+                "В тот год дом Вейр поднял мятеж в земле Берг и отказался присягать короне.",
+                spring,
+            ),
         ]
     );
     // The same seed and decisions give the same chronicle.

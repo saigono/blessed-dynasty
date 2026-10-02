@@ -31,6 +31,7 @@ pub struct Data {
     pub abdication: Abdication,
     pub heirs: HeirRules,
     pub neighbour_ai: NeighbourAi,
+    pub crown_capacity: CrownCapacity,
     pub grant: GrantRules,
     pub war: WarRules,
     pub sim: SimRules,
@@ -272,6 +273,18 @@ pub fn by_age(table: &[(u32, Fx)], at: u32) -> Fx {
         .map_or(Fx(0), |(_, v)| *v)
 }
 
+/// Piecewise linear through `points` (sorted by x); flat beyond the first and the last.
+pub fn curve(points: &[(Fx, Fx)], x: Fx) -> Fx {
+    let Some(i) = points.iter().position(|(px, _)| *px > x) else {
+        return points.last().map_or(Fx(0), |p| p.1);
+    };
+    if i == 0 {
+        return points[0].1;
+    }
+    let ((x0, y0), (x1, y1)) = (points[i - 1], points[i]);
+    y0 + (y1 - y0) * ((x - x0) / (x1 - x0))
+}
+
 /// A faction's loyalty lives in its `axis`; `weight` is its share in `loyalty_axis`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Faction {
@@ -353,6 +366,16 @@ pub struct StanceRules {
     pub relation: Fx,
     /// `(event id, chance in percent per year)`; at most one fires, chances sum to <= 100.
     pub events: Vec<(String, u32)>,
+}
+
+/// Yearly limit of direct rule, see `Game::overreach`: the crown holds at most
+/// `capital crown power * per_power` provinces; each of its weakest beyond that loses
+/// `loyalty`, and goes to a vassal below `grant_below`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct CrownCapacity {
+    pub per_power: Fx,
+    pub loyalty: Fx,
+    pub grant_below: Fx,
 }
 
 /// Who gets a province from `Effect::Grant`.
@@ -544,6 +567,20 @@ mod tests {
     use super::*;
 
     const RULES: &str = include_str!("../../../data/rules.ron");
+
+    #[test]
+    fn curve_is_linear_between_points_and_flat_beyond() {
+        let pts = [
+            (Fx::from_int(1), Fx::from_int(10)),
+            (Fx::from_int(3), Fx::from_int(30)),
+        ];
+        assert_eq!(curve(&pts, Fx(0)), Fx::from_int(10));
+        assert_eq!(curve(&pts, Fx::from_int(1)), Fx::from_int(10));
+        assert_eq!(curve(&pts, Fx::from_int(2)), Fx::from_int(20));
+        assert_eq!(curve(&pts, Fx::from_int(3)), Fx::from_int(30));
+        assert_eq!(curve(&pts, Fx::from_int(9)), Fx::from_int(30));
+        assert_eq!(curve(&[], Fx::from_int(9)), Fx(0));
+    }
 
     #[test]
     fn rules_ron_loads() {

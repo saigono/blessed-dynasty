@@ -268,6 +268,21 @@ impl World {
         })
     }
 
+    /// For a vassal's province: the vassal's strength times the number of his provinces over
+    /// the crown power here (at least 0.001). 1 means the vassal matches the crown on his land.
+    pub fn vassal_ratio(&self, p: &Province) -> Option<Fx> {
+        let Holder::Vassal(v) = &p.holder else {
+            return None;
+        };
+        let strength = self.vassals.get(v)?.strength;
+        let held = self
+            .provinces
+            .values()
+            .filter(|q| q.holder == p.holder)
+            .count();
+        Some(strength * Fx::from_int(held as i64) / p.crown_power.max(Fx(1)))
+    }
+
     /// The own province on the border with `n` with the weakest crown power, smallest id
     /// on a tie: where that neighbour presses.
     pub fn weakest_border(&self, n: &NeighbourId) -> Option<&Province> {

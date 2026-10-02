@@ -5,13 +5,15 @@ use crate::fx::Fx;
 use crate::neighbour::neighbour_tick;
 use crate::rng::Rng;
 use crate::rules::{
-    ActionTarget, Choice, Ctx, Effect, Event, EventTarget, ProvinceField, Target, add_axis,
+    ActionTarget, Choice, Ctx, Effect, Event, EventTarget, ProvinceField, ProvinceTarget, Target,
+    add_axis,
 };
 use crate::state::{
     ActiveAction, CauseTag, HeirStatus, Holder, MarkKey, NeighbourId, Preset, ProvinceId, World,
 };
 use crate::time::Tick;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 pub type ActionId = String;
 
@@ -232,12 +234,16 @@ impl Game {
         }
         self.world.tick.0 += 1;
         self.passive();
+        if (self.world.tick.0).is_multiple_of(self.data.time_unit.ticks_per_year) {
+            self.overreach();
+        }
         self.complete_actions();
         self.world.recompute_loyalty(&self.data);
         self.world.recompute_crown_power(&self.data);
         // Events neighbours start this year; they join the random pick.
         let mut offers = Vec::new();
         if (self.world.tick.0).is_multiple_of(self.data.time_unit.ticks_per_year) {
+            self.drop_landless();
             let ids: Vec<_> = self.world.neighbours.keys().cloned().collect();
             let relations = |w: &World| {
                 w.neighbours
@@ -421,6 +427,60 @@ impl Game {
         }
     }
 
+    /// Yearly, `Data.crown_capacity`: the crown holds at most `capital crown power *
+    /// per_power` provinces directly, the capital included. Its weakest others beyond that
+    /// lose `loyalty`; one below `grant_below` goes to a vassal (`Effect::Grant`).
+    fn overreach(&mut self) {
+        let (c, w) = (&self.data.crown_capacity, &mut self.world);
+        let capital = w.provinces.get(&w.capital.province);
+        let room = (capital.map_or(Fx(0), |p| p.crown_power) * c.per_power).0 / Fx::SCALE;
+        let crown = w.provinces.values().filter(|p| p.holder == Holder::Crown);
+        let over = (crown.count() as i64 - room.max(0)).max(0) as usize;
+        let mut weakest: Vec<(Fx, ProvinceId)> = (w.provinces.values())
+            .filter(|p| p.holder == Holder::Crown && p.id != w.capital.province)
+            .map(|p| (p.crown_power, p.id.clone()))
+            .collect();
+        weakest.sort();
+        let mut grants = Vec::new();
+        for (_, id) in weakest.into_iter().take(over) {
+            let p = w.provinces.get_mut(&id).expect("listed above");
+            p.loyalty = (p.loyalty - c.loyalty).max(Fx(0));
+            if p.loyalty < c.grant_below {
+                grants.push(Effect::Grant(ProvinceTarget::ById(id)));
+            }
+        }
+        self.apply(&grants, None, None);
+    }
+
+    /// A neighbour with no province left leaves the world: a war with it ends, the heirs it
+    /// holds come home, events queued at it are dropped.
+    fn drop_landless(&mut self) {
+        let w = &mut self.world;
+        let landed: BTreeSet<&NeighbourId> = (w.provinces.values())
+            .filter_map(|p| match &p.holder {
+                Holder::Foreign(n) => Some(n),
+                _ => None,
+            })
+            .collect();
+        let gone: Vec<NeighbourId> = (w.neighbours.keys())
+            .filter(|n| !landed.contains(n))
+            .cloned()
+            .collect();
+        for id in gone {
+            w.neighbours.remove(&id);
+            if w.war.as_ref().is_some_and(|x| x.enemy == id) {
+                w.war = None;
+            }
+            for h in &mut w.heirs {
+                if h.status == HeirStatus::Hostage(id.clone()) {
+                    h.status = HeirStatus::Home;
+                }
+            }
+            let at = Some(Target::Neighbour(id.clone()));
+            (self.queue).retain(|(_, p)| p.target != at && p.neighbour.as_ref() != Some(&id));
+        }
+    }
+
     /// Fires the abdication event from `Data.abdication`; its choices confirm or cancel.
     pub fn abdicate(&mut self) -> Result<(), GameError> {
         if self.ended.is_some() {
@@ -587,12 +647,17 @@ fn target_key(t: &Target) -> String {
     }
 }
 
-/// Yearly: ability grows by status until adulthood, claims follow the succession law,
-/// hostages lose claim, a child may be born.
+/// Yearly: heirs may die by age, ability grows by status until adulthood, claims follow the
+/// succession law, hostages lose claim, a child may be born.
 fn heirs_year(d: &Data, w: &mut World, rng: &mut Rng) {
     let r = &d.heirs;
+    // No roll at zero risk: the rng stream stays as it was without the table.
+    w.heirs.retain(|h| {
+        let risk = by_age(&r.death, h.age);
+        risk <= Fx(0) || rng.range(0, 1000 * Fx::SCALE) >= risk.0
+    });
     let pct = |v: Fx| v.clamp(Fx(0), Fx::from_int(100));
-    let law = r.laws.iter().find(|l| w.flags.contains(&l.flag));
+    let law = r.law(w);
     for (i, h) in w.heirs.iter_mut().enumerate() {
         let (growth, claim) = match h.status {
             HeirStatus::Home => (r.growth_home, Fx(0)),
@@ -798,6 +863,7 @@ mod tests {
             when: Predicate::All(vec![]),
             weight: 0,
             weight_bonus: vec![],
+            vassal_weight: vec![],
             once: false,
             cooldown_years: Years(0),
             importance: 1,
@@ -859,6 +925,84 @@ mod tests {
             }
         }
         g
+    }
+
+    /// Stage 12: a neighbour that has lost its last province leaves the world, and with it
+    /// the war on it, the hostages it holds and the events queued at it.
+    #[test]
+    fn a_neighbour_without_land_leaves_the_world() {
+        let mut g = game(bare(), 1);
+        let nordmark = NeighbourId("nordmark".into());
+        g.world.war = Some(crate::war::War {
+            enemy: nordmark.clone(),
+            stage: crate::war::WarStage::Fighting,
+            our_strength: Fx(0),
+            their_strength: Fx(0),
+            war_score: Fx(0),
+            started: Tick(0),
+        });
+        g.world.heirs[0].status = HeirStatus::Hostage(nordmark.clone());
+        let queued = |id: &str, target: Option<Target>| {
+            let p = PendingEvent {
+                event_id: id.into(),
+                target,
+                neighbour: None,
+            };
+            (Tick(50), p)
+        };
+        g.queue.push(queued(
+            "at_nordmark",
+            Some(Target::Neighbour(nordmark.clone())),
+        ));
+        g.queue.push(queued("other", None));
+        let take = |g: &mut Game, keep: Option<&str>| {
+            for p in g.world.provinces.values_mut() {
+                if p.holder == Holder::Foreign(nordmark.clone()) && Some(p.id.0.as_str()) != keep {
+                    p.holder = Holder::Crown;
+                }
+            }
+            g.wait().unwrap();
+        };
+        take(&mut g, Some("frostad")); // one province left: it stays
+        assert!(g.world.neighbours.contains_key(&nordmark) && g.world.war.is_some());
+        take(&mut g, None);
+        assert!(!g.world.neighbours.contains_key(&nordmark));
+        assert_eq!(
+            (g.world.war.clone(), &g.world.heirs[0].status),
+            (None, &HeirStatus::Home)
+        );
+        let ids: Vec<_> = g.queue.iter().map(|(_, p)| p.event_id.as_str()).collect();
+        assert_eq!(ids, ["other"]);
+    }
+
+    #[test]
+    fn an_overgrown_crown_loses_its_weakest_lands() {
+        let mut data = bare();
+        data.crown_capacity.per_power = Fx(40); // capital crown power 100: room for 4
+        let mut g = game(data, 1);
+        for (id, power, loyalty) in [("capital", 100, 50), ("berg", 10, 26), ("gart", 20, 60)] {
+            let p = g.world.provinces.get_mut(&pid(id)).unwrap();
+            (p.crown_power, p.loyalty) = (Fx::from_int(power), Fx::from_int(loyalty));
+        }
+        for id in ["lugovo", "ostwick", "sol"] {
+            g.world.provinces.get_mut(&pid(id)).unwrap().crown_power = Fx::from_int(50);
+        }
+        let before = g.world.clone();
+        // Six crown provinces, room for four: berg and gart lose 3, berg drops below 25.
+        g.overreach();
+        let p = |g: &Game, id: &str| g.world.provinces[&pid(id)].clone();
+        assert!(matches!(p(&g, "berg").holder, Holder::Vassal(_)));
+        assert_eq!(p(&g, "berg").loyalty, Fx::from_int(23));
+        assert_eq!(
+            (p(&g, "gart").holder, p(&g, "gart").loyalty),
+            (Holder::Crown, Fx::from_int(57))
+        );
+        assert_eq!(p(&g, "sol"), before.provinces[&pid("sol")]);
+        // Within capacity nothing happens.
+        g.data.crown_capacity.per_power = Fx(60);
+        let before = g.world.clone();
+        g.overreach();
+        assert_eq!(g.world, before);
     }
 
     #[test]

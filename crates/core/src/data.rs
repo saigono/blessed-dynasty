@@ -31,6 +31,7 @@ pub struct Data {
     pub abdication: Abdication,
     pub heirs: HeirRules,
     pub neighbour_ai: NeighbourAi,
+    pub crown_capacity: CrownCapacity,
     pub grant: GrantRules,
     pub war: WarRules,
     pub sim: SimRules,
@@ -233,22 +234,36 @@ pub struct HeirRules {
     /// Claims move by `claim_step` toward the target of the law whose flag is set.
     pub claim_step: Fx,
     pub laws: Vec<Law>,
-    /// A claim below this means a succession crisis.
-    pub crisis_claim: Fx,
     /// Birth chance in percent: the row of the largest `age_from <= ruler age`,
     /// times `unmarried` without `married_flag`.
     pub birth: Vec<(u32, Fx)>,
     pub married_flag: String,
     pub unmarried: Fx,
+    /// Yearly death risk of every heir in per mille: the row of the largest
+    /// `age_from <= heir age`. The dead leave the list.
+    pub death: Vec<(u32, Fx)>,
+}
+
+impl HeirRules {
+    /// The succession law in force: the first whose flag is set.
+    pub fn law(&self, w: &World) -> Option<&Law> {
+        self.laws.iter().find(|l| w.flags.contains(&l.flag))
+    }
 }
 
 /// Claim target: `eldest` for heir 0, `others` for the rest, plus `ability * ability_k`.
+/// A new ruler's claim below `crisis_claim` contests the succession.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Law {
     pub flag: String,
     pub eldest: Fx,
     pub others: Fx,
     pub ability_k: Fx,
+    pub crisis_claim: Fx,
+    /// Chance in percent per heir left after the coronation that the succession is
+    /// contested anyway: more heirs, more quarrels.
+    #[serde(default)]
+    pub dispute_per_heir: Fx,
 }
 
 /// The row of the largest `from <= at`; 0 below the first row.
@@ -256,6 +271,18 @@ pub fn by_age(table: &[(u32, Fx)], at: u32) -> Fx {
     let rows = table.iter().filter(|(from, _)| *from <= at);
     rows.max_by_key(|(from, _)| *from)
         .map_or(Fx(0), |(_, v)| *v)
+}
+
+/// Piecewise linear through `points` (sorted by x); flat beyond the first and the last.
+pub fn curve(points: &[(Fx, Fx)], x: Fx) -> Fx {
+    let Some(i) = points.iter().position(|(px, _)| *px > x) else {
+        return points.last().map_or(Fx(0), |p| p.1);
+    };
+    if i == 0 {
+        return points[0].1;
+    }
+    let ((x0, y0), (x1, y1)) = (points[i - 1], points[i]);
+    y0 + (y1 - y0) * ((x - x0) / (x1 - x0))
 }
 
 /// A faction's loyalty lives in its `axis`; `weight` is its share in `loyalty_axis`.
@@ -310,6 +337,9 @@ pub struct NeighbourAi {
     pub expand_margin: Fx,
     /// Every year the relation moves this much toward 0, after the stance's own change.
     pub drift: Fx,
+    /// Every year the strength moves this much toward `Neighbour.per_province` times the
+    /// provinces the state holds now.
+    pub recover: Fx,
     pub expand: StanceRules,
     pub defend: StanceRules,
     pub trade: StanceRules,
@@ -336,6 +366,16 @@ pub struct StanceRules {
     pub relation: Fx,
     /// `(event id, chance in percent per year)`; at most one fires, chances sum to <= 100.
     pub events: Vec<(String, u32)>,
+}
+
+/// Yearly limit of direct rule, see `Game::overreach`: the crown holds at most
+/// `capital crown power * per_power` provinces; each of its weakest beyond that loses
+/// `loyalty`, and goes to a vassal below `grant_below`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct CrownCapacity {
+    pub per_power: Fx,
+    pub loyalty: Fx,
+    pub grant_below: Fx,
 }
 
 /// Who gets a province from `Effect::Grant`.
@@ -389,6 +429,12 @@ pub struct SimRules {
     /// A ruler younger than `regency_age` reigns under `regency_flag` until he reaches it.
     pub regency_flag: String,
     pub regency_age: u32,
+    /// Flags that belong to one reign and go when the next ruler is crowned.
+    #[serde(default)]
+    pub reign_flags: Vec<String>,
+    /// The death of the first heir (`texts.heir_died`) is told from this age on; younger,
+    /// only when he was the last heir and the dynasty ends without one.
+    pub heir_death_age: u32,
     pub ruler_health: Fx,
     /// Relation of a state born of a vassal revolt (`Effect::Secede`) with the kingdom.
     pub secession_relation: Fx,
@@ -419,12 +465,14 @@ pub struct AutoRules {
 }
 
 /// `(title, text)` of the chronicle entries made by the simulation itself; `{ruler}`,
-/// `{province}`, `{neighbour}`.
+/// `{province}`, `{neighbour}`, `{heir}`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct SimTexts {
     pub crowned: (String, String),
     pub province_lost: (String, String),
     pub province_gained: (String, String),
+    /// The heir first in line died (`heirs.death`); `{heir}`.
+    pub heir_died: (String, String),
     /// Display text per reign end cause (`Game.ended`: a `RulerDies` cause or the
     /// abdication event id).
     #[serde(default)]
@@ -519,6 +567,20 @@ mod tests {
     use super::*;
 
     const RULES: &str = include_str!("../../../data/rules.ron");
+
+    #[test]
+    fn curve_is_linear_between_points_and_flat_beyond() {
+        let pts = [
+            (Fx::from_int(1), Fx::from_int(10)),
+            (Fx::from_int(3), Fx::from_int(30)),
+        ];
+        assert_eq!(curve(&pts, Fx(0)), Fx::from_int(10));
+        assert_eq!(curve(&pts, Fx::from_int(1)), Fx::from_int(10));
+        assert_eq!(curve(&pts, Fx::from_int(2)), Fx::from_int(20));
+        assert_eq!(curve(&pts, Fx::from_int(3)), Fx::from_int(30));
+        assert_eq!(curve(&pts, Fx::from_int(9)), Fx::from_int(30));
+        assert_eq!(curve(&[], Fx::from_int(9)), Fx(0));
+    }
 
     #[test]
     fn rules_ron_loads() {

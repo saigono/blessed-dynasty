@@ -100,8 +100,14 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
         g.queue.push((g.world.tick, p));
     }
     let tpy = g.world.time_unit.ticks_per_year;
+    // The death of a young first heir who was the last one, with its place in the entries:
+    // told only if no heir comes after and the dynasty ends for want of one.
+    let mut last_heir: Option<(usize, ChronicleEntry)> = None;
     c.fall = 'dynasty: loop {
         if !crown(&mut g, &mut c) {
+            if let Some((i, e)) = last_heir {
+                c.entries.insert(i, e);
+            }
             break FallReason::NoHeir;
         }
         let auto = AutoChooser::for_ruler(&g.data, &g.world.ruler);
@@ -127,7 +133,28 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
                 .values()
                 .map(|p| p.holder.clone())
                 .collect();
-            match g.wait().expect("the reign goes on") {
+            let first = next_heir(&g.world).map(|i| g.world.heirs[i].clone());
+            let step = g.wait().expect("the reign goes on");
+            // Within a tick only the yearly age risk takes an heir; events do on resolve.
+            if let Some(h) = first.filter(|h| g.world.heir_index(h.id).is_none()) {
+                let (title, text) = &s.texts.heir_died;
+                let told = (
+                    title.replace("{heir}", &h.name),
+                    text.replace("{heir}", &h.name),
+                );
+                let causes = causes(&g.world, [MarkKey::Heir(h.id)].into());
+                let e = entry(&g, told, s.notable, causes);
+                // `h` is from before the tick; heirs age a year before the death roll.
+                if h.age + 1 >= s.heir_death_age {
+                    c.entries.push(e);
+                } else if g.world.heirs.is_empty() {
+                    last_heir = Some((c.entries.len(), e));
+                }
+            }
+            if !g.world.heirs.is_empty() {
+                last_heir = None;
+            }
+            match step {
                 Step::Idle => {}
                 Step::Event(v) => {
                     // Causes as the world stood before the choice; only entries need them.
@@ -202,16 +229,28 @@ fn next_heir(w: &World) -> Option<usize> {
     (0..w.heirs.len()).rev().max_by_key(|&i| w.heirs[i].claim)
 }
 
-/// Crowns the next heir: a claim below `heirs.crisis_claim` contests the succession
-/// (`abdication.contested_flag`), a child reigns under the regency flag. False: no heir.
+/// Crowns the next heir: a claim below the law's `crisis_claim` contests the succession
+/// (`abdication.contested_flag`), and so may the rivals (`Law.dispute_per_heir`); a child
+/// reigns under the regency flag, the other heirs become the collateral line, the flags of
+/// the last reign (`sim.reign_flags`) go. False: no heir.
 fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     let Some(ruler) = succession(&g.world, &g.data, &mut g.rng) else {
         return false;
     };
-    let (d, w) = (&g.data, &mut g.world);
+    let (d, w, rng) = (&g.data, &mut g.world, &mut g.rng);
     let heir = w.heirs.remove(next_heir(w).expect("succession found one"));
-    if heir.claim < d.heirs.crisis_claim {
-        w.flags.insert(d.abdication.contested_flag.clone());
+    // His brothers and sisters become the collateral line, behind his children to come.
+    w.line_from = w.next_heir_id;
+    if let Some(l) = d.heirs.law(w) {
+        // Each heir left is a rival: a chance of dispute per head, rolled only if the law has one.
+        let rivals = l.dispute_per_heir * Fx::from_int(w.heirs.len() as i64);
+        let quarrel = rivals > Fx(0) && rng.range(0, Fx::from_int(100).0) < rivals.0;
+        if heir.claim < l.crisis_claim || quarrel {
+            w.flags.insert(d.abdication.contested_flag.clone());
+        }
+    }
+    for f in &d.sim.reign_flags {
+        w.flags.remove(f);
     }
     if ruler.age < d.sim.regency_age {
         w.flags.insert(d.sim.regency_flag.clone());

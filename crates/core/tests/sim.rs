@@ -116,29 +116,35 @@ fn texts(c: &Chronicle) -> Vec<(&str, &str, Option<&str>)> {
 fn golden_seed_42_script_a() {
     let (g, end) = script_a(42);
     let c = sim::run(end, &g.data, g.rng.clone());
-    assert_eq!((c.years, &c.fall), (142, &FallReason::Usurped));
+    // Stage 12: Конрад does not live to reign (heirs.death), Агнесса does. Round 3: revolt
+    // weight follows the vassal ratio, so Вейр, grown by script A's grants, and Арден rise
+    // early, and the realm ends with no crown land.
+    assert_eq!((c.years, &c.fall), (156, &FallReason::NoCrownLand));
     let hint = |h: &'static str| Some(h);
-    let monks = hint("Монахи, посланные основателем к больным, остались в памяти народа.");
+    let spring = hint("Обитель у святого источника, поставленная основателем, кормила край.");
     assert_eq!(
-        texts(&c)[..5],
+        texts(&c)[..4],
         [
-            ("Новое правление", "Престол наследует Конрад.", None),
             (
-                "Спор наследников",
-                "Двое королевских детей не уступают друг другу, у каждого свои сторонники при дворе.",
-                None,
+                "Новое правление",
+                "Престол наследует Агнесса.",
+                hint("Основатель породнил наследника с домом своего барона."),
+            ),
+            (
+                "Мятеж дома Арден",
+                "В тот год дом Арден поднял мятеж в земле Мар и отказался присягать короне.",
+                spring,
+            ),
+            (
+                "Чума в городе",
+                "В портовом квартале люди падают прямо на улицах. Лекари говорят о чёрной смерти.",
+                hint("Пережитый при основателе мор сплотил страну."),
             ),
             (
                 "Мятеж дома Вейр",
                 "В тот год дом Вейр поднял мятеж в земле Берг и отказался присягать короне.",
-                monks,
+                spring,
             ),
-            (
-                "Мятеж дома Вейр",
-                "В тот год дом Вейр поднял мятеж в земле Вейр и отказался присягать короне.",
-                monks,
-            ),
-            ("Новое правление", "Престол наследует Агнесса.", None),
         ]
     );
     // The same seed and decisions give the same chronicle.
@@ -292,6 +298,7 @@ fn quiet(data: &mut Data) {
     data.quiet_weight = 0;
     (data.death.base, data.death.health_k) = (vec![], Fx(0));
     data.heirs.birth = vec![];
+    data.heirs.death = vec![];
     data.actions.clear();
     let ai = &mut data.neighbour_ai;
     for s in [&mut ai.expand, &mut ai.defend, &mut ai.trade, &mut ai.wait] {
@@ -336,6 +343,220 @@ fn a_child_reigns_under_regency_and_a_weak_claim_is_contested() {
     assert!(!w.flags.contains("regency") && !w.flags.contains("succession_contested"));
 }
 
+/// Stage 12: h0 is crowned; his brother h1 becomes the collateral line, and the child born
+/// to h0 a year later stands before him and takes the eldest's claim target.
+#[test]
+fn the_new_rulers_child_goes_before_his_brother() {
+    let mut data = content();
+    quiet(&mut data);
+    yearly(&mut data, "");
+    data.heirs.birth = vec![(0, Fx::from_int(100))];
+    data.sim.max_years = 4;
+    let g = heirs(
+        &data,
+        &[(30, 80, HeirStatus::Home), (28, 75, HeirStatus::Home)],
+    );
+    let c = sim::run(end_now(&g), &data, Rng::from_seed(1));
+    let line = |i: usize| {
+        let w = &c.entries[i].snapshot;
+        (w.heirs.iter())
+            .map(|h| (h.name.clone(), h.claim))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(line(0), [("h1".into(), Fx::from_int(75))]);
+    let later = line(2);
+    let (child, brother) = (&later[0], later.last().unwrap());
+    assert_eq!(brother.0, "h1");
+    assert!(
+        child.0 != "h1" && child.1 > Fx::from_int(50),
+        "{:?}",
+        line(2)
+    );
+    assert!(brother.1 < Fx::from_int(75), "{:?}", line(2));
+}
+
+/// (years after the end of the reign, title) of every entry.
+fn told(g: &Game, c: &Chronicle) -> Vec<(u32, String)> {
+    let at = |e: &bd_core::sim::ChronicleEntry| e.tick.0 - g.world.tick.0;
+    (c.entries.iter())
+        .map(|e| (at(e), e.title.clone()))
+        .collect()
+}
+
+/// Stage 12: the first in line dies of age risk (heirs.death) at 14 or older: an entry tells
+/// it; a younger one dying is not told while the dynasty goes on.
+#[test]
+fn the_death_of_a_grown_first_heir_is_told() {
+    let mut data = content();
+    quiet(&mut data);
+    data.heirs.death = vec![(0, Fx(0)), (14, Fx::from_int(1000))];
+    data.sim.max_years = 5;
+    let g = heirs(
+        &data,
+        &[(30, 80, HeirStatus::Home), (12, 75, HeirStatus::Home)],
+    );
+    let c = sim::run(end_now(&g), &data, Rng::from_seed(1));
+    let crowned = (0, "Новое правление".to_string());
+    assert_eq!(
+        told(&g, &c),
+        [crowned.clone(), (2, "Смерть наследника".into())]
+    );
+    let e = &c.entries[1];
+    assert_eq!(e.text, "Не стало первого в очереди на престол: h1.");
+    assert_eq!(e.importance, data.sim.notable);
+    assert!(e.snapshot.heirs.is_empty());
+    // Dying at 13 (below sim.heir_death_age), the last heir of a living dynasty: not told.
+    data.heirs.death = vec![(0, Fx(0)), (13, Fx::from_int(1000))];
+    let c = sim::run(end_now(&g), &data, Rng::from_seed(1));
+    assert_eq!(told(&g, &c), [crowned]);
+    assert_eq!(c.entries[0].snapshot.heirs.len(), 1);
+}
+
+/// Stage 12: an infant, the last heir, dies; no other is born and the ruler dies: the
+/// dynasty ends NoHeir, and the infant's death is told where it happened.
+#[test]
+fn the_death_of_the_last_infant_heir_is_told_at_the_fall() {
+    let mut data = content();
+    quiet(&mut data);
+    data.add_events(&read("events/death.ron")).unwrap();
+    data.heirs.death = vec![(0, Fx(0)), (1, Fx::from_int(1000))];
+    data.death.base = vec![(0, Fx(0)), (33, Fx::from_int(1000))];
+    let g = heirs(
+        &data,
+        &[(30, 80, HeirStatus::Home), (0, 75, HeirStatus::Home)],
+    );
+    let c = sim::run(end_now(&g), &data, Rng::from_seed(1));
+    assert_eq!(c.fall, FallReason::NoHeir);
+    let told = told(&g, &c);
+    assert_eq!(
+        told[..2],
+        [
+            (0, "Новое правление".into()),
+            (1, "Смерть наследника".into())
+        ]
+    );
+    // With an heir born later (a birth every year), the same death is not told.
+    data.heirs.birth = vec![(0, Fx::from_int(100))];
+    data.heirs.death = vec![(0, Fx(0)), (1, Fx::from_int(1000)), (2, Fx(0))];
+    data.sim.max_years = 10;
+    let c = sim::run(end_now(&g), &data, Rng::from_seed(1));
+    assert!(
+        c.entries.iter().all(|e| e.title != "Смерть наследника"),
+        "{:?}",
+        texts(&c)
+    );
+}
+
+/// The simulation with only these sim events of data/events/sim.
+fn only(ids: &[&str]) -> Data {
+    let mut data = content();
+    let keep: Vec<_> = (data.sim_events.iter())
+        .filter(|e| ids.contains(&e.id.as_str()))
+        .cloned()
+        .collect();
+    quiet(&mut data);
+    data.sim_events = keep;
+    data
+}
+
+/// h0 crowned at `age` with a brother, the church at `church`.
+fn vows(data: &Data, age: u32, church: i64) -> Chronicle {
+    let mut g = heirs(
+        data,
+        &[(age, 80, HeirStatus::Home), (8, 70, HeirStatus::Home)],
+    );
+    (g.world.axes).insert(ax("loyalty_church"), Fx::from_int(church));
+    sim::run(end_now(&g), data, Rng::from_seed(1))
+}
+
+/// Stage 12: a child king in the church's care takes the vows the year he comes of age, not
+/// before; the next heir is crowned and the church's guardianship goes with the reign.
+#[test]
+fn a_king_under_church_regency_takes_the_vows_when_he_comes_of_age() {
+    // The regency council gives the child to the church at once (its only choice here); the
+    // vows are certain once their `when` holds. Set before the reign, church_regency would go
+    // with the coronation (sim.reign_flags).
+    let mut data = only(&["regency_council", "monastery_vows"]);
+    for e in &mut data.sim_events {
+        e.weight = 1_000_000;
+        e.choices
+            .retain(|c| c.cause_tag != "regency_single" && c.cause_tag != "regency_nobles");
+    }
+    data.sim.max_years = 10;
+    let c = vows(&data, 12, 80);
+    let names: Vec<_> = c.rulers.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names[1..], ["h0", "h1"]);
+    assert_eq!(c.rulers[1].cause.as_deref(), Some("monastery"));
+    let reign = c.rulers[1].end.0 - c.rulers[1].start.0;
+    assert_eq!(reign, 4, "at 16, after four years of regency");
+    let flag = |e: &bd_core::sim::ChronicleEntry| e.snapshot.flags.contains("church_regency");
+    assert!(flag(&c.entries[1]), "{:?}", texts(&c)); // the council
+    let crowned = c.entries.iter().rfind(|e| e.title == "Новое правление");
+    assert!(!flag(crowned.unwrap()));
+    // A church without that loyalty (50, +6 from the council) keeps its ward on the throne.
+    assert_eq!(vows(&data, 12, 50).rulers.len(), 2);
+}
+
+/// Stage 12: a grown king takes the vows only with a very loyal church.
+#[test]
+fn a_grown_king_takes_the_vows_with_a_loyal_church() {
+    let mut data = only(&["monastery_late"]);
+    data.sim_events[0].weight = 1_000_000;
+    data.sim.max_years = 3;
+    let c = vows(&data, 30, 80);
+    assert_eq!(c.rulers[1].cause.as_deref(), Some("monastery"));
+    assert_eq!(vows(&data, 30, 60).rulers.len(), 2);
+}
+
+/// Stage 12: each succession law has its own dispute threshold; no law, no dispute.
+#[test]
+fn the_dispute_threshold_follows_the_law() {
+    let mut data = content();
+    quiet(&mut data);
+    data.sim.max_years = 1;
+    let contested = |law: Option<&str>| {
+        let mut g = heirs(&data, &[(30, 60, HeirStatus::Home)]);
+        g.world.flags.retain(|f| !f.starts_with("law_"));
+        g.world.flags.extend(law.map(String::from));
+        let c = sim::run(end_now(&g), &data, Rng::from_seed(1));
+        c.entries[0].snapshot.flags.contains("succession_contested")
+    };
+    // Claim 60: below primogeniture's 70 and elective's 65, above law_none's 45.
+    assert!(contested(Some("law_primogeniture")));
+    assert!(contested(Some("law_elective")));
+    assert!(!contested(Some("law_none")));
+    assert!(!contested(None));
+}
+
+/// Stage 12: under a law with `dispute_per_heir` every heir left is a chance of dispute.
+#[test]
+fn rivals_quarrel_by_their_number() {
+    let mut data = content();
+    quiet(&mut data);
+    data.sim.max_years = 1;
+    let law = data
+        .heirs
+        .laws
+        .iter()
+        .position(|l| l.flag == "law_none")
+        .unwrap();
+    data.heirs.laws[law].dispute_per_heir = Fx::from_int(25);
+    let contested = |rivals: usize, seed: u64| {
+        let mut list = vec![(30, 60, HeirStatus::Home)];
+        list.extend(std::iter::repeat_n((10, 50, HeirStatus::Home), rivals));
+        let mut g = heirs(&data, &list);
+        g.world.flags.retain(|f| !f.starts_with("law_"));
+        g.world.flags.insert("law_none".into());
+        let c = sim::run(end_now(&g), &data, Rng::from_seed(seed));
+        c.entries[0].snapshot.flags.contains("succession_contested")
+    };
+    assert!(!contested(0, 1));
+    assert!(contested(4, 1)); // 4 * 25%
+    let quarrels = |rivals| (0..40).filter(|&seed| contested(rivals, seed)).count();
+    let (one, three) = (quarrels(1), quarrels(3));
+    assert!(0 < one && one < three && three < 40, "{one} {three}");
+}
+
 #[test]
 fn falls() {
     let mut data = content();
@@ -378,7 +599,8 @@ fn falls() {
 #[test]
 fn decisions_mark_what_they_touch_and_marks_fade() {
     let data = content();
-    let mut g = game(&data, 1);
+    // Seed 1 loses Конрад in the first year (heirs.death).
+    let mut g = game(&data, 2);
     g.pending_event = Some(PendingEvent {
         event_id: "cap_court_intrigue".into(),
         target: None,
@@ -418,8 +640,12 @@ fn decisions_mark_what_they_touch_and_marks_fade() {
     // Marks follow the world into the simulation, which adds none of its own: their number
     // only falls as weights fade to nothing.
     let count = |w: &bd_core::state::World| w.marks.values().flatten().count();
-    let c = sim::run(end_now(&g), &data, Rng::from_seed(1));
-    assert!(c.entries.len() > 10);
+    // Any long enough dynasty: heirs die and child rulers fall, so not every seed has one.
+    let long = (0..20).map(|seed| sim::run(end_now(&g), &data, Rng::from_seed(seed)));
+    let c = long
+        .into_iter()
+        .find(|c| c.entries.len() > 10)
+        .expect("a long dynasty");
     let counts: Vec<usize> = c.entries.iter().map(|e| count(&e.snapshot)).collect();
     assert!(counts[0] > 0 && counts[0] <= count(&g.world));
     assert!(counts.windows(2).all(|w| w[1] <= w[0]), "{counts:?}");

@@ -5,7 +5,7 @@ use crate::fx::Fx;
 use crate::game::PendingEvent;
 use crate::rng::Rng;
 use crate::rules::{EventTarget, Target};
-use crate::state::{NeighbourId, Stance, World};
+use crate::state::{Holder, NeighbourId, Stance, World};
 
 /// One year of a neighbour, rules in `Data.neighbour_ai`. Returns the event it starts, if
 /// any; the caller offers it to the event pick, which drops unknown events.
@@ -17,7 +17,16 @@ pub fn neighbour_tick(
 ) -> Option<PendingEvent> {
     let ai = &data.neighbour_ai;
     let border = (w.weakest_border(&id)).map(|p| (p.id.clone(), p.crown_power));
+    let holder = Holder::Foreign(id.clone());
+    let held = w.provinces.values().filter(|p| p.holder == holder).count();
     let n = w.neighbours.get_mut(&id)?;
+    if n.per_province > Fx(0) {
+        let target = n.per_province * Fx::from_int(held as i64);
+        n.strength = match n.strength < target {
+            true => (n.strength + ai.recover).min(target),
+            false => (n.strength - ai.recover).max(target),
+        };
+    }
     n.stance = if n.relation < ai.hostile_below {
         match &border {
             Some((_, power)) if n.strength >= *power + ai.expand_margin => Stance::Expand,
@@ -78,6 +87,8 @@ mod tests {
         let mut world = World::from_preset(&data, &preset);
         // The preset makes Nordmark hostile; tests start it neutral (Wait) unless they say so.
         world.neighbours.get_mut(&nordmark()).unwrap().relation = Fx(0);
+        // Strength stays as a test sets it unless the test turns recovery on.
+        data.neighbour_ai.recover = Fx(0);
         (data, world)
     }
 
@@ -118,6 +129,53 @@ mod tests {
         (n.relation, n.strength) = (Fx::from_int(-50), Fx::from_int(100));
         neighbour_tick(&mut w, &data, &mut Rng::from_seed(1), nordmark());
         assert_eq!(w.neighbours[&nordmark()].stance, Stance::Defend);
+    }
+
+    #[test]
+    fn strength_recovers_toward_its_lands() {
+        let (mut data, w) = setup();
+        // From the preset: Nordmark, strength 60 over 3 provinces.
+        assert_eq!(w.neighbours[&nordmark()].per_province, Fx::from_int(20));
+        data.neighbour_ai.recover = Fx::from_int(5);
+        let after = |data: &Data, strength: i64, setup_w: &dyn Fn(&mut World)| {
+            let (_, mut w) = setup();
+            w.neighbours.get_mut(&nordmark()).unwrap().strength = Fx::from_int(strength);
+            setup_w(&mut w);
+            let e = neighbour_tick(&mut w, data, &mut Rng::from_seed(7), nordmark());
+            (w, e)
+        };
+        let strength =
+            |s, f: &dyn Fn(&mut World)| after(&data, s, f).0.neighbours[&nordmark()].strength;
+        let same = |_: &mut World| {};
+        let i = Fx::from_int;
+        assert_eq!(strength(50, &same), i(55));
+        assert_eq!(strength(58, &same), i(60)); // not above the target
+        assert_eq!(strength(70, &same), i(65));
+        assert_eq!(strength(62, &same), i(60)); // not below it
+        // Land moves the target: 2 provinces give 40, 4 give 80.
+        let lost = |w: &mut World| {
+            w.provinces
+                .get_mut(&ProvinceId("frostad".into()))
+                .unwrap()
+                .holder = Holder::Crown;
+        };
+        let gained = |w: &mut World| {
+            w.provinces
+                .get_mut(&ProvinceId("holm".into()))
+                .unwrap()
+                .holder = Holder::Foreign(nordmark());
+        };
+        assert_eq!(strength(60, &lost), i(55));
+        assert_eq!(strength(42, &lost), i(40));
+        assert_eq!(strength(60, &gained), i(65));
+        // recover 0: the same world and event as a state that never recovers.
+        data.neighbour_ai.recover = Fx(0);
+        let never = |w: &mut World| w.neighbours.get_mut(&nordmark()).unwrap().per_province = Fx(0);
+        for s in [20, 60, 100] {
+            let (mut w, e) = after(&data, s, &same);
+            w.neighbours.get_mut(&nordmark()).unwrap().per_province = Fx(0);
+            assert_eq!((w, e), after(&data, s, &never), "{s}");
+        }
     }
 
     #[test]

@@ -186,11 +186,35 @@ fn every_reign_choice_is_hinted() {
 #[test]
 fn sim_events_follow_the_brief() {
     let data = load_all();
-    assert_eq!(data.sim_events.len(), 12);
+    assert_eq!(data.sim_events.len(), 14);
     for e in &data.sim_events {
         assert!((2..=3).contains(&e.choices.len()), "{}", e.id);
         assert!(e.importance >= data.sim.threshold, "{}", e.id);
     }
+}
+
+/// Stage 12: a lost war costs the nobles' loyalty: every peace of `war_defeat` and a lost
+/// battle with the steppe (`nomad_raid`, the failed branch).
+#[test]
+fn lost_wars_cost_the_nobles() {
+    let data = load_all();
+    let nobles = |es: &[Effect]| {
+        es.iter()
+            .any(|e| matches!(e, Effect::Axis(a, d) if a.0 == "loyalty_nobles" && d.0 <= -10_000))
+    };
+    let event = |id: &str| {
+        let all = data.events.iter().chain(&data.sim_events);
+        all.into_iter().find(|e| e.id == id).unwrap().clone()
+    };
+    for c in &event("war_defeat").choices {
+        assert!(nobles(&c.effects), "{}", c.cause_tag);
+    }
+    let fought = &event("nomad_raid").choices[0].effects;
+    let lost = fought.iter().find_map(|e| match e {
+        Effect::Chance(c) => Some(&c.otherwise),
+        _ => None,
+    });
+    assert!(nobles(lost.unwrap()));
 }
 
 #[test]

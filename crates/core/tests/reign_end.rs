@@ -36,6 +36,7 @@ fn bare() -> Data {
     data.quiet_weight = 0;
     data.death.base = vec![];
     data.death.health_k = Fx(0);
+    data.heirs.death = vec![];
     data
 }
 
@@ -65,6 +66,7 @@ fn event(id: &str, effects: Vec<Effect>) -> Event {
         when: Predicate::All(vec![]),
         weight: 0,
         weight_bonus: vec![],
+        vassal_weight: vec![],
         once: false,
         cooldown_years: Years(0),
         importance: 1,
@@ -190,7 +192,7 @@ fn abdicate(bureaucracy: i64, ability: i64) -> Game {
 
 #[test]
 fn abdication_with_weak_institutions_breaks_the_claim() {
-    let crisis = content().heirs.crisis_claim;
+    let crisis = content().heirs.laws[0].crisis_claim; // primogeniture, as in the preset
     let mut g = abdicate(20, 80);
     let Step::ReignEnded(end) = g.wait().unwrap() else {
         panic!()
@@ -334,6 +336,21 @@ fn births(married: bool) -> usize {
         g.wait().unwrap();
     }
     g.world.heirs.len() - 1
+}
+
+/// Stage 12: Конрад (6) under a yearly heir death risk of 0 per mille until 8, 1000 from 8.
+#[test]
+fn heirs_die_by_age() {
+    let mut data = bare();
+    data.heirs.birth = vec![];
+    data.heirs.death = vec![(0, Fx(0)), (8, Fx::from_int(1000))];
+    let mut g = game(data, 1);
+    let mut alive = || {
+        g.wait().unwrap();
+        g.world.heirs.len()
+    };
+    assert_eq!(alive(), 1); // 7: risk 0
+    assert_eq!(alive(), 0); // 8: risk 1000
 }
 
 #[test]

@@ -113,6 +113,8 @@ pub struct ProvinceFilter {
     /// Held by a vassal whose strength times the number of his provinces exceeds the crown
     /// power here.
     pub vassal_stronger: Option<bool>,
+    /// Held by a vassal whose `World::vassal_ratio` here is above this.
+    pub vassal_ratio_above: Option<Fx>,
 }
 
 impl ProvinceFilter {
@@ -144,6 +146,7 @@ impl ProvinceFilter {
             && (self.borders_foreign).is_none_or(|b| b == w.foreign_of(p).next().is_some())
             && (self.capital).is_none_or(|c| c == (p.id == w.capital.province))
             && self.vassal_stronger.is_none_or(|b| b == stronger())
+            && (self.vassal_ratio_above).is_none_or(|v| w.vassal_ratio(p).is_some_and(|r| r > v))
     }
 }
 
@@ -537,6 +540,7 @@ impl Effect {
                     relation: ctx.data.sim.secession_relation,
                     strength: vassal.strength * Fx::from_int(count),
                     stance: Stance::Defend,
+                    per_province: vassal.strength,
                 };
                 w.neighbours.insert(id, n);
             }
@@ -625,6 +629,11 @@ pub struct Event {
     /// from `neighbour_ai`): risks that grow with a bad state. Weight 0 stays out of the pool.
     #[serde(default)]
     pub weight_bonus: Vec<(Predicate, u32)>,
+    /// Also added to the weight: this curve (`data::curve`, points `(ratio, weight)`) at the
+    /// highest `World::vassal_ratio` of any vassal province. Revolt grows as a vassal nears
+    /// the crown's strength.
+    #[serde(default)]
+    pub vassal_weight: Vec<(Fx, Fx)>,
     pub once: bool,
     pub cooldown_years: Years,
     pub importance: u32,
@@ -664,7 +673,16 @@ impl Event {
     /// Sum of the `weight_bonus` that hold now.
     pub fn bonus(&self, w: &World) -> u32 {
         let holding = self.weight_bonus.iter().filter(|(p, _)| p.eval(w));
-        holding.map(|(_, b)| b).sum()
+        let flat: u32 = holding.map(|(_, b)| b).sum();
+        if self.vassal_weight.is_empty() {
+            return flat;
+        }
+        let ratios = w.provinces.values().filter_map(|p| w.vassal_ratio(p));
+        let Some(top) = ratios.max() else {
+            return flat;
+        };
+        let curve = crate::data::curve(&self.vassal_weight, top);
+        flat + (curve.0 / Fx::SCALE).max(0) as u32
     }
 
     pub(crate) fn check(&self, data: &Data) -> Result<(), String> {
@@ -988,6 +1006,51 @@ mod tests {
     }
 
     #[test]
+    fn vassal_ratio_grows_with_the_house() {
+        let (_, mut w) = world();
+        let ratio = |w: &World, id: &str| w.vassal_ratio(&w.provinces[&pid(id)]);
+        let above = |w: &World, v: &str, id: &str| {
+            filter(&format!("(vassal_ratio_above: {v})")).matches(&w.provinces[&pid(id)], w)
+        };
+        // Weir (strength 20) holds holm (crown power 25) and weir: 20 * 2 / 25.
+        assert_eq!(ratio(&w, "holm"), Some(Fx(1_600)));
+        assert!(above(&w, "1.599", "holm") && !above(&w, "1.6", "holm"));
+        w.vassals
+            .get_mut(&VassalId("weir".into()))
+            .unwrap()
+            .strength = Fx::from_int(10);
+        assert_eq!(ratio(&w, "holm"), Some(Fx(800)));
+        // Crown land has no ratio and never matches.
+        assert_eq!(ratio(&w, "capital"), None);
+        assert!(!above(&w, "0", "capital"));
+        // The revolt weight follows the curve at the highest ratio: mar, 20 * 2 / 12.5 = 3.2.
+        let mut e: Event = crate::data::parse(
+            r#"(id: "e", title: "", text: "", when: All([]), weight: 1, once: false,
+            cooldown_years: 0, importance: 0, target: None, choices: [],
+            weight_bonus: [(Flag("plague"), 2)], vassal_weight: [(1, 0), (3, 20)])"#,
+        )
+        .unwrap();
+        assert_eq!(e.bonus(&w), 20); // flat beyond the last point
+        w.vassals
+            .get_mut(&VassalId("arden".into()))
+            .unwrap()
+            .strength = Fx::from_int(10);
+        assert_eq!(e.bonus(&w), 6); // mar 1.6: 20 * 0.6 / 2
+        w.flags.insert("plague".into());
+        assert_eq!(e.bonus(&w), 8);
+        e.vassal_weight.clear();
+        assert_eq!(e.bonus(&w), 2);
+        // No vassal left: only the flat bonus.
+        e.vassal_weight = vec![(Fx(0), Fx::from_int(50))];
+        for p in w.provinces.values_mut() {
+            if matches!(p.holder, Holder::Vassal(_)) {
+                p.holder = Holder::Crown;
+            }
+        }
+        assert_eq!(e.bonus(&w), 2);
+    }
+
+    #[test]
     fn secede() {
         let (data, mut w) = world();
         let mut queue = Vec::new();
@@ -1010,6 +1073,8 @@ mod tests {
         assert!(!w.vassals.contains_key(&VassalId("weir".into())));
         let n = &w.neighbours[&weir];
         assert_eq!((n.name.as_str(), n.strength), ("Вейр", Fx::from_int(40)));
+        // Two provinces of a house of strength 20: it recovers toward 20 per province held.
+        assert_eq!(n.per_province, Fx::from_int(20));
         assert_eq!(
             (n.relation, &n.stance),
             (data.sim.secession_relation, &Stance::Defend)

@@ -108,6 +108,11 @@ pub struct Neighbour {
     pub relation: Fx,
     pub strength: Fx,
     pub stance: Stance,
+    /// Strength per province held: `strength` recovers toward this times the provinces the
+    /// state holds now (`neighbour_ai.recover`). Set by `World::from_preset` (start strength
+    /// over start provinces) and by `Effect::Secede`; 0 means no recovery.
+    #[serde(default)]
+    pub per_province: Fx,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -153,6 +158,10 @@ pub struct World {
     /// The id `add_heir` gives next.
     #[serde(default)]
     pub next_heir_id: u32,
+    /// Heirs with an id from this on are the reigning ruler's children; older ones are the
+    /// collateral line (his brothers and sisters and theirs) and stand after them in `heirs`.
+    #[serde(default)]
+    pub line_from: u32,
     /// What the player's decisions touched, for the causes of chronicle entries.
     /// Weights decay yearly by `Data.sim.decay`.
     #[serde(default)]
@@ -206,10 +215,16 @@ impl World {
             crown_modifiers: BTreeMap::new(),
             war: None,
             next_heir_id: 0,
+            line_from: 0,
             marks: BTreeMap::new(),
         };
         for h in std::mem::take(&mut world.heirs) {
             world.add_heir(h);
+        }
+        for n in world.neighbours.values_mut() {
+            let holder = Holder::Foreign(n.id.clone());
+            let held = world.provinces.values().filter(|p| p.holder == holder);
+            n.per_province = n.strength / Fx::from_int(held.count().max(1) as i64);
         }
         world.recompute_loyalty(data);
         world.recompute_crown_power(data);
@@ -221,11 +236,13 @@ impl World {
         world
     }
 
-    /// Appends the heir under the next free id.
+    /// Adds the heir under the next free id, after the ruler's children and before the
+    /// collateral line (`line_from`).
     pub fn add_heir(&mut self, mut heir: Heir) {
         heir.id = self.next_heir_id;
         self.next_heir_id += 1;
-        self.heirs.push(heir);
+        let at = self.heirs.iter().position(|h| h.id < self.line_from);
+        self.heirs.insert(at.unwrap_or(self.heirs.len()), heir);
     }
 
     /// Index in `heirs` of the heir with this id.
@@ -249,6 +266,21 @@ impl World {
             Holder::Foreign(n) if q.holder != p.holder => Some(n),
             _ => None,
         })
+    }
+
+    /// For a vassal's province: the vassal's strength times the number of his provinces over
+    /// the crown power here (at least 0.001). 1 means the vassal matches the crown on his land.
+    pub fn vassal_ratio(&self, p: &Province) -> Option<Fx> {
+        let Holder::Vassal(v) = &p.holder else {
+            return None;
+        };
+        let strength = self.vassals.get(v)?.strength;
+        let held = self
+            .provinces
+            .values()
+            .filter(|q| q.holder == p.holder)
+            .count();
+        Some(strength * Fx::from_int(held as i64) / p.crown_power.max(Fx(1)))
     }
 
     /// The own province on the border with `n` with the weakest crown power, smallest id

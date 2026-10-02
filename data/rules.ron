@@ -216,10 +216,11 @@
                 "pious": {"loyalty_church": 1.2},
             },
         ),
+        // (title, text) of the entries the simulation makes itself.
         texts: (
-            crowned: "На престол взошёл {ruler}.",
-            province_lost: "Земля {province} потеряна, ею владеет {neighbour}.",
-            province_gained: "Земля {province} отошла к короне. Прежний владелец: {neighbour}.",
+            crowned: ("Новый государь", "На престол взошёл {ruler}."),
+            province_lost: ("Потеря земли", "Земля {province} потеряна, ею владеет {neighbour}."),
+            province_gained: ("Земля возвращена", "Земля {province} отошла к короне. Прежний владелец: {neighbour}."),
         ),
     ),
 )

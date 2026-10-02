@@ -607,7 +607,7 @@ fn heirs_year(d: &Data, w: &mut World, rng: &mut Rng) {
     };
     let chance = by_age(&r.birth, w.ruler.age) * factor;
     if rng.range(0, Fx::from_int(100).0) < chance.0 {
-        w.add_heir(d.new_heir.clone());
+        w.add_heir(d.newborn(w.next_heir_id));
     }
 }
 

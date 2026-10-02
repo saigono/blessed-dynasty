@@ -28,9 +28,11 @@ pub struct ChronicleEntry {
     pub tick: Tick,
     /// The event behind the entry; None for a new ruler and a province lost or gained.
     pub event: Option<String>,
-    /// With the hint (`data/hints.ron`) of the main cause appended as a sentence, if that
-    /// cause weighs at least `sim.hint_weight`.
+    pub title: String,
     pub text: String,
+    /// The hint (`data/hints.ron`) of the main cause as a sentence, if that cause weighs at
+    /// least `sim.hint_weight`.
+    pub hint: Option<String>,
     pub importance: u32,
     /// The player's decisions behind the entry, one per decision, heaviest first.
     pub causes: Vec<CauseTag>,
@@ -135,7 +137,7 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
                     let idx = auto.choose(&mut g, &v.choices);
                     g.resolve(idx, false).expect("a listed choice");
                     if v.importance >= s.threshold {
-                        let e = entry(&g, v.text, v.importance, causes);
+                        let e = entry(&g, (v.title, v.text), v.importance, causes);
                         c.entries.push(ChronicleEntry {
                             event: Some(v.event_id),
                             ..e
@@ -210,12 +212,14 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     if ruler.age < d.sim.regency_age {
         w.flags.insert(d.sim.regency_flag.clone());
     }
-    let text = d.sim.texts.crowned.replace("{ruler}", &ruler.name);
+    let (title, text) = &d.sim.texts.crowned;
+    let fill = |s: &String| s.replace("{ruler}", &ruler.name);
+    let told = (fill(title), fill(text));
     c.rulers.push(record(&ruler));
     w.ruler = ruler;
     (g.ended, g.reported) = (None, false);
     let causes = causes(&g.world, [MarkKey::Heir(heir.id)].into());
-    c.entries.push(entry(g, text, g.data.sim.notable, causes));
+    c.entries.push(entry(g, told, g.data.sim.notable, causes));
     true
 }
 
@@ -253,38 +257,44 @@ fn province_entries(g: &Game, holders: &[Holder], c: &mut Chronicle) {
     let t = &g.data.sim.texts;
     let w = &g.world;
     for (p, was) in w.provinces.values().zip(holders) {
-        let (text, foreign) = match (was, &p.holder) {
+        let ((title, text), foreign) = match (was, &p.holder) {
             (Holder::Foreign(_), Holder::Foreign(_)) => continue,
             (_, Holder::Foreign(n)) => (&t.province_lost, n),
             (Holder::Foreign(n), _) => (&t.province_gained, n),
             _ => continue,
         };
         let neighbour = w.neighbours.get(foreign).map_or("", |n| &n.name);
-        let text = text
-            .replace("{province}", &p.name)
-            .replace("{neighbour}", neighbour);
+        let fill = |s: &String| {
+            s.replace("{province}", &p.name)
+                .replace("{neighbour}", neighbour)
+        };
         let causes = causes(w, [MarkKey::Province(p.id.clone())].into());
-        c.entries.push(entry(g, text, g.data.sim.notable, causes));
+        let told = (fill(title), fill(text));
+        c.entries.push(entry(g, told, g.data.sim.notable, causes));
     }
 }
 
-fn entry(g: &Game, text: String, importance: u32, causes: Vec<CauseTag>) -> ChronicleEntry {
+fn entry(
+    g: &Game,
+    (title, text): (String, String),
+    importance: u32,
+    causes: Vec<CauseTag>,
+) -> ChronicleEntry {
     let main = causes
         .first()
         .filter(|c| c.weight >= g.data.sim.hint_weight);
-    let hint = main.and_then(|c| g.data.hints.get(&c.cause_tag));
-    let text = match hint {
-        Some(h) => {
-            let mut chars = h.chars();
-            let first = chars.next().into_iter().flat_map(char::to_uppercase);
-            format!("{text} {}.", first.chain(chars).collect::<String>())
-        }
-        None => text,
-    };
+    // Hints are lowercase clauses; the entry tells one as a sentence of its own.
+    let hint = main.and_then(|c| g.data.hints.get(&c.cause_tag)).map(|h| {
+        let mut chars = h.chars();
+        let first = chars.next().into_iter().flat_map(char::to_uppercase);
+        format!("{}.", first.chain(chars).collect::<String>())
+    });
     ChronicleEntry {
         tick: g.world.tick,
         event: None,
+        title,
         text,
+        hint,
         importance,
         causes,
         snapshot: g.world.snapshot(),

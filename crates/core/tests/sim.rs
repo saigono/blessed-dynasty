@@ -104,8 +104,11 @@ fn script_a(seed: u64) -> (Game, ReignEnd) {
     })
 }
 
-fn texts(c: &Chronicle) -> Vec<&str> {
-    c.entries.iter().map(|e| e.text.as_str()).collect()
+/// Title, text and hint of every entry.
+fn texts(c: &Chronicle) -> Vec<(&str, &str, Option<&str>)> {
+    let told = c.entries.iter();
+    told.map(|e| (e.title.as_str(), e.text.as_str(), e.hint.as_deref()))
+        .collect()
 }
 
 /// Pinned: changes to rules, content or the engine move it on purpose, then it is re-pinned.
@@ -113,17 +116,36 @@ fn texts(c: &Chronicle) -> Vec<&str> {
 fn golden_seed_42_script_a() {
     let (g, end) = script_a(42);
     let c = sim::run(end, &g.data, g.rng.clone());
-    assert_eq!((c.years, &c.fall), (179, &FallReason::NoHeir));
+    assert_eq!((c.years, &c.fall), (164, &FallReason::NoHeir));
+    let hint = |h: &'static str| Some(h);
     assert_eq!(
         texts(&c)[..5],
         [
-            "На престол взошёл Ростислав. Наследника основателя растил старый рыцарь.",
-            "Младенец: пора подумать о браке. Соседние дворы присылают сватов. \
-             Наследника наказали при всём дворе ещё при основателе.",
-            "Третий месяц ни капли дождя. Колодцы пересохли, скот падает.",
-            "Послы Нордмарк требуют дани и грозят мечом, если Ростислав откажет. \
-             Земля, отнятая основателем у соседа, так и не забыла прежних хозяев.",
-            "Младенец подрастает. При дворе спорят, кому доверить воспитание.",
+            (
+                "Новый государь",
+                "На престол взошёл Агнесса.",
+                hint("Наследника основателя растил старый рыцарь."),
+            ),
+            (
+                "Наводнение",
+                "Весенний разлив снёс мосты и мельницы в Столица. Поля под водой.",
+                hint("Основатель диктовал свою волю собору знати."),
+            ),
+            (
+                "Ересь",
+                "Бродячие проповедники учат, что церковь продалась и что земля принадлежит пахарю.",
+                None,
+            ),
+            (
+                "Секта растёт",
+                "Ересь пустила корни: в иных деревнях священников гонят камнями.",
+                None,
+            ),
+            (
+                "Ультиматум от Нордмарк",
+                "Послы Нордмарк требуют дани и грозят мечом, если Агнесса откажет.",
+                hint("Земля, отнятая основателем у соседа, так и не забыла прежних хозяев."),
+            ),
         ]
     );
     // The same seed and decisions give the same chronicle.
@@ -462,22 +484,31 @@ fn lost_and_regained_provinces_are_told_with_the_hint_of_their_cause() {
     .unwrap();
     data.sim.max_years = 6;
     let c = sim::run(end_now(&g), &data, Rng::from_seed(1));
-    let told: Vec<_> = c
-        .entries
-        .iter()
-        .map(|e| (e.tick.0, e.text.as_str()))
+    let told: Vec<_> = (c.entries.iter())
+        .map(|e| {
+            (
+                e.tick.0,
+                e.title.as_str(),
+                e.text.as_str(),
+                e.hint.as_deref(),
+            )
+        })
         .collect();
-    let hint = "Дороги, проложенные основателем, связали край со столицей.";
+    let hint = Some("Дороги, проложенные основателем, связали край со столицей.");
     assert_eq!(
         told[1..],
         [
             (
                 3,
-                &*format!("Земля Берг потеряна, ею владеет Нордмарк. {hint}")
+                "Потеря земли",
+                "Земля Берг потеряна, ею владеет Нордмарк.",
+                hint
             ),
             (
                 5,
-                &*format!("Земля Берг отошла к короне. Прежний владелец: Нордмарк. {hint}")
+                "Земля возвращена",
+                "Земля Берг отошла к короне. Прежний владелец: Нордмарк.",
+                hint
             ),
         ]
     );
@@ -490,10 +521,7 @@ fn lost_and_regained_provinces_are_told_with_the_hint_of_their_cause() {
     // A faded cause gives no hint.
     data.sim.hint_weight = Fx::from_int(2);
     let c = sim::run(end_now(&g), &data, Rng::from_seed(1));
-    assert_eq!(
-        c.entries[1].text,
-        "Земля Берг потеряна, ею владеет Нордмарк."
-    );
+    assert_eq!(c.entries[1].hint, None);
 }
 
 fn choices(text: &str) -> Vec<bd_core::rules::Choice> {

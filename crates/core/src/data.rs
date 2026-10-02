@@ -21,7 +21,7 @@ pub struct Data {
     pub drift: Drift,
     /// Weight of "nothing happens" in the random event pick.
     pub quiet_weight: u32,
-    /// What `HeirOp::Add` pushes.
+    /// What `HeirOp::Add` and a birth push, named by `Data::newborn`.
     pub new_heir: Heir,
     pub death: Death,
     pub abdication: Abdication,
@@ -131,6 +131,19 @@ impl Data {
         }
         self.actions.extend(actions);
         Ok(())
+    }
+
+    /// `new_heir` under the name `names.heirs[id % len]`, or its own name without a pool.
+    pub fn newborn(&self, id: u32) -> Heir {
+        let pool = &self.names.heirs;
+        let name = match pool.is_empty() {
+            true => self.new_heir.name.clone(),
+            false => pool[id as usize % pool.len()].clone(),
+        };
+        Heir {
+            name,
+            ..self.new_heir.clone()
+        }
     }
 
     /// Sets the name pools (`data/names.ron`). Names are unique within a pool.
@@ -387,12 +400,13 @@ pub struct AutoRules {
     pub traits: BTreeMap<String, BTreeMap<String, Fx>>,
 }
 
-/// Chronicle entries made by the simulation itself; `{ruler}`, `{province}`, `{neighbour}`.
+/// `(title, text)` of the chronicle entries made by the simulation itself; `{ruler}`,
+/// `{province}`, `{neighbour}`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct SimTexts {
-    pub crowned: String,
-    pub province_lost: String,
-    pub province_gained: String,
+    pub crowned: (String, String),
+    pub province_lost: (String, String),
+    pub province_gained: (String, String),
 }
 
 #[derive(Debug)]
@@ -566,6 +580,17 @@ mod tests {
             Err(DataError::Invalid(_))
         ));
         assert_eq!(data.events.len(), 38);
+    }
+
+    #[test]
+    fn newborns_are_named_by_id() {
+        let mut data = load(RULES).unwrap();
+        assert_eq!(data.newborn(3).name, data.new_heir.name); // no pool
+        data.add_names(r#"(rulers: [], heirs: ["Ада", "Бруно"], vassals: [])"#)
+            .unwrap();
+        let names = [0, 1, 2, 3].map(|id| data.newborn(id).name);
+        assert_eq!(names, ["Ада", "Бруно", "Ада", "Бруно"]);
+        assert_eq!(data.newborn(1).ability, data.new_heir.ability);
     }
 
     #[test]

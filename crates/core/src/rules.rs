@@ -264,7 +264,7 @@ pub enum ProvinceField {
 /// Indices into `World.heirs`; out of range is a no-op.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum HeirOp {
-    /// Pushes `Data.new_heir`.
+    /// Pushes `Data::newborn`.
     Add,
     Remove(u32),
     SetStatus(u32, HeirStatus),
@@ -368,7 +368,7 @@ impl Effect {
                     op => op,
                 };
                 match &op {
-                    HeirOp::Add => w.add_heir(ctx.data.new_heir.clone()),
+                    HeirOp::Add => w.add_heir(ctx.data.newborn(w.next_heir_id)),
                     HeirOp::Remove(i) if heir(i) < w.heirs.len() => {
                         w.heirs.remove(heir(i));
                     }

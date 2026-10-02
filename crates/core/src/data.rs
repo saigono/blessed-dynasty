@@ -1,7 +1,8 @@
 use crate::fx::Fx;
+use crate::rng::Rng;
 use crate::rules::{Action, ActionTarget, Event, Predicate};
 use crate::sim::FallReason;
-use crate::state::{AxisId, Heir, Holder, Province, Stance, World};
+use crate::state::{AxisId, Heir, Holder, Province, Sex, Stance, World};
 use crate::time::TimeUnit;
 use crate::war::WarOutcome;
 use serde::Deserialize;
@@ -53,12 +54,15 @@ pub struct Data {
 }
 
 /// Name pools (`data/names.ron`). A vassal house founded by `Effect::Grant` takes the first
-/// name of `vassals` not yet in the world; the name is also its id.
+/// name of `vassals` not yet in the world; the name is also its id. `heirs` names sons,
+/// `daughters` daughters (sons' names when empty).
 #[derive(Debug, Clone, PartialEq, Deserialize, Default)]
 pub struct Names {
     pub rulers: Vec<String>,
     pub heirs: Vec<String>,
     pub vassals: Vec<String>,
+    #[serde(default)]
+    pub daughters: Vec<String>,
 }
 
 /// Concurrent actions: the largest `slots` whose `threshold` the axis has reached. The
@@ -177,13 +181,23 @@ impl Data {
 
     /// `new_heir` under the name `names.heirs[id % len]`, or its own name without a pool.
     pub fn newborn(&self, id: u32) -> Heir {
-        let pool = &self.names.heirs;
+        self.newborn_of(id, self.new_heir.sex)
+    }
+
+    /// `newborn` of this sex, a daughter named from `names.daughters`.
+    pub fn newborn_of(&self, id: u32, sex: Sex) -> Heir {
+        let n = &self.names;
+        let pool = match sex {
+            Sex::Female if !n.daughters.is_empty() => &n.daughters,
+            _ => &n.heirs,
+        };
         let name = match pool.is_empty() {
             true => self.new_heir.name.clone(),
             false => pool[id as usize % pool.len()].clone(),
         };
         Heir {
             name,
+            sex,
             ..self.new_heir.clone()
         }
     }
@@ -191,7 +205,12 @@ impl Data {
     /// Sets the name pools (`data/names.ron`). Names are unique within a pool.
     pub fn add_names(&mut self, text: &str) -> Result<(), DataError> {
         let names: Names = parse(text)?;
-        for pool in [&names.rulers, &names.heirs, &names.vassals] {
+        for pool in [
+            &names.rulers,
+            &names.heirs,
+            &names.vassals,
+            &names.daughters,
+        ] {
             unique(pool.iter().map(|n| n.as_str()))?;
         }
         self.names = names;
@@ -270,12 +289,27 @@ pub struct HeirRules {
     /// Yearly death risk of every heir in per mille: the row of the largest
     /// `age_from <= heir age`. The dead leave the list.
     pub death: Vec<(u32, Fx)>,
+    /// Chance in percent that a child is a son.
+    #[serde(default = "half")]
+    pub male_percent: Fx,
+}
+
+fn half() -> Fx {
+    Fx::from_int(50)
 }
 
 impl HeirRules {
     /// The succession law in force: the first whose flag is set.
     pub fn law(&self, w: &World) -> Option<&Law> {
         self.laws.iter().find(|l| w.flags.contains(&l.flag))
+    }
+
+    /// The sex of a newborn, a roll against `male_percent`.
+    pub fn sex(&self, rng: &mut Rng) -> Sex {
+        match rng.range(0, Fx::from_int(100).0) < self.male_percent.0 {
+            true => Sex::Male,
+            false => Sex::Female,
+        }
     }
 
     /// Yearly birth chance in percent of a ruler of this age (`birth`, `unmarried`).
@@ -290,11 +324,41 @@ impl HeirRules {
     }
 }
 
-/// Claim target: `eldest` for heir 0, `others` for the rest, plus `ability * ability_k`.
-/// A new ruler's claim below `crisis_claim` contests the succession.
+/// Who succeeds under a law, see `sim::successor`. The ruler's children are the heirs from
+/// `World.line_from` on, the collateral line the older ones; the list keeps birth order
+/// within each.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+pub enum SuccessionRule {
+    /// The first of the list: the eldest child, son or daughter, then the collateral line.
+    #[default]
+    Absolute,
+    /// The eldest son; a daughter only without sons, the ruler's before the collateral line.
+    Male,
+    /// Men only, the ruler's sons first; without a man the dynasty ends.
+    Salic,
+    /// Seniority: the eldest man of the collateral line (the ruler's brothers), then the
+    /// ruler's children by age; women after all men.
+    Seniority,
+    /// The ablest, the eldest on a tie.
+    Elective,
+    /// As `Male`; at the coronation every other son of the late ruler gets a crown province
+    /// as his own house (`Law.house`).
+    Partition,
+}
+
+/// Claim target: `eldest` for the heir the rule puts first, `others` for the rest, plus
+/// `ability * ability_k`. A new ruler's claim below `crisis_claim` contests the succession.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Law {
     pub flag: String,
+    #[serde(default)]
+    pub rule: SuccessionRule,
+    /// Axis shifts at every coronation under this law.
+    #[serde(default)]
+    pub coronation: Vec<(AxisId, Fx)>,
+    /// `Partition`: the loyalty and strength of a son's new house.
+    #[serde(default)]
+    pub house: (Fx, Fx),
     pub eldest: Fx,
     pub others: Fx,
     pub ability_k: Fx,
@@ -592,6 +656,10 @@ pub struct SimTexts {
     /// Display text per fall reason.
     #[serde(default)]
     pub falls: Vec<(FallReason, String)>,
+    /// The lands a partition gave the late ruler's sons (`SuccessionRule::Partition`);
+    /// `{lands}`: «Сын — земля, …».
+    #[serde(default)]
+    pub partition: (String, String),
 }
 
 #[derive(Debug)]
@@ -635,6 +703,12 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
     let war = data.war.bonus.iter().map(|(a, _)| a);
     let c = &data.crown_capacity;
     let capacity = c.per_axis.iter().chain(&c.penalty).map(|(a, _)| a);
+    let laws = data
+        .heirs
+        .laws
+        .iter()
+        .flat_map(|l| &l.coronation)
+        .map(|(a, _)| a);
     for a in [
         &data.action_slots.axis,
         &data.economy.treasury,
@@ -644,6 +718,7 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
     .chain(flows)
     .chain(war)
     .chain(capacity)
+    .chain(laws)
     {
         if !is_axis(a) || (data.is_derived(a) && c.penalty.iter().any(|(p, _)| p == a)) {
             return Err(DataError::Invalid(format!("unknown axis {}", a.0)));
@@ -771,7 +846,7 @@ mod tests {
         data.add_events(NEIGHBOUR_EVENTS).unwrap();
         data.add_actions(ACTIONS).unwrap();
         assert_eq!(data.events.len(), 38);
-        assert_eq!(data.actions.len(), 15);
+        assert_eq!(data.actions.len(), 18);
         // Ids must be unique across files.
         assert!(matches!(
             data.add_events(EVENTS),

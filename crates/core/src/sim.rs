@@ -1,12 +1,15 @@
 //! The dynasty after the founder: the same `Game` year by year, choices by `AutoChooser`,
 //! until the dynasty falls or `sim.max_years` pass. The result is a `Chronicle`.
 
-use crate::data::Data;
+use crate::data::{Data, SuccessionRule};
 use crate::fx::Fx;
 use crate::game::{ActionId, Game, PendingEvent, ReignEnd, Step};
 use crate::rng::Rng;
 use crate::rules::{Choice, Effect, Event, HeirOp, NewHolder, Predicate, ProvinceField, Target};
-use crate::state::{Axes, CauseTag, HeirStatus, Holder, Kin, MarkKey, ProvinceId, Ruler, World};
+use crate::state::{
+    Axes, CauseTag, HeirStatus, Holder, Kin, MarkKey, ProvinceId, Ruler, Sex, Vassal, VassalId,
+    World,
+};
 use crate::time::Tick;
 use crate::war::WarStage;
 use serde::{Deserialize, Serialize};
@@ -148,7 +151,7 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
                 .values()
                 .map(|p| p.holder.clone())
                 .collect();
-            let first = next_heir(&g.world).map(|i| g.world.heirs[i].clone());
+            let first = successor(&g.world, &g.data).map(|i| g.world.heirs[i].clone());
             let step = g.wait().expect("the reign goes on");
             // Within a tick only the yearly age risk takes an heir; events do on resolve.
             if let Some(h) = first.filter(|h| g.world.heir_index(h.id).is_none()) {
@@ -212,11 +215,10 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
     c
 }
 
-/// The next ruler: the heir with the highest claim (claims follow the succession law), the
-/// eldest on a tie. He keeps his name unless it is the newborn placeholder, then one from
+/// The next ruler: the heir `successor` names. He keeps his name unless it is the newborn placeholder, then one from
 /// `names.rulers`; traits roll by `sim.traits`; health `sim.ruler_health`. None: no heir.
 pub fn succession(w: &World, data: &Data, rng: &mut Rng) -> Option<Ruler> {
-    let heir = &w.heirs[next_heir(w)?];
+    let heir = &w.heirs[successor(w, data)?];
     let pool = &data.names.rulers;
     let name = match heir.name == data.new_heir.name && !pool.is_empty() {
         true => pool[rng.range(0, pool.len() as i64) as usize].clone(),
@@ -240,7 +242,31 @@ pub fn succession(w: &World, data: &Data, rng: &mut Rng) -> Option<Ruler> {
         health: data.sim.ruler_health,
         traits,
         reign_start: w.tick,
+        sex: heir.sex,
     })
+}
+
+/// Who succeeds now by the rule of the law in force (`SuccessionRule`); `next_heir` without
+/// a law. None: nobody may.
+pub fn successor(w: &World, data: &Data) -> Option<usize> {
+    let Some(law) = data.heirs.law(w) else {
+        return next_heir(w);
+    };
+    let h = &w.heirs;
+    let son = |i: &usize| h[*i].sex == Sex::Male;
+    let child = |i: &usize| h[*i].id >= w.line_from;
+    let mut all = 0..h.len();
+    match law.rule {
+        SuccessionRule::Absolute => all.next(),
+        SuccessionRule::Male | SuccessionRule::Partition => {
+            all.min_by_key(|i| (!child(i), !son(i), *i))
+        }
+        SuccessionRule::Salic => all.find(son),
+        SuccessionRule::Seniority => {
+            all.min_by_key(|i| (!son(i), child(i), Reverse(h[*i].age), *i))
+        }
+        SuccessionRule::Elective => all.min_by_key(|i| (Reverse(h[*i].ability), *i)),
+    }
 }
 
 /// Who succeeds now: the index in `heirs` of the highest claim, the eldest on a tie.
@@ -258,7 +284,14 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
         return false;
     };
     let (d, w, rng) = (&g.data, &mut g.world, &mut g.rng);
-    let heir = w.heirs.remove(next_heir(w).expect("succession found one"));
+    let heir = w
+        .heirs
+        .remove(successor(w, d).expect("succession found one"));
+    // The late ruler's other sons, eldest first, for a partition.
+    let sons: Vec<_> = (w.heirs.iter())
+        .filter(|h| h.id >= w.line_from && h.sex == Sex::Male)
+        .map(|h| (h.id, h.name.clone()))
+        .collect();
     let year = w.year();
     if let Some(k) = w.kin.iter_mut().find(|k| k.heir == Some(heir.id)) {
         (k.name, k.crowned) = (ruler.name.clone(), Some(year));
@@ -277,6 +310,14 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     for f in &d.sim.reign_flags {
         w.flags.remove(f);
     }
+    let law = d.heirs.law(w);
+    let lands = match law.filter(|l| l.rule == SuccessionRule::Partition) {
+        Some(l) => partition(w, l.house, &sons),
+        None => vec![],
+    };
+    if !lands.is_empty() {
+        w.recompute_crown_power(d);
+    }
     if ruler.age < d.sim.regency_age {
         w.flags.insert(d.sim.regency_flag.clone());
     }
@@ -288,7 +329,39 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     (g.ended, g.reported) = (None, false);
     let causes = causes(&g.world, [MarkKey::Heir(heir.id)].into());
     c.entries.push(entry(g, told, g.data.sim.notable, causes));
+    if !lands.is_empty() {
+        let (title, text) = &g.data.sim.texts.partition;
+        let told = (title.clone(), text.replace("{lands}", &lands.join(", ")));
+        c.entries.push(entry(g, told, g.data.sim.notable, vec![]));
+    }
     true
+}
+
+/// `SuccessionRule::Partition`: each son, eldest first, gets the crown province farthest from
+/// the capital (the smallest id on a tie) as a house of his name with `(loyalty, strength)`;
+/// the capital stays with the crown. «Сын — земля» for every grant.
+fn partition(w: &mut World, (loyalty, strength): (Fx, Fx), sons: &[(u32, String)]) -> Vec<String> {
+    let mut told = vec![];
+    for (id, name) in sons {
+        let far = (w.provinces.values())
+            .filter(|p| p.holder == Holder::Crown && p.id != w.capital.province)
+            .max_by_key(|p| (p.distance_to_capital, Reverse(&p.id)));
+        let Some(p) = far.map(|p| p.id.clone()) else {
+            break;
+        };
+        let house = VassalId(format!("{name}_{id}"));
+        let v = Vassal {
+            id: house.clone(),
+            name: name.clone(),
+            loyalty,
+            strength,
+        };
+        w.vassals.insert(house.clone(), v);
+        let p = w.provinces.get_mut(&p).expect("found above");
+        p.holder = Holder::Vassal(house);
+        told.push(format!("{name} — {}", p.name));
+    }
+    told
 }
 
 /// The children a new ruler of `age` had before the coronation: a roll of
@@ -305,7 +378,7 @@ fn born_before(d: &Data, w: &mut World, rng: &mut Rng, age: u32) {
         if (0..years).any(|y| rng.range(0, 1000 * Fx::SCALE) < risk(y)) {
             continue;
         }
-        let mut h = d.newborn(w.next_heir_id);
+        let mut h = d.newborn_of(w.next_heir_id, r.sex(rng));
         let grown = r.growth_home * Fx::from_int(years.min(r.adult_age).into());
         (h.age, h.ability) = (years, (h.ability + grown).min(Fx::from_int(100)));
         w.add_heir(h);
@@ -511,7 +584,9 @@ impl AutoChooser {
             if !g.data.action_slots.free(&g.world, &g.data.actions, a) {
                 continue;
             }
-            let score = self.worth(&a.on_complete, &g.world, &g.data) - treasury * a.cost;
+            let years = Fx::from_int(a.duration_years.0.max(1) as i64);
+            let score = self.worth(&a.on_complete, &g.world, &g.data) - treasury * a.cost
+                + self.worth(&a.yearly, &g.world, &g.data) * years;
             for t in 0..targets.len().max(1) {
                 options.push(Some((k, t)));
                 scores.push(score);

@@ -736,6 +736,10 @@ pub struct Action {
     pub min_crown_power: Fx,
     pub target: ActionTarget,
     pub on_complete: Vec<Effect>,
+    /// Applied once a year while the action runs, its last year included, without a target:
+    /// e.g. a faction's resistance to a new law.
+    #[serde(default)]
+    pub yearly: Vec<Effect>,
     pub cause_tag: String,
     /// What the action does, in plain words, for the UI tooltip.
     #[serde(default)]
@@ -759,7 +763,8 @@ pub enum ActionTarget {
 impl Action {
     pub(crate) fn check(&self, data: &Data) -> Result<(), String> {
         self.requires.check(data)?;
-        self.on_complete.iter().try_for_each(|e| e.check(data))
+        let effects = self.on_complete.iter().chain(&self.yearly);
+        effects.into_iter().try_for_each(|e| e.check(data))
     }
 }
 

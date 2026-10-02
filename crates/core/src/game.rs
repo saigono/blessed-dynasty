@@ -5,7 +5,8 @@ use crate::fx::Fx;
 use crate::neighbour::neighbour_tick;
 use crate::rng::Rng;
 use crate::rules::{
-    Action, ActionTarget, Choice, Ctx, Effect, Event, EventTarget, ProvinceField, Target, add_axis,
+    Action, ActionTarget, Choice, Ctx, Effect, Event, EventTarget, HeirOp, ProvinceField, Target,
+    add_axis,
 };
 use crate::state::{
     ActiveAction, CauseTag, HeirStatus, Holder, MarkKey, NeighbourId, Preset, ProvinceId, World,
@@ -264,6 +265,7 @@ impl Game {
         self.passive();
         if (self.world.tick.0).is_multiple_of(self.data.time_unit.ticks_per_year) {
             self.overreach();
+            self.yearly_effects();
         }
         self.complete_actions();
         self.world.recompute_loyalty(&self.data);
@@ -474,6 +476,16 @@ impl Game {
         }
     }
 
+    /// Yearly, the `yearly` effects of every running action, in start order.
+    fn yearly_effects(&mut self) {
+        let defs = (self.world.active_actions.iter())
+            .filter_map(|a| self.data.actions.iter().find(|d| d.id == a.id));
+        let effects: Vec<Effect> = defs.flat_map(|d| d.yearly.clone()).collect();
+        if !effects.is_empty() {
+            self.apply(&effects, None, None);
+        }
+    }
+
     /// Yearly, `Data.crown_capacity`: the crown's provinces beyond its room lose `loyalty`,
     /// and every one of them costs the `penalty` axes. The land stays with the crown.
     fn overreach(&mut self) {
@@ -561,13 +573,19 @@ impl Game {
                     }
                 }
                 Effect::RulerDies(cause) => self.ended = Some(cause.clone()),
+                Effect::HeirOp(HeirOp::Add) => {
+                    let sex = self.data.heirs.sex(&mut self.rng);
+                    let w = &mut self.world;
+                    w.add_heir(self.data.newborn_of(w.next_heir_id, sex));
+                }
                 Effect::Abdicate => {
                     let (a, w) = (&self.data.abdication, &mut self.world);
                     let (axis, min) = &a.institutions;
+                    let first = crate::sim::successor(w, &self.data);
                     let calm = w.axes[axis] > *min
-                        && w.heirs.first().is_some_and(|h| h.ability > a.heir_ability);
+                        && first.is_some_and(|i| w.heirs[i].ability > a.heir_ability);
                     if !calm {
-                        if let Some(h) = w.heirs.first_mut() {
+                        if let Some(h) = first.map(|i| &mut w.heirs[i]) {
                             h.claim = (h.claim - a.claim_drop).max(Fx(0));
                         }
                         w.flags.insert(a.contested_flag.clone());
@@ -702,6 +720,7 @@ fn heirs_year(d: &Data, w: &mut World, rng: &mut Rng) {
     w.bury();
     let pct = |v: Fx| v.clamp(Fx(0), Fx::from_int(100));
     let law = r.law(w);
+    let first = crate::sim::successor(w, d);
     for (i, h) in w.heirs.iter_mut().enumerate() {
         let (growth, claim) = match h.status {
             HeirStatus::Home => (r.growth_home, Fx(0)),
@@ -712,7 +731,7 @@ fn heirs_year(d: &Data, w: &mut World, rng: &mut Rng) {
             h.ability = pct(h.ability + growth);
         }
         if let Some(l) = law {
-            let base = if i == 0 { l.eldest } else { l.others };
+            let base = if Some(i) == first { l.eldest } else { l.others };
             let target = base + h.ability * l.ability_k;
             h.claim = match h.claim < target {
                 true => (h.claim + r.claim_step).min(target),
@@ -723,7 +742,7 @@ fn heirs_year(d: &Data, w: &mut World, rng: &mut Rng) {
     }
     let chance = r.birth_chance(w, w.ruler.age);
     if rng.range(0, Fx::from_int(100).0) < chance.0 {
-        w.add_heir(d.newborn(w.next_heir_id));
+        w.add_heir(d.newborn_of(w.next_heir_id, r.sex(rng)));
     }
 }
 
@@ -926,6 +945,7 @@ mod tests {
             min_crown_power: Fx(0),
             target,
             on_complete,
+            yearly: vec![],
             cause_tag: id.into(),
             description: String::new(),
             bond: String::new(),

@@ -17,8 +17,7 @@ pub struct Preset {
     pub ruler: Ruler,
     pub heirs: Vec<Heir>,
     pub neighbours: Vec<Neighbour>,
-    /// Flags the world starts with: the succession law (`law_primogeniture`, `law_elective`,
-    /// `law_none`), `married`.
+    /// Flags the world starts with: the succession law (a flag of `heirs.laws`), `married`.
     #[serde(default)]
     pub flags: BTreeSet<String>,
     /// The backstory shown before the first move.

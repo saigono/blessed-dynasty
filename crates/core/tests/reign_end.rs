@@ -5,7 +5,7 @@ use bd_core::fx::Fx;
 use bd_core::game::{DecisionKind, Game, GameError, PendingEvent, Step};
 use bd_core::rng::Rng;
 use bd_core::rules::{Choice, Ctx, Effect, Event, EventTarget, HeirOp, Predicate, Sign, Target};
-use bd_core::state::{AxisId, Heir, HeirStatus, NeighbourId, Preset, World};
+use bd_core::state::{AxisId, Heir, HeirStatus, NeighbourId, Preset, Sex, World};
 use bd_core::time::{Tick, Years};
 
 const RULES: &str = include_str!("../../../data/rules.ron");
@@ -55,6 +55,8 @@ fn two_heirs(w: &mut World) {
         ability: Fx::from_int(55),
         claim: Fx::from_int(40),
         status: HeirStatus::Home,
+        sex: Sex::Female,
+        married: false,
     });
 }
 
@@ -159,6 +161,7 @@ fn action_can_end_the_reign() {
     a.on_complete = vec![Effect::RulerDies("duel".into())];
     a.requires = Predicate::All(vec![]);
     a.min_crown_power = Fx(0);
+    a.duration_years = bd_core::time::Years(2);
     data.actions = vec![a.clone()];
     let mut g = game(data, 1);
     g.start_action(&a.id, None).unwrap();
@@ -284,10 +287,23 @@ fn claims_follow_the_law() {
         claims("law_primogeniture", 30, false),
         (Fx::from_int(75), Fx::from_int(35))
     );
-    assert_eq!(
-        claims("law_none", 30, false),
-        (Fx::from_int(50), Fx::from_int(50))
-    );
+    // Stage 16: the heir the rule puts first takes the eldest's target. Under the male law a
+    // younger son goes before his elder sister.
+    let son_first = |years: u32| {
+        let mut data = bare();
+        data.heirs.birth = vec![];
+        let mut g = game(data, 1);
+        two_heirs(&mut g.world);
+        g.world.heirs[0].sex = Sex::Female;
+        g.world.heirs[1].sex = Sex::Male;
+        g.world.flags.retain(|f| !f.starts_with("law_"));
+        g.world.flags.insert("law_male".into());
+        for _ in 0..years {
+            g.wait().unwrap();
+        }
+        (g.world.heirs[0].claim, g.world.heirs[1].claim)
+    };
+    assert_eq!(son_first(30), (Fx::from_int(35), Fx::from_int(75)));
     // Elective: toward ability * 0.9.
     let (a, b) = claims("law_elective", 1, false);
     assert_eq!((a, b), (Fx::from_int(68), Fx::from_int(42)));
@@ -312,7 +328,7 @@ fn law_actions_switch_the_flag() {
         .map(|(id, _)| id)
         .collect();
     assert!(!ids.contains(&"change_succession_law_primogeniture".to_string()));
-    g.start_action("change_succession_law_none", None).unwrap();
+    g.start_action("change_succession_law_male", None).unwrap();
     g.wait().unwrap();
     g.wait().unwrap();
     let laws: Vec<_> = g
@@ -321,7 +337,7 @@ fn law_actions_switch_the_flag() {
         .iter()
         .filter(|f| f.starts_with("law_"))
         .collect();
-    assert_eq!(laws, ["law_none"]);
+    assert_eq!(laws, ["law_male"]);
 }
 
 fn births(married: bool) -> usize {

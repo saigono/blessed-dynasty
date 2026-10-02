@@ -13,7 +13,7 @@ use bd_core::rules::{Action, ActionTarget, Effect, ProvinceField, Target};
 use bd_core::score::{self, Score, ScoreRules};
 use bd_core::sim::{self, Chronicle};
 use bd_core::state::{
-    AxisId, Change, HeirStatus, Holder, NeighbourId, Preset, ProvinceId, Stance, World,
+    AxisId, Change, HeirStatus, Holder, NeighbourId, Preset, ProvinceId, Sex, Stance, World,
 };
 use bd_core::war::War;
 use eframe::egui::{self, Button, Grid, ProgressBar, RichText, Ui};
@@ -280,10 +280,12 @@ impl App {
             }
         };
         self.step(res);
-        if closes_year && matches!(self.screen, Screen::Reign) {
+        // A year waiting on its event is not recorded yet: its money line comes with it.
+        let closed = closes_year && matches!(self.screen, Screen::Reign);
+        if closed {
             self.close_year();
         }
-        if closes_year || spends {
+        if closed || spends {
             self.money_line();
         }
     }
@@ -907,7 +909,7 @@ fn side(ui: &mut Ui, g: &Game) {
         ui.label(RichText::new(hint).small().color(FG2));
     }
     heading(ui, "Наследники");
-    let first = bd_core::sim::next_heir(w);
+    let first = bd_core::sim::successor(w, d);
     match d.heirs.law(w) {
         Some(l) => {
             let law = ui.label(format!("Закон: {} (?)", l.name));
@@ -937,7 +939,11 @@ fn side(ui: &mut Ui, g: &Game) {
                     RichText::new(format!("заложник: {n}")).color(RUBRIC)
                 }
             };
-            ui.label(format!("{}, {}", h.name, h.age));
+            let sex = match h.sex {
+                Sex::Male => "♂",
+                Sex::Female => "♀",
+            };
+            ui.label(format!("{sex} {}, {}", h.name, h.age));
             ui.small(status);
             ui.small(format!(
                 "спос. {} · прет. {}",
@@ -1637,7 +1643,7 @@ mod tests {
         six_years(&mut h);
         let line = |s: &str, up| (s.to_string(), up);
         // Every year opens with the treasury, notable or not.
-        let money = line("Казна: +28 (доход +33, содержание -4, траты 0)", Some(true));
+        let money = line("Казна: +28 (доход +33, содержание -5, траты 0)", Some(true));
         let want = vec![
             (
                 "1188",
@@ -1653,35 +1659,47 @@ mod tests {
             (
                 "1189",
                 vec![
-                    line("Казна: +28 (доход +33, содержание -5, траты 0)", Some(true)),
-                    line("Рождение: Агнесса", Some(true)),
+                    line(
+                        "Казна: -8 (доход +32, содержание -5, траты -35)",
+                        Some(false),
+                    ),
+                    line("«Неурожай»: Раздать зерно из казны", None),
+                    line("Рождение: Генрих", Some(true)),
                     line("Завершено: Проложить дорогу (Берг)", None),
                 ],
             ),
             (
                 "1190",
-                vec![money.clone(), line("«Набег: Арден»: Выслать войско", None)],
+                vec![money.clone(), line("Рождение: Освальд", Some(true))],
             ),
             (
                 "1191",
                 vec![
                     money.clone(),
-                    line("«Паломники»: Взять паломников под охрану короны", None),
+                    line("«Знать требует»: Подтвердить вольности", None),
+                    line("Бюрократия -5", Some(false)),
+                    line("Знать +11", Some(true)),
                 ],
             ),
             (
                 "1192",
                 vec![
-                    money.clone(),
-                    line("«Заговор»: Схватить всех подозреваемых", None),
-                    line("Знать -7", Some(false)),
+                    line(
+                        "Казна: +43 (доход +33, содержание -5, траты +15)",
+                        Some(true),
+                    ),
+                    line("«Пограничная стычка»: Потребовать виру", None),
+                    line("Рождение: Рейнхольд", Some(true)),
                 ],
             ),
             (
                 "1193",
                 vec![
                     money,
-                    line("«Гильдии просят хартию»: Даровать хартию", None),
+                    line("«Церковь требует»: Платить десятину", None),
+                    line("Доход -2", Some(false)),
+                    line("Церковь +9", Some(true)),
+                    line("Смерть наследника: Рейнхольд", Some(false)),
                 ],
             ),
         ];
@@ -1698,7 +1716,7 @@ mod tests {
         (d.quiet_weight, d.heirs.birth) = (1_000_000, vec![]);
         h.app.apply(Cmd::Wait);
         let quiet = vec![line(
-            "Казна: +30 (доход +35, содержание -4, траты 0)",
+            "Казна: +26 (доход +31, содержание -5, траты 0)",
             Some(true),
         )];
         assert_eq!(h.app.journal.last().unwrap(), &("1194".to_string(), quiet));
@@ -1834,7 +1852,7 @@ mod tests {
                 .any(|t| t.starts_with("Брак правящего дома"))
         );
 
-        let law = hover(&mut h, "Закон: Первородство (?)");
+        let law = hover(&mut h, "Закон: Абсолютное первородство (?)");
         let text = h.game().data.heirs.laws[0].text();
         assert!(law.contains(&text) && text.contains("ниже 70"), "{law:?}");
         assert!(texts_of(&mut h).contains(&"Первый в очереди: Конрад".to_string()));
@@ -1906,13 +1924,16 @@ mod tests {
         for t in [
             "♔ Ульрих (р. 1155), правил с 1187",
             "Конрад (1181–1188)",
-            "Агнесса (р. 1189)",
+            "Генрих (р. 1189)",
         ] {
             assert!(shown.contains(&t.to_string()), "{t}: {shown:?}");
         }
         // Children under their parent, deeper.
         let kin = &h.game().world.kin;
-        assert_eq!(chronicle::family(kin), [(0, 0), (1, 1), (2, 1)]);
+        assert_eq!(
+            chronicle::family(kin),
+            [(0, 0), (1, 1), (2, 1), (3, 1), (4, 1)]
+        );
         h.click_label("Закрыть");
         assert!(!h.app.tree);
 

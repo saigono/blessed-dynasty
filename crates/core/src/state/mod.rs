@@ -78,6 +78,16 @@ pub struct Ruler {
     pub health: Fx,
     pub traits: BTreeSet<String>,
     pub reign_start: Tick,
+    #[serde(default)]
+    pub sex: Sex,
+}
+
+/// Rolled at birth (`HeirRules::sex`); a preset sets it.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum Sex {
+    #[default]
+    Male,
+    Female,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -91,6 +101,11 @@ pub struct Heir {
     pub ability: Fx,
     pub claim: Fx,
     pub status: HeirStatus,
+    #[serde(default)]
+    pub sex: Sex,
+    /// Wed by a marriage (`Effect::Marry`) or the `heir_marriage` event: never twice.
+    #[serde(default)]
+    pub married: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

@@ -331,8 +331,13 @@ mod tests {
         let factions = [("loyalty_nobles", 80), ("loyalty_church", 60), ("loyalty_people", 40)];
         set(&mut w, &d, &factions);
         set(&mut w, &d, &[("legitimacy", 20), ("shocks", -4)]);
-        // 50 + 0.6 * (65 - 50) + 0.4 * (20 - 50) - 4.
+        // 50 + 0.6 * (65 - 50) + 0.4 * (20 - 50) - 4, no heresy at faith 65.
         assert_eq!(w.axes[&ax("stability")], Fx::from_int(43));
+        // Heresy by the curve over faith: 12 at 30; at 37, 12 - 7 * (7 / 15) = 8.738.
+        set(&mut w, &d, &[("faith", 30)]);
+        assert_eq!(w.axes[&ax("stability")], Fx::from_int(31));
+        set(&mut w, &d, &[("faith", 37)]);
+        assert_eq!(w.axes[&ax("stability")], Fx(43_000 - 8_738));
         set(&mut w, &d, &[("shocks", -100)]);
         assert_eq!(w.axes[&ax("stability")], Fx(0)); // clamped
     }
@@ -356,6 +361,18 @@ mod tests {
         // Never a step of its own: stability has none.
         let a = d.axes.iter().find(|a| a.id.0 == "stability").unwrap();
         assert_eq!(step(&d, a), Fx(0));
+    }
+
+    #[test]
+    fn loops_are_cycles_of_known_edges() {
+        let with = |l: &str| {
+            let rules = RULES.replacen(r#"("П1 Гнёт", ["e2", "e3"])"#, l, 1);
+            crate::data::load(&rules)
+        };
+        assert!(with(r#"("x", ["e3", "e2"])"#).is_ok());
+        assert!(with(r#"("x", ["e2", "e1"])"#).is_err()); // not a cycle
+        assert!(with(r#"("x", ["e2", "nothing"])"#).is_err());
+        assert!(with(r#"("x", [])"#).is_err());
     }
 
     #[test]

@@ -328,3 +328,67 @@ fn reign_ends_falls_and_axes_have_display_texts() {
         assert!(texts.falls.iter().any(|(r, _)| *r == f), "{f:?}");
     }
 }
+
+/// Stage 18: the loops a law could push into a runaway. A loop's gain is the product of its
+/// edges' k; an edge with a curve is flat beyond its points, so outside the curves it adds 0.
+/// Loops whose gain there is 1.5 or more, with it.
+fn runaway_loops(data: &Data) -> Vec<(String, bd_core::fx::Fx)> {
+    use bd_core::fx::Fx;
+    let edge = |id: &String| data.influences.iter().find(|e| e.id == *id).unwrap();
+    let gain = |e: &bd_core::graph::Influence| match e.curve.is_empty() {
+        true => e.k,
+        false => Fx(0),
+    };
+    (data.loops.iter())
+        .map(|(name, ids)| (name.clone(), (ids.iter().map(edge)).fold(Fx::from_int(1), |g, e| g * gain(e))))
+        .filter(|(_, g)| *g >= Fx(1_500))
+        .collect()
+}
+
+#[test]
+fn no_loop_runs_away_outside_its_curves() {
+    let data = load_all();
+    assert_eq!(data.loops.len(), 5);
+    assert!(runaway_loops(&data).is_empty(), "{:?}", runaway_loops(&data));
+    // П1 with e2 straight and steep: 1.875 * 0.8 = 1.5.
+    let mut steep = data.clone();
+    let e2 = steep.influences.iter_mut().find(|e| e.id == "e2").unwrap();
+    (e2.curve, e2.k) = (vec![], bd_core::fx::Fx(-1_875));
+    assert_eq!(runaway_loops(&steep).len(), 1);
+}
+
+/// Stage 18: stability is derived and an effect writing it goes to the shocks. Stage 20 moves
+/// these writes to the nodes behind them; until then, no new ones.
+#[test]
+fn direct_writes_to_stability_do_not_grow() {
+    fn walk<'a>(es: &'a [Effect], out: &mut Vec<&'a Effect>) {
+        for e in es {
+            match e {
+                Effect::Chance(c) => {
+                    walk(&c.then, out);
+                    walk(&c.otherwise, out);
+                }
+                Effect::IfFriendly(es) => walk(es, out),
+                Effect::Marry { then, otherwise } => {
+                    walk(then, out);
+                    walk(otherwise, out);
+                }
+                _ => out.push(e),
+            }
+        }
+    }
+    let data = load_all();
+    let stability = &data.stability.as_ref().expect("derived").axis;
+    let mut writes: Vec<String> = vec![];
+    let events = data.events.iter().chain(&data.sim_events);
+    let lists = (events.flat_map(|e| e.choices.iter().map(move |c| (&e.id, &c.effects))))
+        .chain(data.actions.iter().map(|a| (&a.id, &a.on_complete)));
+    for (id, effects) in lists {
+        let mut all = vec![];
+        walk(effects, &mut all);
+        let direct = all.iter().filter(|e| matches!(e, Effect::Axis(a, _) if a == stability));
+        writes.extend(direct.map(|_| id.clone()));
+    }
+    eprintln!("warning: stability written directly (as shocks): {writes:?}");
+    assert!(writes.len() <= 22, "new direct writes to stability: {writes:?}");
+}

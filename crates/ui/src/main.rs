@@ -1050,7 +1050,7 @@ fn side(ui: &mut Ui, g: &Game) {
     }
     heading(ui, "Состояние");
     Grid::new("axes").show(ui, |ui| {
-        for a in &d.axes {
+        for a in d.axes.iter().filter(|a| !a.hidden) {
             let v = w.axes[&a.id];
             bar(ui, axis_name(d, &a.id), v, a.min, a.max, &round(v));
         }

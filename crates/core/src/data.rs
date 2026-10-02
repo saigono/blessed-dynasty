@@ -25,6 +25,10 @@ pub struct Data {
     /// The influence graph's edges, counted in this order (`graph::tick`).
     #[serde(default)]
     pub influences: Vec<Influence>,
+    /// Loops of the graph by their edge ids in order, each edge's `to` the next one's `from`;
+    /// for `data_lint`.
+    #[serde(default)]
+    pub loops: Vec<(String, Vec<String>)>,
     /// Stability derived from the graph; None: a plain axis, written directly.
     #[serde(default)]
     pub stability: Option<Stability>,
@@ -860,6 +864,17 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
             return Err(invalid(&e.id, "influences: unknown or derived axis".into()));
         }
     }
+    for (name, ids) in &data.loops {
+        let edge = |id: &String| data.influences.iter().find(|e| e.id == *id);
+        let edges: Option<Vec<_>> = ids.iter().map(edge).collect();
+        let closed = edges.is_some_and(|es| {
+            let next = es.iter().cycle().skip(1);
+            !es.is_empty() && es.iter().zip(next).all(|(a, b)| a.to == b.from)
+        });
+        if !closed {
+            return Err(invalid(name, "loops: unknown edges or not a cycle".into()));
+        }
+    }
     if let Some(s) = &data.stability {
         let plain = |a| is_axis(a) && !data.is_derived(a);
         if !plain(&s.axis) || !plain(&s.shocks) || s.axis == s.shocks {
@@ -920,7 +935,7 @@ mod tests {
     fn rules_ron_loads() {
         let data = load(RULES).unwrap();
         assert_eq!(data.time_unit, TimeUnit { ticks_per_year: 1 });
-        assert_eq!(data.axes.len(), 12);
+        assert_eq!(data.axes.len(), 20);
         assert!(data.is_derived(&AxisId("loyalty".into())));
         assert!(!data.is_derived(&AxisId("loyalty_nobles".into())));
     }

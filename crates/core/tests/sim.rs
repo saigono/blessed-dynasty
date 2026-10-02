@@ -128,30 +128,28 @@ fn golden_seed_42_script_a() {
     // wedding): fewer disputes, no usurpation, the dynasty lived to the horizon.
     // Stage 17b: the founder's abdication leaves Конрад contested; a house of little fame
     // (prestige below 50) and a small army: he fights the claimants in «Смута» and loses.
-    assert_eq!((c.years, &c.fall), (31, &FallReason::Usurped));
+    // Stage 18: the influence graph and a derived stability whose shocks fade: a quieter
+    // reign, Конрад weathers «Смута» and the dynasty lives to the horizon; Вейр, grown by
+    // the grants, still revolts.
+    assert_eq!((c.years, &c.fall, c.entries.len()), (300, &FallReason::Alive, 101));
     let hint = |h: &'static str| Some(h);
     assert_eq!(
-        texts(&c),
+        texts(&c)[..3],
         [
             (
                 "Новое правление",
-                "Престол наследует Конрад.",
-                hint("Наследник основателя учился власти в королевском совете."),
-            ),
-            (
-                "Спор о короне",
-                "Корона сложена до срока. Бароны не признают наследника и называют своих претендентов.",
-                None,
-            ),
-            (
-                "Новый закон о престоле",
-                "Отныне престол наследуют по закону «Выборный закон».",
-                None,
+                "Престол наследует Конрад. Знать ликует: на троне воинственный король.",
+                hint("Наследника наказали при всём дворе ещё при основателе."),
             ),
             (
                 "Смута",
                 "На престоле Конрад, но присягнули не все. Претенденты собирают сторонников, знать выжидает.",
-                hint("Венчание в новом соборе укрепило право рода на трон."),
+                hint("Старый основатель заранее готовил преемника."),
+            ),
+            (
+                "Мятеж дома Вейр",
+                "В тот год дом Вейр поднял мятеж в земле Гарт и отказался присягать короне.",
+                hint("Монахи, посланные основателем к больным, остались в памяти народа."),
             ),
         ]
     );
@@ -1040,30 +1038,23 @@ fn year_changes_of_seed_42_script_a() {
     let [g1, g2] = granted("gart");
     let [l1, l2] = granted("lugovo");
     let [b1, b2] = granted("berg");
+    let people = |v| Change::Axis(ax("loyalty_people"), Fx(v));
     let want = vec![
         (1188, vec![nobles(9), g1, g2]),
         (1189, vec![nobles(9), l1, l2]),
         (1190, vec![nobles(7), b1, b2]),
         (1191, vec![nobles(-6)]),
         (1193, vec![Change::Born("Генрих".into())]),
-        (1194, vec![axis("army", 20)]),
-        (
-            1195,
-            vec![
-                Change::Born("Освальд".into()),
-                Change::HeirGone("Генрих".into()),
-            ],
-        ),
-        (1203, vec![Change::Born("Гизела".into())]),
-        (
-            1204,
-            vec![
-                axis("legitimacy", 6),
-                axis("prestige", 15),
-                Change::HeirGone("Гизела".into()),
-            ],
-        ),
-        (1211, vec![nobles(6)]),
+        (1199, vec![Change::Born("Освальд".into())]),
+        (1200, vec![people(5_928)]),
+        (1201, vec![nobles(-6)]),
+        (1202, vec![axis("army", 20), Change::Born("Рейнхольд".into())]),
+        (1204, vec![axis("loyalty_church", 5)]),
+        (1207, vec![nobles(6)]),
+        (1212, vec![Change::Axis(ax("loyalty_nobles"), Fx(-6_480))]),
+        (1220, vec![nobles(5)]),
+        (1221, vec![axis("army", 20)]),
+        (1223, vec![axis("loyalty_church", 6)]),
     ];
     assert_eq!(log, want);
 }
@@ -1081,25 +1072,24 @@ fn kin_of_seed_42_script_a() {
     );
     assert_eq!((k[0].crowned, k[0].parent), (Some(1187), None));
     assert_eq!(k[0].died, Some(1187 + c.rulers[0].end.0));
-    // Конрад, 6 at the start, reigned from 1215 until usurped (no death told); Генрих, born
-    // 1193, died at 2 uncrowned; Освальд born 1195, alive at the fall; Гизела 1203, died the
-    // next year.
+    // Конрад, 6 at the start, reigned 1225..1248; Генрих, born 1193, Освальд 1199 and
+    // Рейнхольд 1202 outlived him uncrowned (stage 18).
     assert_eq!(
         (k[1].name.as_str(), k[1].born, k[1].crowned, k[1].died),
-        ("Конрад", 1181, Some(1215), None)
+        ("Конрад", 1181, Some(1225), Some(1248))
     );
     assert_eq!(
         (k[2].name.as_str(), k[2].born, k[2].parent, k[2].crowned),
         ("Генрих", 1193, Some(0), None)
     );
-    assert_eq!(k[2].died, Some(1195));
+    assert_eq!(k[2].died, Some(1252));
     assert_eq!(
         (k[3].name.as_str(), k[3].born, k[3].parent, k[3].died),
-        ("Освальд", 1195, Some(0), None)
+        ("Освальд", 1199, Some(0), Some(1260))
     );
     assert_eq!(
         (k[4].name.as_str(), k[4].born, k[4].parent, k[4].died),
-        ("Гизела", 1203, Some(0), Some(1204))
+        ("Рейнхольд", 1202, Some(0), Some(1271))
     );
     // Every ruler in the chronicle is a crowned kin, in order; children point at a ruler.
     let crowned: Vec<(&str, u32)> = (k.iter())
@@ -1113,14 +1103,16 @@ fn kin_of_seed_42_script_a() {
         let p = x.parent.expect("every heir has a parent");
         assert!(k[p].crowned.is_some() && k[p].born < x.born, "{x:?}");
     }
-    // The dead are those no longer among the heirs nor on the throne (as of the last entry;
-    // later births are not in it).
+    // The dead are those no longer among the heirs (or the unrecognized bastards) nor on the
+    // throne (as of the last entry; later births are not in it).
     let last = &c.entries.last().unwrap().snapshot;
     let alive =
         |x: &&bd_core::state::Kin| x.died.is_none() && x.crowned.is_none() && x.born <= last.year();
     for x in k.iter().filter(alive) {
         assert!(
-            x.heir.is_some_and(|id| last.heir_index(id).is_some()),
+            x.heir.is_some_and(|id| {
+                last.heir_index(id).is_some() || last.bastards.iter().any(|b| b.id == id)
+            }),
             "{x:?}"
         );
     }

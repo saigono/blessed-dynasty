@@ -32,6 +32,7 @@
 | 20 | 20-symptoms-chain.md | 19 |
 | 21 | 21-transparency-ui.md | 20 |
 | 22 | 22-literary-chronicle.md | 21 |
+| 23 | 23-content-editor.md | 22 |
 
 После этапа 2 параллельно можно вести 3, 5, 8a, 9, 10a. На соло-разработке реально две-три ветки за раз.
 

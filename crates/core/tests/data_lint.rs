@@ -186,7 +186,7 @@ fn every_reign_choice_is_hinted() {
 #[test]
 fn sim_events_follow_the_brief() {
     let data = load_all();
-    assert_eq!(data.sim_events.len(), 13);
+    assert_eq!(data.sim_events.len(), 14);
     for e in &data.sim_events {
         assert!((2..=3).contains(&e.choices.len()), "{}", e.id);
         assert!(e.importance >= data.sim.threshold, "{}", e.id);

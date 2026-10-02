@@ -230,18 +230,27 @@ fn next_heir(w: &World) -> Option<usize> {
 }
 
 /// Crowns the next heir: a claim below the law's `crisis_claim` contests the succession
-/// (`abdication.contested_flag`), a child reigns under the regency flag, the other heirs
-/// become the collateral line. False: no heir.
+/// (`abdication.contested_flag`), and so may the rivals (`Law.dispute_per_heir`); a child
+/// reigns under the regency flag, the other heirs become the collateral line, the flags of
+/// the last reign (`sim.reign_flags`) go. False: no heir.
 fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     let Some(ruler) = succession(&g.world, &g.data, &mut g.rng) else {
         return false;
     };
-    let (d, w) = (&g.data, &mut g.world);
+    let (d, w, rng) = (&g.data, &mut g.world, &mut g.rng);
     let heir = w.heirs.remove(next_heir(w).expect("succession found one"));
     // His brothers and sisters become the collateral line, behind his children to come.
     w.line_from = w.next_heir_id;
-    if (d.heirs.law(w)).is_some_and(|l| heir.claim < l.crisis_claim) {
-        w.flags.insert(d.abdication.contested_flag.clone());
+    if let Some(l) = d.heirs.law(w) {
+        // Each heir left is a rival: a chance of dispute per head, rolled only if the law has one.
+        let rivals = l.dispute_per_heir * Fx::from_int(w.heirs.len() as i64);
+        let quarrel = rivals > Fx(0) && rng.range(0, Fx::from_int(100).0) < rivals.0;
+        if heir.claim < l.crisis_claim || quarrel {
+            w.flags.insert(d.abdication.contested_flag.clone());
+        }
+    }
+    for f in &d.sim.reign_flags {
+        w.flags.remove(f);
     }
     if ruler.age < d.sim.regency_age {
         w.flags.insert(d.sim.regency_flag.clone());

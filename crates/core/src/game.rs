@@ -12,6 +12,7 @@ use crate::state::{
 };
 use crate::time::Tick;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 pub type ActionId = String;
 
@@ -238,6 +239,7 @@ impl Game {
         // Events neighbours start this year; they join the random pick.
         let mut offers = Vec::new();
         if (self.world.tick.0).is_multiple_of(self.data.time_unit.ticks_per_year) {
+            self.drop_landless();
             let ids: Vec<_> = self.world.neighbours.keys().cloned().collect();
             let relations = |w: &World| {
                 w.neighbours
@@ -418,6 +420,35 @@ impl Game {
             if let (Some(idx), Some(before)) = (started, before) {
                 self.mark(idx, &tag, &before);
             }
+        }
+    }
+
+    /// A neighbour with no province left leaves the world: a war with it ends, the heirs it
+    /// holds come home, events queued at it are dropped.
+    fn drop_landless(&mut self) {
+        let w = &mut self.world;
+        let landed: BTreeSet<&NeighbourId> = (w.provinces.values())
+            .filter_map(|p| match &p.holder {
+                Holder::Foreign(n) => Some(n),
+                _ => None,
+            })
+            .collect();
+        let gone: Vec<NeighbourId> = (w.neighbours.keys())
+            .filter(|n| !landed.contains(n))
+            .cloned()
+            .collect();
+        for id in gone {
+            w.neighbours.remove(&id);
+            if w.war.as_ref().is_some_and(|x| x.enemy == id) {
+                w.war = None;
+            }
+            for h in &mut w.heirs {
+                if h.status == HeirStatus::Hostage(id.clone()) {
+                    h.status = HeirStatus::Home;
+                }
+            }
+            let at = Some(Target::Neighbour(id.clone()));
+            (self.queue).retain(|(_, p)| p.target != at && p.neighbour.as_ref() != Some(&id));
         }
     }
 
@@ -864,6 +895,54 @@ mod tests {
             }
         }
         g
+    }
+
+    /// Stage 12: a neighbour that has lost its last province leaves the world, and with it
+    /// the war on it, the hostages it holds and the events queued at it.
+    #[test]
+    fn a_neighbour_without_land_leaves_the_world() {
+        let mut g = game(bare(), 1);
+        let nordmark = NeighbourId("nordmark".into());
+        g.world.war = Some(crate::war::War {
+            enemy: nordmark.clone(),
+            stage: crate::war::WarStage::Fighting,
+            our_strength: Fx(0),
+            their_strength: Fx(0),
+            war_score: Fx(0),
+            started: Tick(0),
+        });
+        g.world.heirs[0].status = HeirStatus::Hostage(nordmark.clone());
+        let queued = |id: &str, target: Option<Target>| {
+            let p = PendingEvent {
+                event_id: id.into(),
+                target,
+                neighbour: None,
+            };
+            (Tick(50), p)
+        };
+        g.queue.push(queued(
+            "at_nordmark",
+            Some(Target::Neighbour(nordmark.clone())),
+        ));
+        g.queue.push(queued("other", None));
+        let take = |g: &mut Game, keep: Option<&str>| {
+            for p in g.world.provinces.values_mut() {
+                if p.holder == Holder::Foreign(nordmark.clone()) && Some(p.id.0.as_str()) != keep {
+                    p.holder = Holder::Crown;
+                }
+            }
+            g.wait().unwrap();
+        };
+        take(&mut g, Some("frostad")); // one province left: it stays
+        assert!(g.world.neighbours.contains_key(&nordmark) && g.world.war.is_some());
+        take(&mut g, None);
+        assert!(!g.world.neighbours.contains_key(&nordmark));
+        assert_eq!(
+            (g.world.war.clone(), &g.world.heirs[0].status),
+            (None, &HeirStatus::Home)
+        );
+        let ids: Vec<_> = g.queue.iter().map(|(_, p)| p.event_id.as_str()).collect();
+        assert_eq!(ids, ["other"]);
     }
 
     #[test]

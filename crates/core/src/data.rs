@@ -259,6 +259,10 @@ pub struct Law {
     pub others: Fx,
     pub ability_k: Fx,
     pub crisis_claim: Fx,
+    /// Chance in percent per heir left after the coronation that the succession is
+    /// contested anyway: more heirs, more quarrels.
+    #[serde(default)]
+    pub dispute_per_heir: Fx,
 }
 
 /// The row of the largest `from <= at`; 0 below the first row.
@@ -402,6 +406,9 @@ pub struct SimRules {
     /// A ruler younger than `regency_age` reigns under `regency_flag` until he reaches it.
     pub regency_flag: String,
     pub regency_age: u32,
+    /// Flags that belong to one reign and go when the next ruler is crowned.
+    #[serde(default)]
+    pub reign_flags: Vec<String>,
     /// The death of the first heir (`texts.heir_died`) is told from this age on; younger,
     /// only when he was the last heir and the dynasty ends without one.
     pub heir_death_age: u32,

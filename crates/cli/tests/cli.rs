@@ -1,5 +1,6 @@
 //! Acceptance of stage 8a: the binary on the real data.
 
+use std::collections::BTreeMap;
 use std::process::{Command, Output};
 
 fn cli(args: &[&str]) -> Output {
@@ -159,9 +160,9 @@ fn batch_of_a_thousand_is_fast() {
     assert!(took.as_secs() < 60, "{took:?}");
 }
 
-/// The `#` summary of a batch: (median score, median reign years, early death %, the most
-/// frequent fall reason).
-fn summary(out: &str) -> (i64, i64, u32, String) {
+/// The `#` summary of a batch: (median score, median reign years, early death %, the share
+/// of each fall reason in %).
+fn summary(out: &str) -> (i64, i64, u32, BTreeMap<String, i64>) {
     let line = |prefix: &str| {
         let l = out.lines().find(|l| l.starts_with(prefix));
         l.unwrap_or_else(|| panic!("{prefix}: {out}"))[prefix.len()..].to_string()
@@ -171,24 +172,56 @@ fn summary(out: &str) -> (i64, i64, u32, String) {
         .trim_end_matches('%')
         .parse()
         .unwrap();
-    let falls = out
-        .lines()
+    let falls = (out.lines())
         .skip_while(|l| *l != "# причины падения:")
-        .nth(1)
-        .unwrap();
-    let dominant = falls.split_whitespace().nth(1).unwrap().to_string();
+        .skip(1)
+        .map_while(|l| l.strip_prefix("#   "))
+        .map(|l| {
+            let (fall, share) = l.split_once(' ').unwrap();
+            (
+                fall.to_string(),
+                share.trim_end_matches('%').parse().unwrap(),
+            )
+        });
     (
         median("#   счёт "),
         median("#   лет правления "),
         early,
-        dominant,
+        falls.collect(),
     )
+}
+
+/// Stage 17b: two strategies fall differently if the share of some fall reason differs by
+/// at least 15 points.
+fn falls_differ(a: &BTreeMap<String, i64>, b: &BTreeMap<String, i64>) -> bool {
+    let share = |m: &BTreeMap<String, i64>, k: &String| m.get(k).copied().unwrap_or(0);
+    (a.keys().chain(b.keys())).any(|k| (share(a, k) - share(b, k)).abs() >= 15)
+}
+
+#[test]
+fn falls_differ_by_15_points_of_one_reason() {
+    let batch = |falls: &str| {
+        let head = "#   лет правления 1 / 30 / 50\n#   счёт 1 / 100 / 200\n# ранняя смерть 5%\n";
+        summary(&format!("{head}# причины падения:\n{falls}# закон\n")).3
+    };
+    let a = batch("#   Usurped 40%\n#   Alive 40%\n#   NoHeir 20%\n");
+    assert_eq!(a.len(), 3);
+    assert!(!falls_differ(&a, &a));
+    let b = batch("#   Usurped 26%\n#   Alive 54%\n#   NoHeir 20%\n");
+    assert!(!falls_differ(&a, &b));
+    let b = batch("#   Usurped 25%\n#   Alive 55%\n#   NoHeir 20%\n");
+    assert!(falls_differ(&a, &b));
+    // A reason one of them never meets counts as 0%.
+    let b = batch("#   Usurped 40%\n#   Alive 25%\n#   NoHeir 20%\n#   NoCrownLand 15%\n");
+    assert!(falls_differ(&a, &b));
 }
 
 /// Stage 8b acceptance: the calibration criteria on 1000 games per strategy (the tables of
 /// docs/calibration.md). Stage 15 adds: the neutral median treasury at the end of the
 /// dynasty at most 20% of the cap (10000), and warmonger armies desert in at least 10% of
-/// the dynasties. `cargo test --release -p cli -- --ignored calibration`.
+/// the dynasties. Stage 17b: the fall reasons of neighbours by score differ (`falls_differ`)
+/// instead of the dominant one, and warmonger heirs wed in war: its NoHeir at most 5 points
+/// above neutral's. `cargo test --release -p cli -- --ignored calibration`.
 #[test]
 #[ignore = "release only, a few minutes"]
 fn calibration_criteria_hold() {
@@ -210,11 +243,16 @@ fn calibration_criteria_hold() {
     let (_, reign, early, _) = &s[0];
     assert!(*early <= 10, "{s:?}");
     assert!((25..=40).contains(reign), "{s:?}");
-    let mut scores: Vec<i64> = s[1..].iter().map(|x| x.0).collect();
-    scores.sort();
-    assert!(scores.windows(2).all(|w| w[1] * 100 >= w[0] * 115), "{s:?}");
-    let falls: std::collections::BTreeSet<_> = s[1..].iter().map(|x| &x.3).collect();
-    assert_eq!(falls.len(), 3, "{s:?}");
+    // Neighbours by score (vassal_all < crown_all < warmonger): the score at least 15%
+    // apart, and (stage 17b) the fall reasons too, by 15 points of one reason.
+    let mut by_score: Vec<_> = s[1..].iter().collect();
+    by_score.sort_by_key(|x| x.0);
+    for w in by_score.windows(2) {
+        assert!(w[1].0 * 100 >= w[0].0 * 115, "{s:?}");
+        assert!(falls_differ(&w[0].3, &w[1].3), "{s:?}");
+    }
+    let no_heir = |i: usize| s[i].3.get("NoHeir").copied().unwrap_or(0);
+    assert!(no_heir(3) <= no_heir(0) + 5, "{s:?}");
     let after = |out: &str, prefix: &str| -> String {
         let l = out.lines().find(|l| l.starts_with(prefix)).unwrap();
         l[prefix.len()..].to_string()
@@ -324,8 +362,9 @@ fn law_profiles_differ() {
     assert!(fall(&outs[5], "NoCrownLand") > fall(&outs[0], "NoCrownLand"));
     // Stage 17: the rightful heir's claim cuts the disputes of absolute primogeniture below
     // the 32% of stage 16 without letting NoHeir soar; male primogeniture has its own risk.
+    // Stage 17b: at most 12% under absolute primogeniture, only a child or a weak heir.
     let disputes = |i: usize| -rows[i][3];
-    assert!(disputes(0) < 30, "{rows:?}");
+    assert!(disputes(0) <= 12, "{rows:?}");
     assert!(fall(&outs[0], "NoHeir") <= 20, "{rows:?}");
     assert!(disputes(1) >= disputes(0) + 10, "{rows:?}");
     // Some heirs are named over the law, under the laws that leave rivals with a claim.

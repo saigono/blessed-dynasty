@@ -241,8 +241,8 @@
         bastard_claim: 20,
         // Disputes from real causes besides the claim: a child crowned (below
         // sim.regency_age), an heir of ability below the first number: chances in percent.
-        dispute_minor: 100,
-        dispute_weak: (80, 100),
+        dispute_minor: 50,
+        dispute_weak: (67, 100),
         death: [(0, 120), (1, 40), (5, 6), (16, 6), (30, 10), (40, 15), (50, 30), (55, 60), (60, 90), (65, 130), (70, 180), (80, 300)],
     ),
 

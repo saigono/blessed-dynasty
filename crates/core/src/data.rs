@@ -955,7 +955,7 @@ mod tests {
         data.add_events(NEIGHBOUR_EVENTS).unwrap();
         data.add_actions(ACTIONS).unwrap();
         assert_eq!(data.events.len(), 38);
-        assert_eq!(data.actions.len(), 20);
+        assert_eq!(data.actions.len(), 21);
         // Ids must be unique across files.
         assert!(matches!(
             data.add_events(EVENTS),

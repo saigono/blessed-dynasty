@@ -17,13 +17,13 @@ pub const CROWN: Color32 = Color32::from_rgb(0xc4, 0x9a, 0x3c);
 /// Vassal houses and foreign states by their order in the world.
 const VASSALS: [Color32; 3] = [
     Color32::from_rgb(0x7f, 0x98, 0xb8),
-    Color32::from_rgb(0x8f, 0xad, 0x9a),
-    Color32::from_rgb(0xa8, 0x93, 0xb8),
+    Color32::from_rgb(0xa0, 0x8c, 0xc0),
+    Color32::from_rgb(0x6f, 0xa8, 0xc0),
 ];
 const FOREIGN: [Color32; 4] = [
     Color32::from_rgb(0xb5, 0xb9, 0xc2),
     Color32::from_rgb(0xc9, 0xb8, 0xa8),
-    Color32::from_rgb(0xa9, 0xbf, 0xbb),
+    Color32::from_rgb(0xbd, 0xc4, 0x9e),
     Color32::from_rgb(0xc2, 0xb0, 0xc0),
 ];
 /// The outer border of every holder's land.
@@ -176,16 +176,17 @@ impl MapView {
         }
         painter.extend(top);
         let size = (6.0 * self.scale()).clamp(10.0, 15.0);
-        // Each state's name in the middle of its land, under the province names.
+        // Each state's name above the name of its largest province: the middle of a
+        // state's land may well lie in another's.
         for n in w.neighbours.values() {
-            let theirs = (w.provinces.values())
-                .filter(|p| p.holder == Holder::Foreign(n.id.clone()))
-                .filter_map(|p| self.centre(&p.id));
-            let (sum, count) = theirs.fold((vec2(0.0, 0.0), 0.0), |(s, c), p| {
-                (s + p.to_vec2(), c + 1.0)
+            let theirs = (self.shapes.iter()).filter(|(id, _)| {
+                w.provinces
+                    .get(*id)
+                    .is_some_and(|p| p.holder == Holder::Foreign(n.id.clone()))
             });
-            if count > 0.0 {
-                let at = self.to_screen((sum / count).to_pos2()) + vec2(0.0, size * 1.2);
+            let largest = theirs.max_by(|a, b| area(&a.1.0).total_cmp(&area(&b.1.0)));
+            if let Some(c) = largest.and_then(|(id, _)| self.centre(id)) {
+                let at = self.to_screen(c) - vec2(0.0, size * 1.2);
                 let font = eframe::egui::FontId::proportional(size * 0.9);
                 let name = n.name.to_uppercase();
                 painter.text(at, eframe::egui::Align2::CENTER_CENTER, name, font, BORDER);
@@ -261,7 +262,7 @@ pub fn legend(ui: &mut Ui, w: &World) {
         items.extend(holders.map(|h| (holder_color(w, &h), holder_name(w, &h))));
         items.extend([
             (UNREST, "волнения".into()),
-            (FG, "стройка пунктиром".into()),
+            (FG, "стройка (пунктир)".into()),
             (BORDER, "граница владений".into()),
         ]);
         for (color, text) in items {
@@ -275,6 +276,15 @@ pub fn legend(ui: &mut Ui, w: &World) {
 /// An `Fx` rounded to a whole number for display.
 pub fn round(v: bd_core::fx::Fx) -> String {
     format!("{:.0}", v.0 as f64 / 1000.0)
+}
+
+/// Shoelace area of an outline.
+fn area(p: &[Pos2]) -> f32 {
+    let n = p.len();
+    let twice: f32 = (0..n)
+        .map(|i| p[i].x * p[(i + 1) % n].y - p[(i + 1) % n].x * p[i].y)
+        .sum();
+    twice.abs() / 2.0
 }
 
 /// Even-odd ray casting.
@@ -322,15 +332,6 @@ fn triangulate(p: &[Pos2]) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn area(p: &[Pos2]) -> f32 {
-        let n = p.len();
-        (0..n)
-            .map(|i| p[i].x * p[(i + 1) % n].y - p[(i + 1) % n].x * p[i].y)
-            .sum::<f32>()
-            .abs()
-            / 2.0
-    }
 
     #[test]
     fn concave_outline_is_covered_by_its_triangles() {

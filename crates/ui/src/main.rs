@@ -838,7 +838,7 @@ fn side(ui: &mut Ui, g: &Game) {
     let first = bd_core::sim::next_heir(w);
     match d.heirs.law(w) {
         Some(l) => {
-            let law = ui.label(format!("Закон: {} ⓘ", l.name));
+            let law = ui.label(format!("Закон: {} (?)", l.name));
             law.on_hover_ui(|ui| {
                 ui.set_max_width(320.0);
                 ui.strong(&l.name);
@@ -1013,6 +1013,7 @@ fn effects(d: &Data, list: &[Effect]) -> Vec<Line> {
                 ("провинция меняет хозяина".into(), None)
             }
             Effect::StartWar(_) => ("война".into(), Some(false)),
+            Effect::Abdicate | Effect::RulerDies(_) => ("конец правления".into(), Some(false)),
             Effect::IfFriendly(es) => {
                 let friendly = effects(d, es).into_iter();
                 out.extend(friendly.map(|(t, up)| (format!("если сосед — друг: {t}"), up)));
@@ -1588,7 +1589,7 @@ mod tests {
                 .any(|t| t.starts_with("Брак правящего дома"))
         );
 
-        let law = hover(&mut h, "Закон: Первородство ⓘ");
+        let law = hover(&mut h, "Закон: Первородство (?)");
         let text = h.game().data.heirs.laws[0].text();
         assert!(law.contains(&text) && text.contains("ниже 70"), "{law:?}");
         assert!(texts_of(&mut h).contains(&"Первый в очереди: Конрад".to_string()));
@@ -1871,6 +1872,8 @@ mod tests {
         ];
         assert_eq!(shown, want.map(|(s, up)| (s.to_string(), up)));
         assert!(effects(&d, &[Effect::RulerHealth(Fx(1))]).is_empty());
+        let end = effects(&d, &[Effect::Abdicate]);
+        assert_eq!(end, [("конец правления".to_string(), Some(false))]);
         // What a road gives: its crown power bonus from rules.ron and its income.
         let road = d.actions.iter().find(|a| a.id == "build_road").unwrap();
         let shown = effects(&d, &road.on_complete);

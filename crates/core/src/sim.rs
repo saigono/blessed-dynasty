@@ -249,9 +249,14 @@ pub fn succession(w: &World, data: &Data, rng: &mut Rng) -> Option<Ruler> {
     })
 }
 
-/// Who succeeds now by the rule of the law in force (`SuccessionRule`); `next_heir` without
-/// a law. None: nobody may.
+/// Who succeeds now: `rightful`. None: nobody may.
 pub fn successor(w: &World, data: &Data) -> Option<usize> {
+    rightful(w, data)
+}
+
+/// Who the rule of the law in force puts first (`SuccessionRule`); `next_heir` without
+/// a law. None: nobody may.
+pub fn rightful(w: &World, data: &Data) -> Option<usize> {
     let Some(law) = data.heirs.law(w) else {
         return next_heir(w);
     };
@@ -278,8 +283,9 @@ pub fn next_heir(w: &World) -> Option<usize> {
     (0..w.heirs.len()).rev().max_by_key(|&i| w.heirs[i].claim)
 }
 
-/// Crowns the next heir: a claim below the law's `crisis_claim` contests the succession
-/// (`abdication.contested_flag`), and so may the rivals (`Law.dispute_per_heir`); a child
+/// Crowns the next heir, the rightful one with at least `Law.rightful_claim`: a claim below
+/// the law's `crisis_claim` contests the succession (`abdication.contested_flag`), and so
+/// may the rivals (`Law.dispute_per_heir`) and a woman under `Law.female_heir`; a child
 /// reigns under the regency flag, the other heirs become the collateral line, the flags of
 /// the last reign (`sim.reign_flags`) go. False: no heir.
 fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
@@ -287,9 +293,12 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
         return false;
     };
     let (d, w, rng) = (&g.data, &mut g.world, &mut g.rng);
-    let heir = w
-        .heirs
-        .remove(successor(w, d).expect("succession found one"));
+    let i = successor(w, d).expect("succession found one");
+    let lawful = rightful(w, d) == Some(i);
+    let mut heir = w.heirs.remove(i);
+    if let Some(l) = d.heirs.law(w).filter(|_| lawful) {
+        heir.claim = heir.claim.max(l.rightful_claim);
+    }
     // The late ruler's unions end with him; the new one's come with him to the throne.
     w.unions.retain(|_, u| u.spouse.is_some());
     for u in w.unions.values_mut().filter(|u| u.spouse == Some(heir.id)) {
@@ -318,7 +327,8 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
         // Each heir left is a rival: a chance of dispute per head, rolled only if the law has one.
         let rivals = l.dispute_per_heir * Fx::from_int(w.heirs.len() as i64);
         let quarrel = rivals > Fx(0) && rng.range(0, Fx::from_int(100).0) < rivals.0;
-        if heir.claim < l.crisis_claim || quarrel {
+        let queen = heir.sex == Sex::Female && l.female_heir.is_some();
+        if heir.claim < l.crisis_claim || quarrel || queen {
             w.flags.insert(d.abdication.contested_flag.clone());
         }
     }
@@ -356,8 +366,8 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     true
 }
 
-/// The axes at a coronation (`Data.coronation`, see `CoronationRules`) for a new ruler of
-/// `claim`. Returns how the chronicle tells the trait that moved an axis most, if it is told.
+/// The axes at a coronation (`Data.coronation`, see `CoronationRules`, then a queen's
+/// `Law.female_heir`) for a new ruler of `claim`. Returns how the chronicle tells the trait that moved an axis most, if it is told.
 fn coronation(w: &mut World, d: &Data, claim: Fx, ruler: &Ruler) -> Option<String> {
     let c = &d.coronation;
     for f in &d.factions {
@@ -374,8 +384,11 @@ fn coronation(w: &mut World, d: &Data, claim: Fx, ruler: &Ruler) -> Option<Strin
         add_axis(w, d, a, toward);
     }
     let contested = w.flags.contains(&d.abdication.contested_flag);
-    let law = d.heirs.law(w).map_or(&[][..], |l| &l.coronation);
-    for (a, v) in c.contested.iter().filter(|_| contested).chain(law) {
+    let law = d.heirs.law(w);
+    let queen = law.and_then(|l| l.female_heir.as_ref()).filter(|_| ruler.sex == Sex::Female);
+    let law = law.map_or(&[][..], |l| &l.coronation);
+    let shifts = c.contested.iter().filter(|_| contested).chain(law);
+    for (a, v) in shifts.chain(queen.into_iter().flatten()) {
         add_axis(w, d, a, *v);
     }
     let traits = d.sim.traits.iter().filter(|t| ruler.traits.contains(&t.id));

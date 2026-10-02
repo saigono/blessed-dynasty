@@ -192,33 +192,36 @@
         growth_hostage: 1,
         hostage_claim: -4,
         claim_step: 2,
-        // Who succeeds is the law's `rule` (sim::successor): Absolute, Male, Salic,
+        // Who succeeds is the law's `rule` (sim::rightful): Absolute, Male, Salic,
         // Seniority, Elective, Partition. Claims say how firm the new ruler sits: the heir the
-        // rule puts first moves toward `eldest`, the rest toward `others`, plus ability *
-        // ability_k; a new ruler's claim below crisis_claim contests the succession, and so may
-        // every heir left (dispute_per_heir percent each). `coronation`: axis shifts at every
-        // coronation under the law. `house`: Partition's (loyalty, strength) of a son's house.
+        // rule puts first has `rightful_claim` at once and moves toward `eldest`, the rest
+        // toward `others`, plus ability * ability_k; a new ruler's claim below crisis_claim
+        // contests the succession, and so may every heir left (dispute_per_heir percent each).
+        // `coronation`: axis shifts at every coronation under the law. `female_heir`: a queen
+        // crowned under the law is contested and shifts these axes. `house`: Partition's
+        // (loyalty, strength) of a son's house.
         laws: [
             // `name` and `description` are for the UI; {eldest}, {others}, {ability_k},
-            // {crisis_claim}, {dispute_per_heir} stand for the numbers of the law.
-            (flag: "law_primogeniture", rule: Absolute, eldest: 75, others: 35, ability_k: 0, crisis_claim: 70,
+            // {crisis_claim}, {dispute_per_heir}, {rightful_claim} stand for the numbers of the law.
+            (flag: "law_primogeniture", rule: Absolute, eldest: 75, others: 35, ability_k: 0, crisis_claim: 70, rightful_claim: 90,
                 name: "Абсолютное первородство",
-                description: "Трон получает старший ребёнок правителя, сын или дочь, без детей — старший из боковой линии. Претензия первого в очереди год за годом растёт к {eldest}, остальных держится у {others}. Если у наследника претензия ниже {crisis_claim}, престол оспорят."),
-            (flag: "law_male", rule: Male, eldest: 75, others: 35, ability_k: 0, crisis_claim: 70,
+                description: "Трон получает старший ребёнок правителя, сын или дочь, без детей — старший из боковой линии. Первый в очереди по закону сразу имеет претензию {rightful_claim}, остальные держатся у {others}. Если у наследника претензия ниже {crisis_claim}, престол оспорят."),
+            (flag: "law_male", rule: Male, eldest: 75, others: 35, ability_k: 0, crisis_claim: 60, rightful_claim: 90,
+                female_heir: [("legitimacy", -10), ("loyalty_nobles", -10)],
                 name: "Мужское первородство",
-                description: "Трон получает старший сын правителя. Дочь наследует, только если сыновей нет. Претензия первого в очереди растёт к {eldest}, остальных держится у {others}. Если у наследника претензия ниже {crisis_claim}, престол оспорят."),
-            (flag: "law_salic", rule: Salic, eldest: 75, others: 35, ability_k: 0, crisis_claim: 70,
+                description: "Трон получает старший сын правителя, и право сына бесспорнее: престол оспорят, только если претензия ниже {crisis_claim}. Первый в очереди по закону сразу имеет претензию {rightful_claim}. Дочь наследует, только если сыновей нет, и тогда престол оспорят, легитимность упадёт, знать будет недовольна."),
+            (flag: "law_salic", rule: Salic, eldest: 75, others: 35, ability_k: 0, crisis_claim: 70, rightful_claim: 90,
                 coronation: [("legitimacy", 5)],
                 name: "Салический закон",
-                description: "Престол только мужчинам: сначала сыновья правителя, без них мужчина боковой линии. Женщины не наследуют вовсе: если мужчин в роду не осталось, династия пресекается. Зато право такого короля бесспорнее: легитимность при воцарении выше. Если у наследника претензия ниже {crisis_claim}, престол оспорят."),
-            (flag: "law_seniority", rule: Seniority, eldest: 75, others: 35, ability_k: 0, crisis_claim: 70, dispute_per_heir: 6,
+                description: "Престол только мужчинам: сначала сыновья правителя, без них мужчина боковой линии. Женщины не наследуют вовсе: если мужчин в роду не осталось, династия пресекается. Зато право такого короля бесспорнее: легитимность при воцарении выше. Первый в очереди по закону сразу имеет претензию {rightful_claim}. Если у наследника претензия ниже {crisis_claim}, престол оспорят."),
+            (flag: "law_seniority", rule: Seniority, eldest: 75, others: 35, ability_k: 0, crisis_claim: 70, dispute_per_heir: 6, rightful_claim: 90,
                 name: "Лествичное право",
                 description: "Престол старшему в роду: сначала братья правителя по старшинству, потом его дети. На трон приходит взрослый, но дети умершего не уступают дяде: по {dispute_per_heir}% на каждого оставшегося наследника, что престол оспорят."),
             (flag: "law_elective", rule: Elective, eldest: 0, others: 0, ability_k: 0.9, crisis_claim: 65, dispute_per_heir: 3,
                 coronation: [("loyalty_nobles", 5), ("legitimacy", -10)],
                 name: "Выборный закон",
                 description: "Совет избирает самого способного из наследников: претензия каждого растёт к его способностям × {ability_k}, старшинство не важно. Знать при каждом избрании довольна, легитимность ниже. Проигравшие спорят: по {dispute_per_heir}% на каждого оставшегося наследника, и престол оспорят, если у избранного претензия ниже {crisis_claim}."),
-            (flag: "law_partition", rule: Partition, eldest: 75, others: 35, ability_k: 0, crisis_claim: 70,
+            (flag: "law_partition", rule: Partition, eldest: 75, others: 35, ability_k: 0, crisis_claim: 70, rightful_claim: 90,
                 coronation: [("loyalty_nobles", 5)], house: (50, 20),
                 name: "Разделение",
                 description: "Корону получает старший сын, а каждый следующий сын при воцарении — коронную землю в удел и свой дом. Уделы раздаются от дальних земель к столице, столица остаётся у короны. Знать довольна, но земель у короны всё меньше. Если у наследника претензия ниже {crisis_claim}, престол оспорят."),

@@ -398,10 +398,12 @@ fn crowned(data: &Data, sex: Sex, claim: i64, axes: &[(&str, i64)]) -> sim::Chro
     sim::run(end, &data, Rng::from_seed(1)).entries.remove(0)
 }
 
-/// `data` with only the coronation step under test and no traits.
+/// `data` with only the coronation step under test, no traits and claims as given (no
+/// `rightful_claim`).
 fn plain(f: impl FnOnce(&mut bd_core::data::CoronationRules)) -> Data {
     let mut data = data();
     data.sim.traits.clear();
+    data.heirs.laws.iter_mut().for_each(|l| l.rightful_claim = Fx(0));
     data.coronation = Default::default();
     f(&mut data.coronation);
     data
@@ -727,4 +729,63 @@ fn a_ruler_is_crowned_with_his_marriage_and_his_unions() {
         .collect();
     assert_eq!(unions, [("purpur", None)]);
     assert!(!crowned(false).flags.contains("married"));
+}
+
+// Stage 17: the rightful heir, the designated heir, bastards.
+
+/// The coronation entry of a dynasty whose founder dies now under `law` with these heirs;
+/// no births, no traits.
+fn crown_under(data: &Data, law: &str, people: &[Person]) -> sim::ChronicleEntry {
+    let mut data = data.clone();
+    (data.heirs.birth, data.sim.max_years) = (vec![], 1);
+    data.sim.traits.clear();
+    let g = game(&data, law, people);
+    let end = ReignEnd {
+        cause: "illness".into(),
+        tick: g.world.tick,
+        world: g.world.clone(),
+    };
+    sim::run(end, &data, Rng::from_seed(1)).entries.remove(0)
+}
+
+fn contested(e: &sim::ChronicleEntry) -> bool {
+    e.snapshot.flags.contains("succession_contested")
+}
+
+/// Acceptance: the heir the law puts first has `rightful_claim` at once, the next one too as
+/// soon as he is first; the rest move toward `others` year by year.
+#[test]
+fn the_rightful_heir_has_his_claim_at_once() {
+    let mut data = data();
+    data.heirs.birth = vec![];
+    data.heirs.death = vec![];
+    let mut g = game(&data, "law_primogeniture", &[(M, 10, true, 50), (M, 8, true, 50)]);
+    g.data.events.clear();
+    let claims = |g: &Game| g.world.heirs.iter().map(|h| h.claim).collect::<Vec<_>>();
+    g.wait().unwrap();
+    assert_eq!(claims(&g), [Fx::from_int(90), Fx::from_int(48)]);
+    g.world.heirs.remove(0);
+    g.wait().unwrap();
+    assert_eq!(claims(&g), [Fx::from_int(90)]);
+    // Crowned the same tick he became first: still with his right.
+    let e = crown_under(&data, "law_primogeniture", &[(M, 30, true, 50)]);
+    assert!(!contested(&e));
+}
+
+/// Acceptance: under male primogeniture a daughter comes to the throne only without sons, and
+/// her coronation is contested and costs legitimacy and the nobles; a son's is not.
+#[test]
+fn male_primogeniture_crowns_a_daughter_only_without_sons_contested() {
+    let data = data();
+    let son = crown_under(&data, "law_male", &[(F, 20, true, 50), (M, 18, true, 50)]);
+    assert!(son.text.contains("p1"), "{}", son.text);
+    assert!(!contested(&son));
+    let daughter = crown_under(&data, "law_male", &[(F, 20, true, 50), (M, 40, false, 50)]);
+    assert!(daughter.text.contains("p0"), "{}", daughter.text);
+    assert!(contested(&daughter));
+    // The same daughter under absolute primogeniture: no dispute, more legitimacy and nobles.
+    let queen = crown_under(&data, "law_primogeniture", &[(F, 20, true, 50), (M, 40, false, 50)]);
+    assert!(!contested(&queen));
+    assert!(at(&daughter, "legitimacy") < at(&queen, "legitimacy"));
+    assert!(at(&daughter, "loyalty_nobles") < at(&queen, "loyalty_nobles"));
 }

@@ -371,8 +371,17 @@ pub struct Law {
     /// contested anyway: more heirs, more quarrels.
     #[serde(default)]
     pub dispute_per_heir: Fx,
+    /// The claim the heir the rule puts first (`sim::rightful`) has at once, not grown
+    /// toward: his right is plain to all. 0: none.
+    #[serde(default)]
+    pub rightful_claim: Fx,
+    /// A woman crowned under this law: the succession is contested and these axes shift
+    /// at the coronation. None: a queen is crowned like a king.
+    #[serde(default)]
+    pub female_heir: Option<Vec<(AxisId, Fx)>>,
     /// Display name and a plain-words explanation for the UI. `{eldest}`, `{others}`,
-    /// `{ability_k}`, `{crisis_claim}`, `{dispute_per_heir}` stand for the numbers above.
+    /// `{ability_k}`, `{crisis_claim}`, `{dispute_per_heir}`, `{rightful_claim}` stand for
+    /// the numbers above.
     #[serde(default)]
     pub name: String,
     #[serde(default)]
@@ -388,6 +397,7 @@ impl Law {
             ("{ability_k}", self.ability_k),
             ("{crisis_claim}", self.crisis_claim),
             ("{dispute_per_heir}", self.dispute_per_heir),
+            ("{rightful_claim}", self.rightful_claim),
         ];
         (numbers.iter()).fold(self.description.clone(), |s, (k, v)| {
             s.replace(k, &v.to_string())
@@ -786,7 +796,7 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
         .heirs
         .laws
         .iter()
-        .flat_map(|l| &l.coronation)
+        .flat_map(|l| l.coronation.iter().chain(l.female_heir.iter().flatten()))
         .chain(data.sim.traits.iter().flat_map(|t| &t.axes))
         .chain(&data.coronation.contested)
         .chain(&data.coronation.legitimacy_from_claim)

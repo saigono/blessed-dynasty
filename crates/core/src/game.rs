@@ -723,7 +723,8 @@ fn target_key(t: &Target) -> String {
 }
 
 /// Yearly: heirs may die by age, ability grows by status until adulthood, claims follow the
-/// succession law, hostages lose claim, a child may be born.
+/// succession law (the rightful heir's at once up to `Law.rightful_claim`), hostages lose
+/// claim, a child may be born.
 fn heirs_year(d: &Data, w: &mut World, rng: &mut Rng) {
     let r = &d.heirs;
     // No roll at zero risk: the rng stream stays as it was without the table.
@@ -735,6 +736,7 @@ fn heirs_year(d: &Data, w: &mut World, rng: &mut Rng) {
     let pct = |v: Fx| v.clamp(Fx(0), Fx::from_int(100));
     let law = r.law(w);
     let first = crate::sim::successor(w, d);
+    let rightful = crate::sim::rightful(w, d);
     for (i, h) in w.heirs.iter_mut().enumerate() {
         let (growth, claim) = match h.status {
             HeirStatus::Home => (r.growth_home, Fx(0)),
@@ -746,7 +748,12 @@ fn heirs_year(d: &Data, w: &mut World, rng: &mut Rng) {
         }
         if let Some(l) = law {
             let base = if Some(i) == first { l.eldest } else { l.others };
-            let target = base + h.ability * l.ability_k;
+            let mut target = base + h.ability * l.ability_k;
+            // The rightful heir has his claim at once, not by years.
+            if Some(i) == rightful {
+                h.claim = h.claim.max(l.rightful_claim);
+                target = target.max(l.rightful_claim);
+            }
             h.claim = match h.claim < target {
                 true => (h.claim + r.claim_step).min(target),
                 false => (h.claim - r.claim_step).max(target),

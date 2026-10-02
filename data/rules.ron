@@ -121,7 +121,7 @@
     // per_power provinces itself, the capital included. Beyond that its weakest provinces (by
     // crown power) lose `loyalty` a year, and one below `grant_below` goes to a vassal as by
     // Effect Grant: an overgrown realm feeds its vassals.
-    crown_capacity: (per_power: 0.06, loyalty: 3, grant_below: 25),
+    crown_capacity: (per_power: 0.07, loyalty: 3, grant_below: 25),
 
     // Effect Grant: the nearest vassal within `max_distance` border crossings gets the
     // province, otherwise a new house named by the next unused name of names.ron `vassals`,

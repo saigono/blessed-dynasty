@@ -3,6 +3,7 @@
 use bd_core::data::{self, Data, DataError};
 use bd_core::game::{Game, Step};
 use bd_core::rules::Effect;
+use bd_core::sim;
 use bd_core::state::Preset;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -74,26 +75,40 @@ fn all_files_load() {
     assert!(!hints().is_empty());
 }
 
+/// Simulation events share the id space of the reign: sim::run puts them in one pool.
 #[test]
 fn ids_are_unique() {
     let data = load_all();
-    let events: BTreeSet<_> = data.events.iter().map(|e| &e.id).collect();
+    let all = data.events.iter().chain(&data.sim_events);
+    let events: BTreeSet<_> = all.map(|e| &e.id).collect();
     let actions: BTreeSet<_> = data.actions.iter().map(|a| &a.id).collect();
-    assert_eq!(events.len(), data.events.len());
+    assert_eq!(events.len(), data.events.len() + data.sim_events.len());
     assert_eq!(actions.len(), data.actions.len());
 }
 
+/// Every cause_tag of events (simulation ones included) and actions has a hint, and every
+/// hint has a tag. A hint is told as a sentence of its own (sim.rs adds the capital and the
+/// full stop): lowercase start, no final punctuation, no numbers.
 #[test]
 fn every_cause_tag_has_a_hint() {
     let data = load_all();
     let hints = hints();
-    let choices = data.events.iter().flat_map(|e| &e.choices);
-    let tags = choices.map(|c| &c.cause_tag);
-    let tags = tags.chain(data.actions.iter().map(|a| &a.cause_tag));
-    let missing: BTreeSet<_> = tags.filter(|t| !hints.contains_key(*t)).collect();
+    let events = data.events.iter().chain(&data.sim_events);
+    let tags = events.flat_map(|e| &e.choices).map(|c| &c.cause_tag);
+    let tags: BTreeSet<_> = tags
+        .chain(data.actions.iter().map(|a| &a.cause_tag))
+        .collect();
+    let missing: BTreeSet<_> = tags.iter().filter(|t| !hints.contains_key(**t)).collect();
     assert!(missing.is_empty(), "no hint for {missing:?}");
-    let numbered: Vec<_> = hints.values().filter(|h| has_digits(h)).collect();
-    assert!(numbered.is_empty(), "hints with numbers: {numbered:?}");
+    let unused: Vec<_> = hints.keys().filter(|k| !tags.contains(k)).collect();
+    assert!(unused.is_empty(), "hints of no cause_tag: {unused:?}");
+    let bad: Vec<_> = (hints.values())
+        .filter(|h| {
+            let first = h.chars().next().is_some_and(char::is_lowercase);
+            !first || h.ends_with(['.', '!', '?', ',', ' ']) || has_digits(h)
+        })
+        .collect();
+    assert!(bad.is_empty(), "hints out of the chronicle format: {bad:?}");
 }
 
 #[test]
@@ -154,6 +169,30 @@ fn reign_events_follow_the_brief() {
     }
 }
 
+/// Every choice the player can see carries a hint without numbers (reign.ron style).
+#[test]
+fn every_reign_choice_is_hinted() {
+    let data = load_all();
+    for e in &data.events {
+        for c in &e.choices {
+            let hint = c.hint.as_deref();
+            assert!(hint.is_some_and(|h| !has_digits(h)), "{}: {hint:?}", e.id);
+        }
+    }
+}
+
+/// The brief of stage 9: twelve simulation events, 2-3 choices each, every one important
+/// enough for the chronicle.
+#[test]
+fn sim_events_follow_the_brief() {
+    let data = load_all();
+    assert_eq!(data.sim_events.len(), 12);
+    for e in &data.sim_events {
+        assert!((2..=3).contains(&e.choices.len()), "{}", e.id);
+        assert!(e.importance >= data.sim.threshold, "{}", e.id);
+    }
+}
+
 #[test]
 fn name_pools() {
     let names = load_all().names;
@@ -193,4 +232,36 @@ fn every_reign_event_fires_under_neutral_play() {
         .map(|e| &e.id)
         .collect();
     assert!(silent.is_empty(), "never fired: {silent:?}");
+}
+
+/// The same for the simulation: 1000 dynasties, each after a neutral reign of its seed; every
+/// simulation event reaches the chronicle at least once.
+#[test]
+#[ignore = "about a minute in release; stage 9 acceptance, run with --release --ignored"]
+fn every_sim_event_fires_in_a_thousand_dynasties() {
+    let data = load_all();
+    let preset = preset(&read("presets/default.ron"), &data);
+    let mut fired: BTreeMap<String, u32> = BTreeMap::new();
+    for seed in 0..1000 {
+        let mut g = Game::new(data.clone(), &preset, seed);
+        let end = loop {
+            match g.wait().unwrap() {
+                Step::Event(v) => g.choose((v.choices.len() - 1) / 2).unwrap(),
+                Step::Idle => {}
+                Step::ReignEnded(end) => break end,
+            }
+        };
+        for e in sim::run(end, &data, g.rng.clone()).entries {
+            *fired.entry(e.event.unwrap_or_default()).or_default() += 1;
+        }
+    }
+    let silent: Vec<_> = (data.sim_events.iter())
+        .filter(|e| !fired.contains_key(&e.id))
+        .map(|e| &e.id)
+        .collect();
+    assert!(
+        silent.is_empty(),
+        "never fired: {silent:?}; fired: {fired:?}"
+    );
+    eprintln!("{fired:?}");
 }

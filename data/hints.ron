@@ -1,5 +1,6 @@
-// Chronicle hints: cause_tag of the main cause -> a clause the chronicle weaves into the
-// entry ("знать, лишённая земель ещё при основателе, подняла мятеж"). No numbers.
+// Chronicle hints: cause_tag of the main cause -> an annalist's remark the chronicle tells as
+// a sentence of its own after the entry (sim.rs capitalises it and adds the full stop):
+// lowercase, no final punctuation, no numbers, past tense about the founder's deed.
 // Every cause_tag of every event and action needs one; data_lint checks it.
 {
     // actions.ron
@@ -61,7 +62,7 @@
     "tutor_knight": "наследника основателя растил старый рыцарь",
     "tutor_scholar": "наследника основателя учил заморский учёный",
     "heir_married_foreign": "основатель нашёл наследнику пару при чужеземном дворе",
-    "heir_married_noble": "основатель женил наследника на дочери своего барона",
+    "heir_married_noble": "основатель породнил наследника с домом своего барона",
     "heir_marriage_delayed": "основатель тянул со свадьбой наследника",
     "dispute_elder": "основатель назначил наследником старшего",
     "dispute_younger": "основатель назначил наследником младшего в обход старшего",
@@ -145,12 +146,12 @@
     "assembly_dismissed": "основатель распустил собор знати, и бароны разъехались злыми",
 
     // events/reign.ron: heirs
-    "heir_monks": "наследник основателя вырос среди учёных монахов",
-    "heir_captain": "наследника основателя растил старый воевода",
-    "heir_at_court": "основатель сам учил наследника у трона",
-    "betrothal_foreign": "брак, устроенный основателем с соседним домом, связал два рода",
-    "betrothal_noble": "основатель взял невесту наследнику из своей знати",
-    "betrothal_delayed": "отказ сватам при основателе обидел соседний двор",
+    "campaign_alone": "основатель рано отпустил наследника в поход, и войско это помнило",
+    "campaign_escorted": "наследник основателя учился войне под рукой старого воеводы",
+    "campaign_refused": "основатель не пустил наследника в поход, и войско не считало его своим",
+    "appanage_granted": "удел, данный основателем наследнику, вырастил при нём свой двор",
+    "appanage_council": "наследник основателя учился власти в королевском совете",
+    "appanage_refused": "основатель держал наследника без удела, и тот искал друзей среди недовольных",
     "quarrel_elder": "основатель утвердил право старшего",
     "quarrel_church": "спор наследников при основателе рассудила церковь",
     "quarrel_younger": "основатель возвысил младшего в обход старшего",
@@ -182,4 +183,38 @@
     "pestilence_cordon": "заставы основателя остановили мор",
     "pestilence_monks": "монахи, посланные основателем к больным, остались в памяти народа",
     "pestilence_ignored": "вассал, брошенный основателем в мор, затаил обиду",
+
+    // events/sim/: the simulation's own choices mark nothing, so these never reach the
+    // chronicle today; kept so every cause_tag has a hint (data_lint).
+    "revolt_crushed": "мятеж вассала когда-то утопили в крови",
+    "revolt_conceded": "корона однажды уже отпустила мятежный дом",
+    "revolt_bought": "мятежный дом когда-то откупили золотом и титулами",
+    "peasants_crushed": "мужицкую войну залили кровью, и сёла это помнили",
+    "peasants_appeased": "мужикам однажды уже простили недоимки",
+    "peasants_scapegoat": "мытарей когда-то выдали на расправу толпе",
+    "invasion_met": "вторжение корона встретила мечом",
+    "invasion_bought_off": "от вторжения однажды откупились",
+    "invasion_yielded": "порубежную землю отдали врагу без боя",
+    "nomads_fought": "орду из степи встречали в поле",
+    "nomads_paid": "степнякам однажды заплатили, и они запомнили дорогу",
+    "nomads_waited": "от орды отсиделись за стенами, бросив сёла",
+    "crisis_crushed": "претендентов на престол давили силой",
+    "crisis_council": "смуту однажды погасил собор",
+    "crisis_concessions": "в смуту корона купила знать уступками",
+    "regency_single": "в регентство вся власть была у одного регента",
+    "regency_nobles": "в регентство бароны поделили опеку и казну",
+    "regency_church": "в регентство опеку над престолом держала церковь",
+    "disaster_relief": "в великое бедствие корона кормила народ из казны",
+    "disaster_prayer": "в великое бедствие корона положилась на Божью волю",
+    "famine_granaries": "в великий голод корона открыла амбары",
+    "famine_monasteries": "в великий голод голодных кормили монастыри",
+    "famine_waited": "в великий голод корона ждала урожая, а люди умирали",
+    "unrest_waited": "смутные времена пережидали, ничего не делая",
+    "unrest_guarded": "в смутные времена корона стерегла дороги",
+    "decline_thrift": "в годы упадка двор урезали",
+    "decline_splendour": "в годы упадка блеск двора держали из последнего",
+    "prosperity_saved": "мирные годы корона потратила на стройки и казну",
+    "prosperity_feast": "мирные годы прошли в праздниках",
+    "golden_cathedral": "в золотой век дом воздвиг великий собор",
+    "golden_laws": "в золотой век законы укрепили",
 }

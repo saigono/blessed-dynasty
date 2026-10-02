@@ -1154,7 +1154,8 @@ mod tests {
         data.add_events(NEIGHBOUR_EVENTS).unwrap();
         data.add_actions(ACTIONS).unwrap();
         assert_eq!(data.events.len(), 38);
-        assert_eq!(data.actions.len(), 21);
+        // 15 of actions.ron; to enact 16 laws, to repeal the 10 not of the succession.
+        assert_eq!(data.actions.len(), 15 + 16 + 10);
         // Ids must be unique across files.
         assert!(matches!(
             data.add_events(EVENTS),

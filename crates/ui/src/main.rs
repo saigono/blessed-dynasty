@@ -4,7 +4,7 @@
 mod chronicle;
 mod map;
 
-use bd_core::data::{Data, Law};
+use bd_core::data::{Data, ENACT, Law, REPEAL};
 use bd_core::fx::Fx;
 use bd_core::game::{EventView, Game, GameError, ReignEnd, Step};
 use bd_core::link;
@@ -649,7 +649,7 @@ impl App {
                     }
                     for (id, targets) in g.available_actions() {
                         let def = d.actions.iter().find(|a| a.id == id);
-                        if def.is_some_and(|a| law_of(d, a).is_some()) {
+                        if id.starts_with(ENACT) || id.starts_with(REPEAL) {
                             continue;
                         }
                         let button = ui.button(action_name(w, d, &id));

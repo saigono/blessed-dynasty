@@ -243,3 +243,37 @@ fn a_repeal_costs_half_the_price() {
     let repeal = d.actions.iter().find(|a| a.id == "repeal_law_x").unwrap();
     assert_eq!(d.auto_cost(repeal), Fx::from_int(10));
 }
+
+/// The ten laws of section 5 of the design with its groups; the succession laws a group of
+/// their own, kept (no repeal).
+#[test]
+fn the_ten_laws_of_the_design() {
+    let d = data();
+    let group = |g: &str| {
+        let ls = d.laws.list.iter().filter(|l| l.group == g);
+        ls.map(|l| l.id.as_str()).collect::<Vec<_>>()
+    };
+    assert_eq!(group("Крестьяне"), ["law_serfdom", "law_free_peasants"]);
+    assert_eq!(group("Вера"), ["law_one_faith", "law_tolerance"]);
+    assert_eq!(group("Наследование").len(), 6);
+    let free = group("");
+    assert_eq!(
+        free,
+        [
+            "law_tithe",
+            "law_schools",
+            "law_charters",
+            "law_code",
+            "law_granaries",
+            "law_fairs"
+        ]
+    );
+    for l in &d.laws.list {
+        assert!(!l.name.is_empty() && !l.description.is_empty(), "{}", l.id);
+        assert_eq!(l.keep, l.group == "Наследование", "{}", l.id);
+    }
+    // The succession laws edit the graph as in the design's table.
+    let law = |id: &str| d.law(id).unwrap();
+    assert!(law("law_primogeniture").anchors.is_empty() && law("law_salic").edges.is_empty());
+    assert_eq!(law("law_partition").edges.len(), 2);
+}

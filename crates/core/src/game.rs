@@ -442,14 +442,17 @@ impl Game {
             let def = def.expect("only known actions start");
             let target = a.target.clone().map(|key| match def.target {
                 ActionTarget::Province(_) => Target::Province(ProvinceId(key)),
-                ActionTarget::Neighbour | ActionTarget::Enemy => Target::Neighbour(NeighbourId(key)),
+                ActionTarget::Neighbour | ActionTarget::Enemy => {
+                    Target::Neighbour(NeighbourId(key))
+                }
                 ActionTarget::Heir => Target::Heir(key.parse().expect("written by target_key")),
                 ActionTarget::None => unreachable!("untargeted actions store no target"),
             });
             // The state behind a foreign province target, e.g. the enemy of a war declared
             // for one of its provinces.
             let behind = match &target {
-                Some(Target::Province(id)) => match self.world.provinces.get(id).map(|p| &p.holder) {
+                Some(Target::Province(id)) => match self.world.provinces.get(id).map(|p| &p.holder)
+                {
                     Some(Holder::Foreign(n)) => Some(n.clone()),
                     _ => None,
                 },

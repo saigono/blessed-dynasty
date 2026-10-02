@@ -15,6 +15,7 @@ use bd_core::sim::{self, Chronicle};
 use bd_core::state::{
     AxisId, Change, HeirStatus, Holder, NeighbourId, Preset, ProvinceId, Stance, World,
 };
+use bd_core::war::War;
 use eframe::egui::{self, Button, Grid, ProgressBar, RichText, Ui};
 use map::{BG, BG2, FG, FG2, GOOD, MapView, RUBRIC, WARN, holder_name, round};
 
@@ -511,6 +512,13 @@ impl App {
         );
         let reign = w.tick.0.saturating_sub(w.ruler.reign_start.0) / unit.ticks_per_year + 1;
         key(ui, "Правление", &format!("{reign}-й год"));
+        if let Some(war) = &w.war {
+            let enemy = target_name(w, &Target::Neighbour(war.enemy.clone()));
+            let flag = RichText::new(format!("⚔ Война: {enemy}"))
+                .color(BG)
+                .strong();
+            ui.add(Button::new(flag).fill(RUBRIC).sense(egui::Sense::hover()));
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if let Some(ms) = self.frame_ms {
                 ui.small(RichText::new(format!("кадр {ms:.1} мс")).color(FG2));
@@ -520,7 +528,7 @@ impl App {
             if let Some(army) = w.axes.get(&d.war.army) {
                 key_rtl(ui, axis_name(d, &d.war.army), &round(*army));
             }
-            let income = d.economy.yearly_income(w);
+            let income = bd_core::war::yearly_income(w, d);
             let arrow = if income >= Fx(0) { "▲" } else { "▼" };
             let treasury = round(w.axes[&d.economy.treasury]);
             key_rtl(
@@ -561,10 +569,13 @@ impl App {
                             Some(a) => button.on_hover_ui(|ui| action_tip(ui, d, a)),
                             None => button,
                         };
+                        // A war action has one target, the enemy: no choice to make.
+                        let enemy = def.is_some_and(|a| a.target == ActionTarget::Enemy);
                         if button.clicked() {
-                            cmd = Some(match targets.is_empty() {
-                                true => Cmd::Act(id, None),
-                                false => Cmd::Pick(id, targets),
+                            cmd = Some(match (targets.is_empty(), enemy) {
+                                (true, _) => Cmd::Act(id, None),
+                                (false, true) => Cmd::Act(id, targets.first().cloned()),
+                                (false, false) => Cmd::Pick(id, targets),
                             });
                         }
                     }
@@ -623,7 +634,7 @@ fn running(g: &Game) -> String {
 fn acted(w: &World, def: &Action, key: Option<&str>) -> String {
     let target = key.map(|key| match def.target {
         ActionTarget::Province(_) => Target::Province(ProvinceId(key.into())),
-        ActionTarget::Neighbour => Target::Neighbour(NeighbourId(key.into())),
+        ActionTarget::Neighbour | ActionTarget::Enemy => Target::Neighbour(NeighbourId(key.into())),
         ActionTarget::Heir | ActionTarget::None => Target::Heir(key.parse().unwrap_or(u32::MAX)),
     });
     match target {
@@ -827,6 +838,9 @@ fn side(ui: &mut Ui, g: &Game) {
             ui.small(format!("{} {}", w.ruler.age, years(w.ruler.age)));
         });
     });
+    if let Some(war) = &w.war {
+        war_panel(ui, g, war);
+    }
     heading(ui, "Состояние");
     Grid::new("axes").show(ui, |ui| {
         for a in &d.axes {
@@ -923,6 +937,74 @@ fn side(ui: &mut Ui, g: &Game) {
     });
 }
 
+/// The war going on: enemy, target, the score between defeat and victory, forces, years,
+/// the last battles.
+fn war_panel(ui: &mut Ui, g: &Game, war: &War) {
+    let (w, d) = (&g.world, &g.data);
+    heading(ui, "Война");
+    let enemy = target_name(w, &Target::Neighbour(war.enemy.clone()));
+    let tpy = w.time_unit.ticks_per_year;
+    let year = w.tick.0.saturating_sub(war.started.0) / tpy + 1;
+    ui.label(
+        RichText::new(format!("⚔ {enemy}, {year}-й год войны"))
+            .color(RUBRIC)
+            .strong(),
+    );
+    let target = war
+        .target
+        .as_ref()
+        .map(|p| target_name(w, &Target::Province(p.clone())));
+    ui.label(format!("Цель: {}", target.unwrap_or("нет".into())));
+    // The score from -max (defeat) to +max (victory), filled from the middle.
+    let (r, _) = ui.allocate_exact_size(egui::vec2(260.0, 10.0), egui::Sense::hover());
+    let p = ui.painter();
+    p.rect_filled(r, 0.0, BG2);
+    let share = (war.war_score.0 as f32 / d.war.max_score.0.max(1) as f32).clamp(-1.0, 1.0);
+    let x = r.center().x + share * r.width() / 2.0;
+    let (lo, hi) = (x.min(r.center().x), x.max(r.center().x));
+    let fill = if share >= 0.0 { GOOD } else { RUBRIC };
+    p.rect_filled(egui::Rect::from_x_y_ranges(lo..=hi, r.y_range()), 0.0, fill);
+    p.line_segment([r.center_top(), r.center_bottom()], (1.0, FG));
+    let score = war.war_score;
+    let lead = match score {
+        s if s > Fx(0) => "перевес наш",
+        s if s < Fx(0) => "перевес врага",
+        _ => "равенство",
+    };
+    ui.horizontal(|ui| {
+        ui.small(RichText::new("поражение").color(RUBRIC));
+        let sign = if score > Fx(0) { "+" } else { "" };
+        ui.small(format!("счёт {sign}{}: {lead}", round(score)));
+        ui.small(RichText::new("победа").color(GOOD));
+    });
+    let (ours, theirs) = bd_core::war::strengths(w, d, &war.enemy);
+    ui.label(format!(
+        "Силы: наши {} · враг {}",
+        round(ours),
+        round(theirs)
+    ));
+    match war.battles.len() {
+        0 => {
+            ui.small(RichText::new("Битв ещё не было").color(FG2));
+        }
+        n => {
+            let last = war.battles.iter().rev().take(3);
+            let told: Vec<String> = last
+                .map(|(t, delta)| {
+                    let sign = if *delta > Fx(0) { "+" } else { "" };
+                    format!(
+                        "{} {sign}{}",
+                        t.date(w.time_unit, w.start_year),
+                        round(*delta)
+                    )
+                })
+                .collect();
+            let n = format!("{n} {}", plural(n as u32, ["битва", "битвы", "битв"]));
+            ui.small(format!("{n}, последние: {}", told.join(", ")));
+        }
+    }
+}
+
 pub(crate) fn heading(ui: &mut Ui, text: &str) {
     ui.add_space(8.0);
     ui.label(RichText::new(text.to_uppercase()).small().color(FG2));
@@ -976,7 +1058,15 @@ fn action_name<'a>(d: &'a Data, id: &'a str) -> &'a str {
         .map_or(id, |a| &a.name)
 }
 
+/// A province of a foreign state also names the state: «Фростад, Нордмарк».
 fn target_name(w: &World, t: &Target) -> String {
+    if let Some(p) = match t {
+        Target::Province(id) => w.provinces.get(id),
+        _ => None,
+    } && let Holder::Foreign(_) = p.holder
+    {
+        return format!("{}, {}", p.name, holder_name(w, &p.holder));
+    }
     let name = match t {
         Target::Province(id) => w.provinces.get(id).map(|p| &p.name),
         Target::Neighbour(id) => w.neighbours.get(id).map(|n| &n.name),
@@ -1013,6 +1103,7 @@ fn effects(d: &Data, list: &[Effect]) -> Vec<Line> {
                 ("провинция меняет хозяина".into(), None)
             }
             Effect::StartWar(_) => ("война".into(), Some(false)),
+            Effect::Clash if !out.iter().any(|(t, _)| t == "битва") => ("битва".into(), None),
             Effect::Abdicate | Effect::RulerDies(_) => ("конец правления".into(), Some(false)),
             Effect::IfFriendly(es) => {
                 let friendly = effects(d, es).into_iter();
@@ -1671,12 +1762,14 @@ mod tests {
         h.click_label("Закрыть");
         assert!(!h.app.tree);
 
-        // After the dynasty: every ruler, from the chronicle.
+        // After the dynasty: the rulers from the chronicle, the first ones on screen (a long
+        // dynasty scrolls).
         play(&mut h, 7);
         h.click_label("Родословная");
         let shown = texts_of(&mut h);
         let c = &h.app.dynasty.as_ref().unwrap().0;
-        for r in &c.rulers {
+        assert!(c.rulers.len() > 1);
+        for r in &c.rulers[..2] {
             let crowned = format!("♔ {} (", r.name);
             assert!(shown.iter().any(|t| t.starts_with(&crowned)), "{crowned}");
         }
@@ -1787,6 +1880,94 @@ mod tests {
 
     fn running_line(h: &Harness) -> String {
         running(h.game())
+    }
+
+    /// Outlines painted in this colour and width: the war target's on the map.
+    fn outlines(out: &egui::FullOutput, color: egui::Color32, width: f32) -> usize {
+        (out.shapes.iter())
+            .filter(|c| match &c.shape {
+                egui::Shape::Path(p) => match &p.stroke.color {
+                    egui::epaint::ColorMode::Solid(c) => *c == color && p.stroke.width == width,
+                    _ => false,
+                },
+                _ => false,
+            })
+            .count()
+    }
+
+    /// Stage 14: a war by the mouse. The target picked on the map, the war's flag on the top
+    /// bar, its summary on the side, the target marked on the map, a war action from its
+    /// button; the war ends and its marks go.
+    #[test]
+    fn a_war_is_fought_with_the_mouse() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(1));
+        h.click_label("Править");
+        assert!(!texts_of(&mut h).iter().any(|t| t.starts_with("⚔")));
+        assert!(!texts_of(&mut h).contains(&"Набрать войско".to_string()));
+        h.click_label("Объявить войну");
+        let Some((_, targets)) = &h.app.picking else {
+            panic!("a target to pick")
+        };
+        assert!(targets.contains(&Target::Province(ProvinceId("skala".into()))));
+        assert!(texts_of(&mut h).contains(&"Скала, Нордмарк".to_string()));
+        h.click(h.province_on_screen("skala"));
+        assert_eq!(h.game().world.active_actions[0].id, "declare_war");
+        h.click_label("Подождать год ▸");
+        let Screen::Event(v) = &h.app.screen else {
+            panic!("the war's first event")
+        };
+        assert_eq!(v.event_id, "war_declared");
+        h.click_label("Созвать вассалов");
+        assert!(matches!(h.app.screen, Screen::Reign));
+        let war = h.game().world.war.clone().unwrap();
+        assert_eq!(war.target, Some(ProvinceId("skala".into())));
+
+        let out = h.frame(vec![]);
+        let shown = texts(&out);
+        for t in [
+            "⚔ Война: Нордмарк",
+            "ВОЙНА",
+            "⚔ Нордмарк, 1-й год войны",
+            "Цель: Скала, Нордмарк",
+            "счёт 0: равенство",
+            "Битв ещё не было",
+            "⚔ Скала",
+            "⚔ цель войны",
+        ] {
+            assert!(shown.contains(&t.to_string()), "{t}: {shown:?}");
+        }
+        assert!(shown.iter().any(|t| t.starts_with("Силы: наши ")));
+        assert_eq!(outlines(&out, map::RUBRIC, 4.0), 1);
+        // War actions act at the enemy at once, no target to pick.
+        h.click_label("Набрать войско");
+        assert!(h.app.picking.is_none());
+        let running = &h.game().world.active_actions;
+        assert_eq!(running[0].id, "war_recruit");
+        assert_eq!(running[0].target.as_deref(), Some("nordmark"));
+        // On to the peace by the year button and the first choice of every card.
+        for _ in 0..10 {
+            match h.app.screen {
+                Screen::Event(_) => h.app.apply(Cmd::Choose(0)),
+                _ => {
+                    h.click_label("Подождать год ▸");
+                }
+            }
+            if h.game().world.war.is_none() {
+                break;
+            }
+            let shown = texts_of(&mut h);
+            if !h.game().world.war.as_ref().unwrap().battles.is_empty() {
+                assert!(
+                    shown.iter().any(|t| t.contains(", последние: ")),
+                    "{shown:?}"
+                );
+            }
+        }
+        assert!(h.game().world.war.is_none());
+        let out = h.frame(vec![]);
+        assert!(!texts(&out).iter().any(|t| t.starts_with("⚔")));
+        assert_eq!(outlines(&out, map::RUBRIC, 4.0), 0);
     }
 
     #[test]

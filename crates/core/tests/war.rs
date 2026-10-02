@@ -152,13 +152,26 @@ fn the_target_is_an_enemy_border_province() {
         .unwrap()
         .1;
     let foreign = (g.world.provinces.values()).filter(|p| matches!(p.holder, Holder::Foreign(_)));
-    assert_eq!(targets.len(), foreign.count(), "every foreign province borders the realm");
+    assert_eq!(
+        targets.len(),
+        foreign.count(),
+        "every foreign province borders the realm"
+    );
     for t in &targets {
-        let Target::Province(id) = t else { panic!("{t:?}") };
-        assert!(matches!(g.world.provinces[id].holder, Holder::Foreign(_)), "{id:?}");
+        let Target::Province(id) = t else {
+            panic!("{t:?}")
+        };
+        assert!(
+            matches!(g.world.provinces[id].holder, Holder::Foreign(_)),
+            "{id:?}"
+        );
     }
     // Land behind another state's is no target.
-    let holm = g.world.provinces.get_mut(&ProvinceId("holm".into())).unwrap();
+    let holm = g
+        .world
+        .provinces
+        .get_mut(&ProvinceId("holm".into()))
+        .unwrap();
     holm.holder = Holder::Foreign(nordmark());
     let targets: Vec<_> = (g.available_actions().into_iter())
         .find(|(id, _)| id == "declare_war")
@@ -184,7 +197,10 @@ fn the_target_is_an_enemy_border_province() {
         neighbour: None,
     });
     g.choose(0).unwrap();
-    assert_eq!(g.world.war.unwrap().target, Some(ProvinceId("frostad".into())));
+    assert_eq!(
+        g.world.war.unwrap().target,
+        Some(ProvinceId("frostad".into()))
+    );
 }
 
 #[test]
@@ -220,7 +236,12 @@ fn every_war_ends_within_six_years() {
     let data = content();
     let preset = Preset::load_with_map(PRESET, MAP, &data).unwrap();
     let unit = data.time_unit;
-    let war_actions = ["war_recruit", "war_battle", "war_peace_talks", "war_siege_target"];
+    let war_actions = [
+        "war_recruit",
+        "war_battle",
+        "war_peace_talks",
+        "war_siege_target",
+    ];
     let (mut wars, mut longest) = (0, 0);
     for seed in 0..1000u64 {
         let mut g = Game::new(data.clone(), &preset, seed);
@@ -348,7 +369,12 @@ fn an_unpaid_army_melts() {
 /// on, at its enemy, and each does what it says.
 #[test]
 fn war_actions_only_at_war() {
-    let ids = ["war_recruit", "war_battle", "war_peace_talks", "war_siege_target"];
+    let ids = [
+        "war_recruit",
+        "war_battle",
+        "war_peace_talks",
+        "war_siege_target",
+    ];
     let offered = |g: &Game| {
         let all = g.available_actions();
         ids.map(|id| all.iter().find(|(a, _)| a == id).map(|(_, t)| t.clone()))
@@ -358,18 +384,32 @@ fn war_actions_only_at_war() {
     assert_eq!(offered(&g), [None, None, None, None], "peace");
     for id in ids {
         let t = Some(Target::Neighbour(nordmark()));
-        assert_eq!(g.start_action(id, t), Err(bd_core::game::GameError::Unavailable));
+        assert_eq!(
+            g.start_action(id, t),
+            Err(bd_core::game::GameError::Unavailable)
+        );
     }
     declare(&mut g, "frostad");
-    let Step::Event(v) = g.wait().unwrap() else { panic!() };
+    let Step::Event(v) = g.wait().unwrap() else {
+        panic!()
+    };
     assert_eq!(v.event_id, "war_declared");
     g.choose(2).unwrap();
     let at = vec![Target::Neighbour(nordmark())];
-    assert_eq!(offered(&g), [Some(at.clone()), Some(at.clone()), Some(at.clone()), Some(at)]);
+    assert_eq!(
+        offered(&g),
+        [
+            Some(at.clone()),
+            Some(at.clone()),
+            Some(at.clone()),
+            Some(at)
+        ]
+    );
 
     // Recruit: money into army.
     let (army, treasury) = (g.world.axes[&ax("army")], g.world.axes[&ax("treasury")]);
-    g.start_action("war_recruit", Some(Target::Neighbour(nordmark()))).unwrap();
+    g.start_action("war_recruit", Some(Target::Neighbour(nordmark())))
+        .unwrap();
     assert_eq!(g.world.axes[&ax("treasury")], treasury - Fx::from_int(60));
     g.wait().unwrap();
     assert_eq!(g.world.axes[&ax("army")], army + Fx::from_int(20));
@@ -378,16 +418,24 @@ fn war_actions_only_at_war() {
     }
     // A battle out of turn moves the score.
     let battles = g.world.war.as_ref().unwrap().battles.len();
-    g.start_action("war_battle", Some(Target::Neighbour(nordmark()))).unwrap();
+    g.start_action("war_battle", Some(Target::Neighbour(nordmark())))
+        .unwrap();
     g.wait().unwrap();
     assert!(g.world.war.as_ref().unwrap().battles.len() > battles);
     // Talks: the terms by the score at once.
     if g.pending_event.is_some() {
         g.choose(1).unwrap();
     }
-    if g.world.war.as_ref().is_some_and(|w| w.stage != bd_core::war::WarStage::Peace) {
-        g.start_action("war_peace_talks", Some(Target::Neighbour(nordmark()))).unwrap();
-        let Step::Event(v) = g.wait().unwrap() else { panic!() };
+    if g.world
+        .war
+        .as_ref()
+        .is_some_and(|w| w.stage != bd_core::war::WarStage::Peace)
+    {
+        g.start_action("war_peace_talks", Some(Target::Neighbour(nordmark())))
+            .unwrap();
+        let Step::Event(v) = g.wait().unwrap() else {
+            panic!()
+        };
         assert!(["war_victory", "war_defeat", "war_draw"].contains(&v.event_id.as_str()));
     }
     while g.world.war.is_some() {
@@ -409,14 +457,17 @@ fn a_siege_takes_the_target() {
         declare(&mut g, "skala");
         g.wait().unwrap();
         g.choose(2).unwrap();
-        g.start_action("war_siege_target", Some(Target::Neighbour(nordmark()))).unwrap();
+        g.start_action("war_siege_target", Some(Target::Neighbour(nordmark())))
+            .unwrap();
         // Hold the score where the test wants it; the chain's own events wait.
         g.queue.clear();
         for _ in 0..2 {
             g.world.war.as_mut().unwrap().war_score = Fx::from_int(score);
             g.wait().unwrap();
         }
-        let skala = g.world.provinces[&ProvinceId("skala".into())].holder.clone();
+        let skala = g.world.provinces[&ProvinceId("skala".into())]
+            .holder
+            .clone();
         (skala, g.world.war.is_some())
     };
     assert_eq!(siege(1), (Holder::Crown, false));

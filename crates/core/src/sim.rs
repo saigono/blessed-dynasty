@@ -523,7 +523,8 @@ impl AutoChooser {
                 Effect::Axis(a, d) if *a == data.war.army => {
                     // An army is paid for every year: `army_upkeep` by the change in upkeep.
                     let (upkeep, army) = (&data.war.army_upkeep, w.axes[a]);
-                    let more = crate::data::curve(upkeep, army + *d) - crate::data::curve(upkeep, army);
+                    let more =
+                        crate::data::curve(upkeep, army + *d) - crate::data::curve(upkeep, army);
                     sum = sum + self.weight("army_upkeep") * more;
                     (&a.0, *d)
                 }

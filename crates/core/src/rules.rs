@@ -426,7 +426,8 @@ impl Effect {
                 }
                 let (ours, theirs) = crate::war::strengths(w, ctx.data, enemy);
                 let theirs_here = |id: &&ProvinceId| {
-                    (w.provinces.get(*id)).is_some_and(|p| p.holder == Holder::Foreign(enemy.clone()))
+                    (w.provinces.get(*id))
+                        .is_some_and(|p| p.holder == Holder::Foreign(enemy.clone()))
                 };
                 let target = match ctx.target {
                     Some(Target::Province(id)) => Some(id).filter(theirs_here).cloned(),

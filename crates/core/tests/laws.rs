@@ -707,9 +707,7 @@ fn a_ruler_is_crowned_with_his_marriage_and_his_unions() {
         let id = g.world.heirs[0].id;
         let union = |spouse| bd_core::state::Union { spouse, since };
         g.world.unions.insert(court("vestrum"), union(None));
-        g.world
-            .unions
-            .insert(court("purpur"), union(Some(id)));
+        g.world.unions.insert(court("purpur"), union(Some(id)));
         g.data.sim.max_years = 1;
         let end = ReignEnd {
             cause: "illness".into(),

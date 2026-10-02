@@ -9,8 +9,8 @@ use crate::rules::{
     add_axis,
 };
 use crate::state::{
-    ActiveAction, CauseTag, HeirStatus, Holder, MarkKey, NeighbourId, Preset, ProvinceId, Union,
-    World,
+    ActiveAction, CauseTag, Heir, HeirStatus, Holder, MarkKey, NeighbourId, Preset, ProvinceId,
+    Union, World,
 };
 use crate::time::Tick;
 use serde::{Deserialize, Serialize};
@@ -389,7 +389,7 @@ impl Game {
                 w.deserted += 1;
             }
             w.ruler.age += 1;
-            w.heirs.iter_mut().for_each(|h| h.age += 1);
+            (w.heirs.iter_mut().chain(&mut w.bastards)).for_each(|h| h.age += 1);
             heirs_year(d, w, &mut self.rng);
             for tags in w.marks.values_mut() {
                 tags.iter_mut()
@@ -572,13 +572,12 @@ impl Game {
                     let yes = self.rng.range(0, Fx::from_int(100).0) < chance.0;
                     let spouse = d.marriage.spouse(w, d);
                     if let (true, Some(n), Some(spouse)) = (yes, n, spouse) {
+                        let year = w.year();
                         match spouse {
                             None => _ = w.flags.insert(d.heirs.married_flag.clone()),
-                            Some(id) => w
-                                .heirs
-                                .iter_mut()
+                            Some(id) => (w.heirs.iter_mut())
                                 .filter(|h| h.id == id)
-                                .for_each(|h| h.married = true),
+                                .for_each(|h| (h.married, h.married_in) = (true, Some(year))),
                         }
                         let since = w.tick;
                         w.unions.insert(n.clone(), Union { spouse, since });
@@ -723,15 +722,18 @@ fn target_key(t: &Target) -> String {
 }
 
 /// Yearly: heirs may die by age, ability grows by status until adulthood, claims follow the
-/// succession law (the rightful heir's at once up to `Law.rightful_claim`), hostages lose
-/// claim, a child may be born.
+/// succession law (the rightful heir's at once up to `Law.rightful_claim`, unless a bastard),
+/// hostages lose claim, a child may be born, out of wedlock a bastard. Bastards age and die
+/// like heirs.
 fn heirs_year(d: &Data, w: &mut World, rng: &mut Rng) {
     let r = &d.heirs;
     // No roll at zero risk: the rng stream stays as it was without the table.
-    w.heirs.retain(|h| {
+    let mut lives = |h: &Heir| {
         let risk = by_age(&r.death, h.age);
         risk <= Fx(0) || rng.range(0, 1000 * Fx::SCALE) >= risk.0
-    });
+    };
+    w.heirs.retain(&mut lives);
+    w.bastards.retain(lives);
     w.bury();
     let pct = |v: Fx| v.clamp(Fx(0), Fx::from_int(100));
     let law = r.law(w);
@@ -750,7 +752,7 @@ fn heirs_year(d: &Data, w: &mut World, rng: &mut Rng) {
             let base = if Some(i) == first { l.eldest } else { l.others };
             let mut target = base + h.ability * l.ability_k;
             // The rightful heir has his claim at once, not by years.
-            if Some(i) == rightful {
+            if Some(i) == rightful && !h.bastard {
                 h.claim = h.claim.max(l.rightful_claim);
                 target = target.max(l.rightful_claim);
             }
@@ -763,7 +765,9 @@ fn heirs_year(d: &Data, w: &mut World, rng: &mut Rng) {
     }
     let chance = r.birth_chance(w, w.ruler.age);
     if rng.range(0, Fx::from_int(100).0) < chance.0 {
-        w.add_heir(d.newborn_of(w.next_heir_id, r.sex(rng)));
+        let bastard = !w.flags.contains(&r.married_flag);
+        let h = d.newborn_of(w.next_heir_id, r.sex(rng));
+        w.add_heir(Heir { bastard, ..h });
     }
 }
 

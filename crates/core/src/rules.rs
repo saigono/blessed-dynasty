@@ -35,6 +35,8 @@ pub enum Predicate {
     ProvinceWhere(ProvinceFilter),
     /// Inclusive range.
     HeirCount(u32, u32),
+    /// Unrecognized bastards (`World.bastards`), inclusive range.
+    BastardCount(u32, u32),
     /// Inclusive range.
     RulerAge(u32, u32),
     AtWar,
@@ -63,6 +65,7 @@ impl Predicate {
             Predicate::NotFlag(f) => !w.flags.contains(f),
             Predicate::ProvinceWhere(f) => w.provinces.values().any(|p| f.matches(p, w)),
             Predicate::HeirCount(lo, hi) => (*lo..=*hi).contains(&(w.heirs.len() as u32)),
+            Predicate::BastardCount(lo, hi) => (*lo..=*hi).contains(&(w.bastards.len() as u32)),
             Predicate::RulerAge(lo, hi) => (*lo..=*hi).contains(&w.ruler.age),
             Predicate::AtWar => w.war.is_some(),
             Predicate::WarScoreAbove(v) => w.war.as_ref().is_some_and(|x| x.war_score > *v),
@@ -303,6 +306,8 @@ pub enum HeirOp {
     /// (`sim::rightful`) costs `heirs.designate_penalty`. Naming the named again is nothing.
     Designate(u32),
     TargetDesignate,
+    /// The eldest bastard joins the line with `heirs.bastard_claim`; no-op without one.
+    Recognize,
 }
 
 /// What an effect may touch besides the world.
@@ -399,10 +404,17 @@ impl Effect {
                 match &op {
                     HeirOp::Add => w.add_heir(ctx.data.newborn(w.next_heir_id)),
                     HeirOp::TargetMarry => {
+                        let year = w.year();
                         if let Some(h) = w.heirs.get_mut(heir(&t)) {
-                            h.married = true;
+                            (h.married, h.married_in) = (true, Some(year));
                         }
                     }
+                    HeirOp::Recognize if !w.bastards.is_empty() => {
+                        let mut h = w.bastards.remove(0);
+                        h.claim = ctx.data.heirs.bastard_claim;
+                        w.insert_heir(h);
+                    }
+                    HeirOp::Recognize => {}
                     HeirOp::Remove(i) if heir(i) < w.heirs.len() => {
                         w.heirs.remove(heir(i));
                     }

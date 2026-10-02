@@ -370,7 +370,8 @@ pub fn tree(
                         Some(d) => format!("{}–{d}", k.born),
                         None => format!("р. {}", k.born),
                     };
-                    let mut text = format!("{} ({life})", k.name);
+                    let bastard = if k.bastard { ", бастард" } else { "" };
+                    let mut text = format!("{} ({life}{bastard})", k.name);
                     if let Some(y) = k.crowned {
                         let till = reign(i)
                             .filter(|r| r.cause.is_some())

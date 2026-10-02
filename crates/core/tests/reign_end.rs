@@ -57,6 +57,8 @@ fn two_heirs(w: &mut World) {
         status: HeirStatus::Home,
         sex: Sex::Female,
         married: false,
+        married_in: None,
+        bastard: false,
     });
 }
 

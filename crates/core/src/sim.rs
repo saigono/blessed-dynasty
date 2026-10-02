@@ -260,8 +260,8 @@ pub fn successor(w: &World, data: &Data) -> Option<usize> {
     home.or_else(|| rightful(w, data))
 }
 
-/// Who the rule of the law in force puts first (`SuccessionRule`); `next_heir` without
-/// a law. None: nobody may.
+/// Who the rule of the law in force puts first (`SuccessionRule`) among the lawful heirs, among
+/// recognized bastards only without one; `next_heir` without a law. None: nobody may.
 pub fn rightful(w: &World, data: &Data) -> Option<usize> {
     let Some(law) = data.heirs.law(w) else {
         return next_heir(w);
@@ -269,7 +269,8 @@ pub fn rightful(w: &World, data: &Data) -> Option<usize> {
     let h = &w.heirs;
     let son = |i: &usize| h[*i].sex == Sex::Male;
     let child = |i: &usize| h[*i].id >= w.line_from;
-    let mut all = 0..h.len();
+    let lawful = h.iter().any(|x| !x.bastard);
+    let mut all = (0..h.len()).filter(|i| !lawful || !h[*i].bastard);
     match law.rule {
         SuccessionRule::Absolute => all.next(),
         SuccessionRule::Male | SuccessionRule::Partition => {
@@ -303,7 +304,7 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     let lawful = rightful(w, d) == Some(i);
     let mut heir = w.heirs.remove(i);
     w.designated = None;
-    if let Some(l) = d.heirs.law(w).filter(|_| lawful) {
+    if let Some(l) = d.heirs.law(w).filter(|_| lawful && !heir.bastard) {
         heir.claim = heir.claim.max(l.rightful_claim);
     }
     // The late ruler's unions end with him; the new one's come with him to the throne.
@@ -322,14 +323,17 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     }
     // His brothers and sisters become the collateral line, behind his children.
     w.line_from = w.next_heir_id;
-    // Children before the coronation come as in wedlock, as heir marriages were never
-    // tracked year by year (stage 15); from now on births follow his own marriage.
-    let married = &d.heirs.married_flag;
-    w.flags.insert(married.clone());
-    born_before(d, w, rng, ruler.age);
-    if !heir.married {
-        w.flags.remove(married);
-    }
+    // Children before the coronation: lawful from his wedding on, bastards before it.
+    let wed = heir.married.then(|| {
+        let years = heir.married_in.map(|y| year.saturating_sub(y));
+        years.map_or(d.heirs.adult_age, |y| ruler.age.saturating_sub(y))
+    });
+    born_before(d, w, rng, ruler.age, wed);
+    let married = d.heirs.married_flag.clone();
+    match heir.married {
+        true => w.flags.insert(married),
+        false => w.flags.remove(&married),
+    };
     if let Some(l) = d.heirs.law(w) {
         // Each heir left is a rival: a chance of dispute per head, rolled only if the law has one.
         let rivals = l.dispute_per_heir * Fx::from_int(w.heirs.len() as i64);
@@ -449,13 +453,20 @@ fn partition(w: &mut World, (loyalty, strength): (Fx, Fx), sons: &[(u32, String)
     told
 }
 
-/// The children a new ruler of `age` had before the coronation: a roll of
-/// `HeirRules::birth_chance` for every adult year, and each child born then a roll of
-/// `heirs.death` for every year of its own; ability grown at home until adulthood.
-fn born_before(d: &Data, w: &mut World, rng: &mut Rng, age: u32) {
+/// The children a new ruler of `age`, wed at age `wed`, had before the coronation: a roll of
+/// `heirs.birth` for every adult year (times `unmarried` before the wedding: a bastard), and
+/// each child born then a roll of `heirs.death` for every year of its own; ability grown at
+/// home until adulthood.
+fn born_before(d: &Data, w: &mut World, rng: &mut Rng, age: u32, wed: Option<u32>) {
     let r = &d.heirs;
     for at in r.adult_age..age {
-        if rng.range(0, Fx::from_int(100).0) >= r.birth_chance(w, at).0 {
+        let bastard = wed.is_none_or(|m| at < m);
+        let k = if bastard {
+            r.unmarried
+        } else {
+            Fx::from_int(1)
+        };
+        if rng.range(0, Fx::from_int(100).0) >= (crate::data::by_age(&r.birth, at) * k).0 {
             continue;
         }
         let years = age - at;
@@ -464,6 +475,7 @@ fn born_before(d: &Data, w: &mut World, rng: &mut Rng, age: u32) {
             continue;
         }
         let mut h = d.newborn_of(w.next_heir_id, r.sex(rng));
+        h.bastard = bastard;
         let grown = r.growth_home * Fx::from_int(years.min(r.adult_age).into());
         (h.age, h.ability) = (years, (h.ability + grown).min(Fx::from_int(100)));
         w.add_heir(h);
@@ -815,6 +827,14 @@ impl AutoChooser {
                 Effect::IfFriendly(es) => {
                     sum = sum + self.worth(es, w, data, nb);
                     continue;
+                }
+                // A bastard to recognize: `recognize`, and an `heir` when there is none.
+                Effect::HeirOp(HeirOp::Recognize) if w.bastards.is_empty() => continue,
+                Effect::HeirOp(HeirOp::Recognize) => {
+                    if w.heirs.is_empty() {
+                        sum = sum + self.weight("heir");
+                    }
+                    ("recognize", one)
                 }
                 Effect::HeirOp(HeirOp::SetStatus(..) | HeirOp::TargetStatus(_))
                 | Effect::HeirOp(HeirOp::TargetDesignate)

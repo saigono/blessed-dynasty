@@ -1099,7 +1099,8 @@ fn side(ui: &mut Ui, g: &Game) {
                 Sex::Male => "♂",
                 Sex::Female => "♀",
             };
-            ui.label(format!("{sex} {}, {}", h.name, h.age));
+            let bastard = if h.bastard { " (бастард)" } else { "" };
+            ui.label(format!("{sex} {}{bastard}, {}", h.name, h.age));
             ui.small(status);
             ui.small(format!(
                 "спос. {} · прет. {}",
@@ -1109,6 +1110,13 @@ fn side(ui: &mut Ui, g: &Game) {
             ui.end_row();
         }
     });
+    if !w.bastards.is_empty() {
+        let names: Vec<String> = (w.bastards.iter())
+            .map(|h| format!("{}, {}", h.name, h.age))
+            .collect();
+        let line = ui.label(format!("Бастарды: {}", names.join("; ")));
+        line.on_hover_text("Рождены вне брака и не наследуют, пока их не признают.");
+    }
     heading(ui, "Соседи");
     let bonds = g.bonds();
     Grid::new("neighbours").show(ui, |ui| {
@@ -2240,6 +2248,30 @@ mod tests {
             assert!(shown.iter().any(|t| t.starts_with(&crowned)), "{crowned}");
         }
         assert_eq!(chronicle::family(&c.kin).len(), c.kin.len());
+    }
+
+    /// Stage 17: bastards show beside the heirs and in the family tree, out of the line.
+    #[test]
+    fn bastards_show_out_of_the_line() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(1));
+        h.click_label("Править");
+        let g = h.app.game.as_mut().unwrap();
+        let mut b = g.data.new_heir.clone();
+        (b.name, b.bastard) = ("Ольга".into(), true);
+        g.world.add_heir(b);
+        let shown = texts_of(&mut h);
+        assert!(
+            shown.contains(&"Бастарды: Ольга, 0".to_string()),
+            "{shown:?}"
+        );
+        assert!(shown.contains(&"Первый в очереди: Конрад".to_string()));
+        h.click_label("Родословная");
+        let shown = texts_of(&mut h);
+        assert!(
+            shown.contains(&"Ольга (р. 1187, бастард)".to_string()),
+            "{shown:?}"
+        );
     }
 
     /// Line segments painted in the holder border colour, in map coordinates.

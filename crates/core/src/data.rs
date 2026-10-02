@@ -286,7 +286,7 @@ pub struct HeirRules {
     pub claim_step: Fx,
     pub laws: Vec<Law>,
     /// Birth chance in percent: the row of the largest `age_from <= ruler age`,
-    /// times `unmarried` without `married_flag`.
+    /// times `unmarried` without `married_flag`; a child out of wedlock is a bastard.
     pub birth: Vec<(u32, Fx)>,
     pub married_flag: String,
     pub unmarried: Fx,
@@ -302,6 +302,9 @@ pub struct HeirRules {
     pub designate_penalty: Vec<(AxisId, Fx)>,
     #[serde(default)]
     pub designate_dispute: Fx,
+    /// The claim of a bastard recognized (`HeirOp::Recognize`).
+    #[serde(default)]
+    pub bastard_claim: Fx,
 }
 
 fn half() -> Fx {
@@ -946,7 +949,7 @@ mod tests {
         data.add_events(NEIGHBOUR_EVENTS).unwrap();
         data.add_actions(ACTIONS).unwrap();
         assert_eq!(data.events.len(), 38);
-        assert_eq!(data.actions.len(), 19);
+        assert_eq!(data.actions.len(), 20);
         // Ids must be unique across files.
         assert!(matches!(
             data.add_events(EVENTS),

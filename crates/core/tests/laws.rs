@@ -51,6 +51,8 @@ fn game(data: &Data, law: &str, people: &[Person]) -> Game {
         sex: *sex,
         // Grown heirs are wed, and crowned so (births before the coronation).
         married: *age >= 16,
+        married_in: None,
+        bastard: false,
     };
     for (i, p) in people.iter().enumerate().filter(|(_, p)| !p.2) {
         w.add_heir(heir(i, p));
@@ -897,4 +899,116 @@ fn the_heir_dispute_designates_the_younger() {
     assert!(younger.contains(&bd_core::rules::Effect::HeirOp(
         bd_core::rules::HeirOp::Designate(1)
     )));
+}
+
+/// A year of an unmarried ruler whose every year brings a child, heirs as given.
+fn unwed_year(people: &[Person]) -> Game {
+    let mut data = data();
+    (data.heirs.birth, data.heirs.death) = (vec![(0, Fx::from_int(500))], vec![]);
+    data.heirs.unmarried = Fx::from_int(1);
+    let mut g = game(&data, "law_primogeniture", people);
+    g.world.flags.remove("married");
+    g.data.events.clear();
+    g.wait().unwrap();
+    g
+}
+
+/// Acceptance: a child born out of wedlock is a bastard: out of the line, in the family tree;
+/// with only bastards the dynasty ends.
+#[test]
+fn bastards_are_out_of_the_line() {
+    let g = unwed_year(&[]);
+    let w = &g.world;
+    assert!(w.heirs.is_empty());
+    assert_eq!(w.bastards.len(), 1);
+    assert!(w.bastards[0].bastard && w.kin.last().unwrap().bastard);
+    assert_eq!(sim::successor(w, &g.data), None);
+    assert_eq!(w.kin.last().unwrap().died, None);
+    // A year on he is alive still, and the ruler dies with no heir.
+    let mut data = g.data.clone();
+    data.heirs.birth = vec![];
+    let end = ReignEnd {
+        cause: "illness".into(),
+        tick: g.world.tick,
+        world: g.world.clone(),
+    };
+    let c = sim::run(end, &data, Rng::from_seed(1));
+    assert_eq!((c.fall, c.rulers.len()), (FallReason::NoHeir, 1));
+}
+
+/// Acceptance: a bastard recognized joins the line with `bastard_claim`, after every lawful
+/// heir, without the rightful claim; the church frowns. The automaton recognizes one only
+/// with no heir left.
+#[test]
+fn a_recognized_bastard_joins_the_line_with_a_low_claim() {
+    let mut g = unwed_year(&[(M, 5, true, 50)]);
+    g.data.heirs.birth = vec![];
+    let church = axis(&g, "loyalty_church");
+    g.world
+        .axes
+        .insert(AxisId("treasury".into()), Fx::from_int(500));
+    g.start_action("recognize_bastard", None).unwrap();
+    g.wait().unwrap();
+    let w = &g.world;
+    assert!(w.bastards.is_empty());
+    let names: Vec<_> = w
+        .heirs
+        .iter()
+        .map(|h| (h.name.as_str(), h.bastard))
+        .collect();
+    assert_eq!(names, [("p0", false), (w.heirs[1].name.as_str(), true)]);
+    assert_eq!(w.heirs[1].claim, Fx::from_int(20));
+    assert_eq!(sim::rightful(w, &g.data), Some(0));
+    assert!(axis(&g, "loyalty_church") < church);
+    // Alone in the line he is first, yet his claim only creeps toward `others`.
+    g.world.heirs.remove(0);
+    g.wait().unwrap();
+    assert_eq!(sim::successor(&g.world, &g.data), Some(0));
+    assert_eq!(g.world.heirs[0].claim, Fx::from_int(22));
+    // The automaton: not while a lawful heir lives, at once when none is left.
+    let auto = |people: &[Person]| {
+        let mut g = unwed_year(people);
+        g.world
+            .axes
+            .insert(AxisId("treasury".into()), Fx::from_int(500));
+        let a = AutoChooser::for_ruler(&g.data, &g.world.ruler);
+        (0..20).any(|_| {
+            a.action(&mut g)
+                .is_some_and(|(id, _)| id == "recognize_bastard")
+        })
+    };
+    assert!(auto(&[]));
+    assert!(!auto(&[(M, 5, true, 50)]));
+}
+
+/// Acceptance: the children an heir had before his coronation are lawful only from his
+/// wedding on; before it, and without one, bastards.
+#[test]
+fn children_before_the_coronation_are_lawful_only_in_wedlock() {
+    let crowned = |married_in: Option<u32>| {
+        let mut data = data();
+        (data.heirs.birth, data.heirs.death) = (vec![(0, Fx::from_int(100))], vec![]);
+        data.sim.max_years = 1;
+        let mut g = game(&data, "law_primogeniture", &[(M, 30, true, 50)]);
+        let h = &mut g.world.heirs[0];
+        (h.married, h.married_in) = (married_in.is_some(), married_in);
+        let end = ReignEnd {
+            cause: "illness".into(),
+            tick: g.world.tick,
+            world: g.world.clone(),
+        };
+        let w = sim::run(end, &data, Rng::from_seed(1))
+            .entries
+            .remove(0)
+            .snapshot;
+        (w.heirs.len(), w.bastards.len())
+    };
+    // 30 years old in 1187, wed in 1182 at 25: five lawful children, his 25th year to 29th;
+    // bastards at `unmarried` (0.2) of a sure birth in the nine years before.
+    let (lawful, bastards) = crowned(Some(1182));
+    assert_eq!(lawful, 5);
+    assert!((1..=9).contains(&bastards), "{bastards}");
+    let (lawful, bastards) = crowned(None);
+    assert_eq!(lawful, 0);
+    assert!(bastards > 0);
 }

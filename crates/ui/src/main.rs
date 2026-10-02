@@ -6,7 +6,8 @@ mod map;
 
 use bd_core::data::Data;
 use bd_core::fx::Fx;
-use bd_core::game::{EventView, Game, GameError, Step};
+use bd_core::game::{EventView, Game, GameError, ReignEnd, Step};
+use bd_core::link;
 use bd_core::rng::Rng;
 use bd_core::rules::{ActionTarget, Effect, Target};
 use bd_core::score::{self, Score, ScoreRules};
@@ -31,8 +32,9 @@ const EVENTS: [&str; 5] = [
 ];
 /// Every file of data/events/sim, in file name order.
 const SIM_EVENTS: [&str; 1] = [include_str!("../../../data/events/sim/sim.ron")];
-/// `(preset, map)`.
-const PRESETS: [(&str, &str); 1] = [(
+/// `(id, preset, map)`; the id is the file name and goes into game links.
+const PRESETS: [(&str, &str, &str); 1] = [(
+    "default",
     include_str!("../../../data/presets/default.ron"),
     include_str!("../../../data/maps/default.ron"),
 )];
@@ -64,6 +66,8 @@ enum Cmd {
     Summary,
     /// The same seed and preset again.
     Restart,
+    /// The link to this game into the clipboard; native also prints it.
+    CopyLink,
     /// A new seed, drawn from the last one, and the same preset.
     NewSeed,
 }
@@ -88,6 +92,9 @@ struct App {
     /// The last refusal from the core.
     note: String,
     frame_ms: Option<f32>,
+    /// The address bar holds a `#p=...` link; a new start clears it, so a reload does not
+    /// bring the old game back.
+    linked: bool,
 }
 
 fn load_data() -> Data {
@@ -127,7 +134,7 @@ impl App {
 
         let data = load_data();
         let presets: Vec<Preset> = (PRESETS.iter())
-            .map(|(p, m)| Preset::load_with_map(p, m, &data).expect("data/presets"))
+            .map(|(_, p, m)| Preset::load_with_map(p, m, &data).expect("data/presets"))
             .collect();
         App {
             game: None,
@@ -144,11 +151,19 @@ impl App {
             picking: None,
             note: String::new(),
             frame_ms: None,
+            linked: false,
         }
     }
 
     fn apply(&mut self, cmd: Cmd) {
         self.note.clear();
+        if matches!(cmd, Cmd::Start(_) | Cmd::Restart | Cmd::NewSeed) && self.linked {
+            self.linked = false;
+            #[cfg(target_arch = "wasm32")]
+            if let Some(w) = eframe::web_sys::window() {
+                let _ = w.location().set_hash("");
+            }
+        }
         match cmd {
             Cmd::Start(seed) => return self.start(seed),
             Cmd::Restart => return self.start(self.played),
@@ -196,11 +211,64 @@ impl App {
                 res => res.map(|_| Step::Idle),
             },
             Cmd::Abdicate => g.abdicate().and_then(|_| g.wait()),
-            Cmd::Start(_) | Cmd::Restart | Cmd::NewSeed | Cmd::Entry(_) | Cmd::Summary => {
+            Cmd::Start(_)
+            | Cmd::Restart
+            | Cmd::NewSeed
+            | Cmd::Entry(_)
+            | Cmd::Summary
+            | Cmd::CopyLink => {
                 unreachable!("handled above")
             }
         };
         self.step(res);
+    }
+
+    /// Opens the game of a `#p=...` link, if `url` has one: at the reign, or at the score
+    /// if the reign is over. A broken link leaves the start screen with a note.
+    fn open(&mut self, url: &str) {
+        let Some((_, text)) = url.split_once("#p=") else {
+            return;
+        };
+        self.linked = true;
+        if let Err(e) = self.replay(text) {
+            (self.game, self.screen) = (None, Screen::Start);
+            self.note = format!("Ссылка не открылась: {e}");
+        }
+    }
+
+    fn replay(&mut self, text: &str) -> Result<(), String> {
+        let l = link::decode(text)?;
+        let preset = PRESETS.iter().position(|p| p.0 == l.preset_id);
+        self.preset = preset.ok_or(format!("нет пресета {}", l.preset_id))?;
+        self.start(l.seed);
+        let g = self.game.as_mut().expect("just started");
+        l.play(g)?;
+        if let Some(cause) = g.ended.clone() {
+            let end = ReignEnd {
+                cause,
+                tick: g.world.tick,
+                world: g.world.snapshot(),
+            };
+            self.step(Ok(Step::ReignEnded(end)));
+            self.screen = Screen::Summary;
+        } else if g.pending_event.is_some() {
+            let res = g.wait();
+            self.step(res);
+        }
+        Ok(())
+    }
+
+    /// `#p=...` after the page address on the web, alone natively.
+    fn link(&self) -> String {
+        let g = self.game.as_ref().expect("in a game");
+        let text = link::encode(PRESETS[self.preset].0, self.played, g);
+        #[cfg(target_arch = "wasm32")]
+        let page = (eframe::web_sys::window().and_then(|w| w.location().href().ok()))
+            .map(|h| h.split('#').next().unwrap_or_default().to_string())
+            .unwrap_or_default();
+        #[cfg(not(target_arch = "wasm32"))]
+        let page = "";
+        format!("{page}#p={text}")
     }
 
     fn start(&mut self, seed: u64) {
@@ -251,8 +319,17 @@ impl App {
                 }
             }
         };
-        if let Some(cmd) = cmd {
-            self.apply(cmd);
+        match cmd {
+            Some(Cmd::CopyLink) => {
+                let url = self.link();
+                #[cfg(not(target_arch = "wasm32"))]
+                println!("{url}");
+                // eframe writes it with navigator.clipboard on the web.
+                ui.ctx().copy_text(url);
+                self.note = "Ссылка скопирована".into();
+            }
+            Some(cmd) => self.apply(cmd),
+            None => {}
         }
     }
 
@@ -279,6 +356,9 @@ impl App {
                 .clicked()
             {
                 cmd = seed.map(Cmd::Start);
+            }
+            if !self.note.is_empty() {
+                ui.label(RichText::new(&self.note).color(RUBRIC));
             }
         });
         cmd
@@ -393,6 +473,9 @@ impl App {
                 let wait = Button::new(RichText::new("Подождать год ▸").color(BG)).fill(FG);
                 if ui.add(wait).clicked() {
                     cmd = Some(Cmd::Wait);
+                }
+                if ui.button("Скопировать ссылку").clicked() {
+                    cmd = Some(Cmd::CopyLink);
                 }
             });
         });
@@ -678,10 +761,16 @@ impl eframe::App for App {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
+    // A link as the first argument, the whole URL or its `#p=...`.
+    let url = std::env::args().nth(1).unwrap_or_default();
     eframe::run_native(
         "Blessed Dynasty",
         eframe::NativeOptions::default(),
-        Box::new(|cc| Ok(Box::new(App::new(&cc.egui_ctx)))),
+        Box::new(move |cc| {
+            let mut app = App::new(&cc.egui_ctx);
+            app.open(&url);
+            Ok(Box::new(app))
+        }),
     )
 }
 
@@ -697,8 +786,15 @@ fn main() {
     let canvas = canvas
         .dyn_into::<eframe::web_sys::HtmlCanvasElement>()
         .expect("a canvas");
-    wasm_bindgen_futures::spawn_local(async {
-        let app: eframe::AppCreator = Box::new(|cc| Ok(Box::new(App::new(&cc.egui_ctx))));
+    let url = eframe::web_sys::window()
+        .and_then(|w| w.location().hash().ok())
+        .unwrap_or_default();
+    wasm_bindgen_futures::spawn_local(async move {
+        let app: eframe::AppCreator = Box::new(move |cc| {
+            let mut app = App::new(&cc.egui_ctx);
+            app.open(&url);
+            Ok(Box::new(app))
+        });
         let options = eframe::WebOptions::default();
         let runner = eframe::WebRunner::new();
         runner
@@ -741,8 +837,9 @@ mod tests {
             out
         }
 
-        /// Press and release of the left button at `pos`, as the mouse does it.
-        fn click(&mut self, pos: Pos2) {
+        /// Press and release of the left button at `pos`, as the mouse does it; the output of
+        /// the release.
+        fn click(&mut self, pos: Pos2) -> egui::FullOutput {
             let button = |pressed| Event::PointerButton {
                 pos,
                 button: PointerButton::Primary,
@@ -751,7 +848,7 @@ mod tests {
             };
             self.frame(vec![Event::PointerMoved(pos)]);
             self.frame(vec![button(true)]);
-            self.frame(vec![button(false)]);
+            self.frame(vec![button(false)])
         }
 
         fn game(&self) -> &Game {
@@ -759,7 +856,7 @@ mod tests {
         }
 
         /// Clicks the widget with this label, found by its accessibility node.
-        fn click_label(&mut self, label: &str) {
+        fn click_label(&mut self, label: &str) -> egui::FullOutput {
             self.ctx.enable_accesskit();
             let out = self.frame(vec![]);
             let tree = out
@@ -770,7 +867,7 @@ mod tests {
             let b = node.and_then(|(_, n)| n.bounds());
             let b = b.unwrap_or_else(|| panic!("no «{label}» on screen"));
             let centre = Pos2::new((b.x0 + b.x1) as f32 / 2.0, (b.y0 + b.y1) as f32 / 2.0);
-            self.click(centre);
+            self.click(centre)
         }
 
         fn province_on_screen(&self, id: &str) -> Pos2 {
@@ -869,6 +966,79 @@ mod tests {
         let seed = Rng::from_seed(7).next_u64() % 1_000_000;
         assert_eq!((h.app.played, h.app.seed.clone()), (seed, seed.to_string()));
         assert!(matches!(h.app.screen, Screen::Reign) && h.game().world.tick.0 == 0);
+    }
+
+    /// The link the button copies.
+    fn copy_link(h: &mut Harness) -> String {
+        let out = h.click_label("Скопировать ссылку");
+        let copied = out.platform_output.commands.iter().find_map(|c| match c {
+            egui::OutputCommand::CopyText(t) => Some(t.clone()),
+            _ => None,
+        });
+        assert_eq!(h.app.note, "Ссылка скопирована");
+        copied.expect("the button copies the link")
+    }
+
+    /// A link opened by another app, from the embedded data alone, gives the same chronicle
+    /// and score, on the score screen.
+    #[test]
+    fn a_link_shows_the_same_chronicle_and_score_elsewhere() {
+        let mut h = Harness::new();
+        play(&mut h, 7);
+        h.click_label("К итогу ▸");
+        let url = copy_link(&mut h);
+        assert!(url.starts_with("#p="), "{url}");
+        let mut other = Harness::new();
+        other.app.open(&format!("https://example.org/bd/{url}"));
+        assert!(
+            matches!(other.app.screen, Screen::Summary),
+            "{}",
+            other.app.note
+        );
+        assert_eq!(other.app.dynasty, h.app.dynasty);
+        assert_eq!(other.game().decisions, h.game().decisions);
+        assert_eq!(other.app.played, 7);
+        other.frame(vec![]);
+        // A new start drops the link from the address bar.
+        assert!(other.app.linked);
+        other.click_label("Тот же старт, заново");
+        assert!(!other.app.linked && !h.app.linked);
+    }
+
+    /// From the reign screen the link reopens the same reign, years waited included.
+    #[test]
+    fn a_link_to_a_reign_in_progress_opens_the_reign() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(2));
+        for _ in 0..6 {
+            if let Screen::Event(_) = h.app.screen {
+                h.app.apply(Cmd::Choose(0));
+            }
+            h.app.apply(Cmd::Wait);
+        }
+        if let Screen::Event(_) = h.app.screen {
+            h.app.apply(Cmd::Choose(1));
+        }
+        h.frame(vec![]);
+        let url = copy_link(&mut h);
+        let mut other = Harness::new();
+        other.app.open(&url);
+        assert!(matches!(other.app.screen, Screen::Reign));
+        assert_eq!(other.game().world, h.game().world);
+        assert!(other.game().world.tick.0 >= 6);
+        assert!(other.app.dynasty.is_none());
+
+        // A broken link stays on the start screen and says so; no link, nothing happens.
+        let mut broken = Harness::new();
+        broken.app.open("#p=AAAA");
+        assert!(matches!(broken.app.screen, Screen::Start) && broken.app.game.is_none());
+        assert!(broken.app.note.starts_with("Ссылка не открылась"));
+        broken.frame(vec![]);
+        broken.app.open("https://example.org/");
+        assert!(matches!(broken.app.screen, Screen::Start));
+        assert!(broken.app.linked);
+        broken.app.apply(Cmd::Start(3));
+        assert!(!broken.app.linked);
     }
 
     #[test]

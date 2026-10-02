@@ -266,7 +266,8 @@
             (id: "pious", percent: 10, ability_k: 0, studying: 35, hostage: -5),
         ],
         // AutoChooser: an option scores sum(weight[key] * amount) over its effects, plus a
-        // roll in 0..=noise. Keys: axis ids, flag ids (+1 set, -1 cleared) and effect kinds:
+        // roll in 0..=noise. Keys: axis ids, flag ids (+1 set, -1 cleared; only a change
+        // counts, so a law change weighs the new law's flag less the old one's) and effect kinds:
         // province_income, province_population, province_loyalty, health, relation,
         // crown_power, heir_ability, heir_claim (by the delta), army_upkeep (by the change in
         // yearly upkeep an army change brings, war.army_upkeep); build, grant, revoke, secede,
@@ -292,9 +293,9 @@
             },
             traits: {
                 "greedy": {"treasury": 0.3, "income": 2, "province_income": 2},
-                "cautious": {"war": -20, "army": 0.3, "stability": 1, "health": 1},
-                "warlike": {"war": 25, "army": 0.4, "prestige": 0.7, "province": 20},
-                "pious": {"loyalty_church": 1.2},
+                "cautious": {"war": -20, "army": 0.3, "stability": 1, "health": 1, "law_primogeniture": 15},
+                "warlike": {"war": 25, "army": 0.4, "prestige": 0.7, "province": 20, "law_male": 15},
+                "pious": {"loyalty_church": 1.2, "law_salic": 20},
             },
         ),
         // (title, text) of the entries the simulation makes itself. Rulers of either sex:
@@ -305,6 +306,8 @@
             province_gained: ("Земля возвращена", "Земля {province} отошла к короне. Прежний владелец: {neighbour}."),
             // The heir first in line died of age risk (heirs.death); see heir_death_age.
             heir_died: ("Смерть наследника", "Не стало первого в очереди на престол: {heir}."),
+            // The law in force changed (an action done or a choice); {law} is its name.
+            law_changed: ("Новый закон о престоле", "Отныне престол наследуют по закону «{law}»."),
             partition: ("Земли поделены между братьями", "По закону о разделе младшие сыновья получили уделы: {lands}."),
             // What ended a reign (a RulerDies cause or the abdication event id) and the dynasty,
             // as shown to the player.

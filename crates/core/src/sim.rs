@@ -152,6 +152,7 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
                 .map(|p| p.holder.clone())
                 .collect();
             let first = successor(&g.world, &g.data).map(|i| g.world.heirs[i].clone());
+            let law = g.data.heirs.law(&g.world).map(|l| l.flag.clone());
             let step = g.wait().expect("the reign goes on");
             // Within a tick only the yearly age risk takes an heir; events do on resolve.
             if let Some(h) = first.filter(|h| g.world.heir_index(h.id).is_none()) {
@@ -201,6 +202,7 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
                 }
             }
             province_entries(&g, &holders, &mut c);
+            law_entry(&g, law, &mut c);
         }
     };
     let w = &g.world;
@@ -445,6 +447,21 @@ fn province_entries(g: &Game, holders: &[Holder], c: &mut Chronicle) {
     }
 }
 
+/// An entry when the law in force is no longer `was`.
+fn law_entry(g: &Game, was: Option<String>, c: &mut Chronicle) {
+    let Some(law) = g
+        .data
+        .heirs
+        .law(&g.world)
+        .filter(|l| Some(&l.flag) != was.as_ref())
+    else {
+        return;
+    };
+    let (title, text) = &g.data.sim.texts.law_changed;
+    let told = (title.clone(), text.replace("{law}", &law.name));
+    c.entries.push(entry(g, told, g.data.sim.notable, vec![]));
+}
+
 fn entry(
     g: &Game,
     (title, text): (String, String),
@@ -612,7 +629,8 @@ impl AutoChooser {
         self.weights.get(key).copied().unwrap_or_default()
     }
 
-    /// Keys: axis ids (by the delta), flag ids (+1 set, -1 cleared), `province_income`,
+    /// Keys: axis ids (by the delta), flag ids (+1 set, -1 cleared; a flag already so counts
+    /// nothing), `province_income`,
     /// `province_population`, `province_loyalty`, `health`, `relation`, `crown_power`
     /// (by the delta), `build`, `grant`, `revoke`, `secede`, `war`, `hostage`, `death`,
     /// `abdicate` (+1 each), `overreach` (+1 for a grant while the crown holds more than its
@@ -637,6 +655,9 @@ impl AutoChooser {
                 Effect::Province(_, ProvinceField::Income, d) => ("province_income", *d),
                 Effect::Province(_, ProvinceField::Population, d) => ("province_population", *d),
                 Effect::Province(_, ProvinceField::Loyalty, d) => ("province_loyalty", *d),
+                // Only a change counts: a flag set again or an absent one cleared is nothing.
+                Effect::SetFlag(f) if w.flags.contains(f) => continue,
+                Effect::ClearFlag(f) if !w.flags.contains(f) => continue,
                 Effect::SetFlag(f) => (f, one),
                 Effect::ClearFlag(f) => (f, Fx::from_int(-1)),
                 Effect::RulerHealth(d) => ("health", *d),

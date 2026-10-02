@@ -4,8 +4,8 @@ use bd_core::data::Data;
 use bd_core::fx::Fx;
 use bd_core::game::{Game, ReignEnd};
 use bd_core::rng::Rng;
-use bd_core::sim::{self, FallReason};
-use bd_core::state::{Heir, HeirStatus, Holder, Preset, ProvinceId, Sex};
+use bd_core::sim::{self, AutoChooser, FallReason};
+use bd_core::state::{AxisId, Heir, HeirStatus, Holder, Preset, ProvinceId, Sex};
 use std::fs;
 use std::path::PathBuf;
 
@@ -284,4 +284,97 @@ fn the_sex_of_a_newborn_follows_the_seed() {
     }
     assert!(sexes(7, 100).iter().all(|x| x.0 == M));
     assert!(sexes(7, 0).iter().all(|x| x.0 == F));
+}
+
+fn axis(g: &Game, a: &str) -> Fx {
+    g.world.axes[&AxisId(a.into())]
+}
+
+fn laws(g: &Game) -> Vec<&String> {
+    g.world
+        .flags
+        .iter()
+        .filter(|f| f.starts_with("law_"))
+        .collect()
+}
+
+/// Acceptance: a change of law costs its price at the start, takes its years with the
+/// resistance every year, sets the new flag only at the end and is closed during a dispute.
+#[test]
+fn changing_the_law_costs_money_and_years() {
+    let data = data();
+    let new = || {
+        let mut g = game(&data, "law_primogeniture", &FAMILY);
+        g.world
+            .axes
+            .insert(AxisId("treasury".into()), Fx::from_int(500));
+        g
+    };
+    let (mut g, mut idle) = (new(), new());
+    let id = "change_succession_law_salic";
+    let a = data.actions.iter().find(|a| a.id == id).unwrap();
+    assert_eq!((a.cost, a.duration_years.0), (Fx::from_int(45), 2));
+    g.start_action(id, None).unwrap();
+    assert_eq!(axis(&g, "treasury"), Fx::from_int(500 - 45));
+    g.wait().unwrap();
+    idle.wait().unwrap();
+    assert_eq!(laws(&g), ["law_primogeniture"]);
+    // The church resists: -2 a year against the same year without the change.
+    let church = |g: &Game| axis(g, "loyalty_church");
+    assert_eq!(church(&g), church(&idle) - Fx::from_int(2));
+    g.wait().unwrap();
+    assert_eq!(laws(&g), ["law_salic"]);
+    // Under a contested succession no change is offered.
+    let mut g = new();
+    g.world.flags.insert("succession_contested".into());
+    let offered = g.available_actions().into_iter();
+    assert!(
+        !offered
+            .map(|(id, _)| id)
+            .any(|id| id.starts_with("change_succession_law"))
+    );
+}
+
+/// The automaton changes the law by its weights (`law_*` keys: the new law's weight less the
+/// old one's), and the chronicle tells the new law.
+#[test]
+fn the_automaton_changes_the_law_by_its_weights() {
+    let mut data = data();
+    let mut g = game(&data, "law_primogeniture", &FAMILY);
+    g.world
+        .axes
+        .insert(AxisId("treasury".into()), Fx::from_int(500));
+    let mut auto = AutoChooser {
+        weights: [("law_salic".to_string(), Fx::from_int(100))].into(),
+        noise: Fx(0),
+    };
+    let picked = auto.action(&mut g).map(|(id, _)| id);
+    assert_eq!(picked.as_deref(), Some("change_succession_law_salic"));
+    // Leaving a law it holds dearer is worth nothing to it.
+    auto.weights
+        .insert("law_primogeniture".into(), Fx::from_int(200));
+    assert_eq!(auto.action(&mut g), None);
+    data.sim
+        .auto
+        .base
+        .insert("law_salic".into(), Fx::from_int(100));
+    data.sim.max_years = 10;
+    // A firm claim: no dispute to close the change.
+    g.world.heirs[0].claim = Fx::from_int(100);
+    let end = ReignEnd {
+        cause: "illness".into(),
+        tick: g.world.tick,
+        world: g.world.clone(),
+    };
+    let c = sim::run(end, &data, Rng::from_seed(1));
+    let e = c
+        .entries
+        .iter()
+        .find(|e| e.title == "Новый закон о престоле");
+    let e = e.expect("the change is told");
+    assert_eq!(
+        e.text,
+        "Отныне престол наследуют по закону «Салический закон»."
+    );
+    assert!(e.snapshot.flags.contains("law_salic"));
 }

@@ -174,7 +174,7 @@
             ),
             (
                 text: "Уступить совету баронов",
-                effects: [Axis("legitimacy", -10), Axis("loyalty_nobles", 10), ClearFlag("law_primogeniture"), ClearFlag("law_none"), SetFlag("law_elective")],
+                effects: [Axis("legitimacy", -10), Axis("loyalty_nobles", 10), ClearFlag("law_primogeniture"), ClearFlag("law_male"), ClearFlag("law_salic"), ClearFlag("law_seniority"), ClearFlag("law_partition"), SetFlag("law_elective")],
                 cause_tag: "succession_yielded",
                 hint: "Однажды уступив выбор знати, корона его не вернёт.",
             ),

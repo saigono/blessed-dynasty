@@ -660,6 +660,9 @@ pub struct SimTexts {
     /// `{lands}`: «Сын — земля, …».
     #[serde(default)]
     pub partition: (String, String),
+    /// The law in force changed; `{law}`: its name.
+    #[serde(default)]
+    pub law_changed: (String, String),
 }
 
 #[derive(Debug)]

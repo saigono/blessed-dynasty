@@ -447,6 +447,12 @@ pub struct Laws {
     pub repeal_share: Fx,
     /// Of the capital, to start either action.
     pub min_crown_power: Fx,
+    /// A faction (`Data.factions`) above the second presses the simulation's automaton for
+    /// the laws that raise its anchor and against those that lower it or that it resists, one
+    /// below the first only against (`sim::pressure`); only so pressed does the automaton
+    /// repeal a law. None: no pressure.
+    #[serde(default)]
+    pub pressure: Option<(Fx, Fx)>,
     pub list: Vec<LawDef>,
 }
 
@@ -876,6 +882,12 @@ pub struct SimTexts {
     /// The law in force changed; `{law}`: its name.
     #[serde(default)]
     pub law_changed: (String, String),
+    /// A law of `Data.laws` other than of succession came into force, or was repealed with
+    /// none of its group in its place; `{law}`: its name.
+    #[serde(default)]
+    pub law_enacted: (String, String),
+    #[serde(default)]
+    pub law_repealed: (String, String),
 }
 
 #[derive(Debug)]

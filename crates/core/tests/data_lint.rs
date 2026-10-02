@@ -365,19 +365,19 @@ fn no_loop_runs_away_outside_its_curves() {
         "{:?}",
         runaway_loops(&data)
     );
-    // П1 with e2 straight and steep: 1.875 * 0.8 = 1.5.
+    // П1 with e2 straight and steep: 2.5 * 0.6 = 1.5.
     let mut steep = data.clone();
     let e2 = steep.influences.iter_mut().find(|e| e.id == "e2").unwrap();
-    (e2.curve, e2.k) = (vec![], bd_core::fx::Fx(-1_875));
+    (e2.curve, e2.k) = (vec![], bd_core::fx::Fx(-2_500));
     assert_eq!(runaway_loops(&steep).len(), 1);
-    // Or a law scaling e3 of П1 (0.8 * 0.75 at most now) by 2.5.
+    // Or a law scaling e3 of П1 (0.6 * 0.75 at most now) by 3.4.
     let mut steep = data.clone();
     let e2 = steep.influences.iter_mut().find(|e| e.id == "e2").unwrap();
     (e2.curve, e2.k) = (vec![], bd_core::fx::Fx(-750));
     assert!(runaway_loops(&steep).is_empty());
     steep.laws.list[0]
         .edges
-        .push(("e3".into(), bd_core::fx::Fx(2_500)));
+        .push(("e3".into(), bd_core::fx::Fx(3_400)));
     assert_eq!(runaway_loops(&steep).len(), 1);
 }
 

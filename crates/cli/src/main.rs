@@ -60,7 +60,7 @@ enum Cmd {
         script: Option<PathBuf>,
         #[arg(long, default_value_t = 0)]
         seed_start: u64,
-        /// The succession law to start on (a flag of `heirs.laws`) instead of the preset's.
+        /// A law of rules.ron `laws` in force from the start, in place of its group's.
         #[arg(long)]
         law: Option<String>,
         #[command(flatten)]
@@ -201,13 +201,17 @@ fn run(cli: Cli) -> Result<(), String> {
         } => {
             let mut start = load(&files, 0)?;
             if let Some(law) = law {
-                let laws = &start.data.heirs.laws;
-                if !laws.iter().any(|l| l.flag == law) {
-                    return Err(format!("нет закона {law}"));
+                // In force from the start, as if brought in then; its one-off effects aside.
+                let d = &start.data;
+                let l = d.law(&law).ok_or(format!("нет закона {law}"))?;
+                let w = &mut start.world;
+                for o in (d.laws.list.iter()).filter(|o| !l.group.is_empty() && o.group == l.group)
+                {
+                    w.flags.remove(&o.id);
+                    w.laws.remove(&o.id);
                 }
-                let flags = &mut start.world.flags;
-                flags.retain(|f| !laws.iter().any(|l| l.flag == *f));
-                flags.insert(law);
+                w.flags.insert(law.clone());
+                w.laws.insert(law, w.tick);
             }
             let rules = score_rules(&files, &start)?;
             let auto = chooser(&files, &start, &strategy)?;
@@ -287,6 +291,9 @@ struct Row {
     successions: u32,
     contested: u32,
     law_changes: u32,
+    /// The laws of `Data.laws` in force at the last entry, and repeals in the simulation.
+    laws: Vec<String>,
+    repeals: u32,
     /// Coronations of an heir designated over the rightful one, and of bastards.
     designated: u32,
     bastards: u32,
@@ -365,6 +372,13 @@ fn batch_row(
         successions: crowned.clone().count() as u32,
         contested: crowned.filter(contested).count() as u32,
         law_changes: laws.count() as u32,
+        laws: c.entries.last().map_or(vec![], |e| {
+            let laws = g.data.laws_in_force(&e.snapshot);
+            laws.map(|l| l.id.clone()).collect()
+        }),
+        repeals: (c.entries.iter())
+            .filter(|e| e.title == t.law_repealed.0)
+            .count() as u32,
         designated: c.rulers.iter().filter(|r| r.designated).count() as u32,
         bastards: (c.kin.iter())
             .filter(|k| k.bastard && k.crowned.is_some())
@@ -462,6 +476,19 @@ fn batch_report(rows: &[Row], hidden: &[&str]) -> String {
         "# закон сменён после основателя в {}% династий\n",
         percent(changed, rows.len())
     );
+    let repealed = rows.iter().filter(|r| r.repeals > 0).count();
+    out += &format!(
+        "# отмена закона в {}% династий; законы при падении:",
+        percent(repealed, rows.len())
+    );
+    let mut laws: BTreeMap<&str, usize> = BTreeMap::new();
+    for l in rows.iter().flat_map(|r| &r.laws) {
+        *laws.entry(l).or_default() += 1;
+    }
+    for (l, n) in laws {
+        out += &format!(" {l} {}%", percent(n, rows.len()));
+    }
+    out += "\n";
     if !hidden.is_empty() {
         let at = NODES_AT.map(|y| format!("{y}-м году"));
         out += &format!(
@@ -549,19 +576,27 @@ fn node_trace(g: &Game, c: &sim::Chronicle, node: &str) -> Result<String, String
     let a = &d.axes[i];
     let edges = (d.influences.iter().enumerate())
         .filter(|(_, e)| e.to.0 == node && e.kind == bd_core::graph::InfluenceKind::Target);
+    // The laws of a year: as at the last entry by then (the founder's end before the first).
+    let year = |e: &sim::ChronicleEntry| e.tick.year(e.snapshot.time_unit);
+    let laws =
+        |y: u32| (c.entries.iter().rev().find(|e| year(e) <= y)).map_or(&g.world, |e| &e.snapshot);
     let mut out = String::new();
     for n in &c.nodes {
         let date = g.world.start_year + n.year;
+        let w = laws(n.year);
         let parts: Vec<(&str, Fx)> = (edges.clone())
             .map(|(j, e)| {
                 let src = match e.delay {
                     0 => n.axes[pos(&e.from.0).expect("checked on load")],
                     _ => n.lagged[j],
                 };
-                (e.id.as_str(), e.contribution(src))
+                (
+                    e.id.as_str(),
+                    e.contribution(src) * bd_core::graph::scale(d, w, j),
+                )
             })
             .collect();
-        let anchor = a.anchor.unwrap_or(a.default);
+        let anchor = bd_core::graph::anchor(d, w, a);
         let target = (parts.iter())
             .fold(anchor, |s, (_, v)| s + *v)
             .clamp(a.min, a.max);
@@ -918,6 +953,11 @@ mod tests {
             successions: 4,
             contested: seed as u32,
             law_changes: (seed == 3) as u32,
+            laws: (seed < 2)
+                .then(|| "law_x".to_string())
+                .into_iter()
+                .collect(),
+            repeals: (seed == 0) as u32,
             designated: (seed == 1) as u32,
             bastards: 2 * (seed == 2) as u32,
             nodes: vec![],
@@ -963,6 +1003,7 @@ mod tests {
                 "# воцарения назначенных в обход закона: 6% воцарений",
                 "# воцарения бастардов: 12% воцарений, в 25% династий",
                 "# закон сменён после основателя в 25% династий",
+                "# отмена закона в 25% династий; законы при падении: law_x 50%",
                 "# причины падения:",
                 "#   Usurped 50%",
                 "#   Alive 25%",

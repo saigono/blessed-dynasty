@@ -170,11 +170,12 @@
     (
         // A contested succession (claim below the law's crisis_claim, or an abdication), a child
         // on the throne (sim.regency_flag), or rival heirs under a weak crown or a house of
-        // little fame (prestige: the founder's wars leave it for generations, stage 17b).
+        // little fame (prestige: the founder's wars leave it for generations, stage 17b), or a
+        // split society (strata above 65: the poor and the rich back rival heirs, stage 19).
         id: "succession_crisis",
         title: "Смута",
         text: "На престоле {ruler}, но присягнули не все. Претенденты собирают сторонников, знать выжидает.",
-        when: Any([Flag("succession_contested"), Flag("regency"), All([HeirCount(2, 99), AxisBelow("legitimacy", 30)]), All([HeirCount(2, 99), AxisBelow("prestige", 50)])]),
+        when: Any([Flag("succession_contested"), Flag("regency"), All([HeirCount(2, 99), AxisBelow("legitimacy", 30)]), All([HeirCount(2, 99), AxisBelow("prestige", 50)]), All([HeirCount(2, 99), AxisAbove("strata", 65)])]),
         weight: 2,
         weight_bonus: [(Flag("succession_contested"), 30), (Flag("regency"), 60), (AxisBelow("legitimacy", 20), 5)],
         once: false,

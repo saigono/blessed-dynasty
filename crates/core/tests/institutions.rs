@@ -277,3 +277,117 @@ fn the_ten_laws_of_the_design() {
     assert!(law("law_primogeniture").anchors.is_empty() && law("law_salic").edges.is_empty());
     assert_eq!(law("law_partition").edges.len(), 2);
 }
+
+/// Acceptance: the mark of a law brought in by the player does not fade while the law is in
+/// force; the rest of the same decision fades as always, and so does the law's once repealed.
+#[test]
+fn the_mark_of_a_law_lives_while_the_law_is_in_force() {
+    use bd_core::state::MarkKey;
+    let d = data_with(X);
+    let mut g = game(&d);
+    g.world.axes.insert(ax("treasury"), Fx::from_int(500));
+    g.start_action("enact_law_x", None).unwrap();
+    wait(&mut g, 2);
+    let weight = |g: &Game, k: &MarkKey| g.world.marks.get(k).map_or(Fx(0), |t| t[0].weight);
+    let (law, legitimacy) = (
+        MarkKey::Flag("law_x".into()),
+        MarkKey::Axis(ax("legitimacy")),
+    );
+    assert_eq!(weight(&g, &law), Fx::from_int(1));
+    wait(&mut g, 30);
+    assert_eq!(weight(&g, &law), Fx::from_int(1));
+    assert!(weight(&g, &legitimacy) < Fx(500));
+    g.world.flags.remove("law_x");
+    wait(&mut g, 1);
+    assert!(weight(&g, &law) < Fx::from_int(1));
+}
+
+/// One law, no group: nobles +8 in force, the people against it.
+const P: &str = r#"(id: "law_p", name: "P", cost: 10, years: 1,
+    anchors: [("loyalty_nobles", 8)], resistance: [("loyalty_people", -10)]),"#;
+
+/// Acceptance: the automaton repeals a law only while a faction presses against it (below 30
+/// against what it resisted or what lowers it, above 70 against what lowers it), and only with
+/// the full price in the treasury; a strong faction the law favours keeps it.
+#[test]
+fn the_automaton_repeals_a_law_only_under_pressure() {
+    let d = data_with(P);
+    let auto = sim::AutoChooser {
+        weights: [("pressure".to_string(), Fx::from_int(100))].into(),
+        noise: Fx(0),
+    };
+    let pick = |people: i64, nobles: i64, treasury: i64| {
+        let mut g = game(&d);
+        g.world.flags.insert("law_p".into());
+        g.world
+            .axes
+            .insert(ax("loyalty_people"), Fx::from_int(people));
+        g.world
+            .axes
+            .insert(ax("loyalty_nobles"), Fx::from_int(nobles));
+        g.world.axes.insert(ax("treasury"), Fx::from_int(treasury));
+        auto.action(&mut g).map(|(id, _)| id)
+    };
+    let repeal = Some("repeal_law_p".to_string());
+    assert_eq!(pick(50, 50, 100), None);
+    assert_eq!(pick(29, 50, 100), repeal);
+    // Strong nobles want more: a law that raises them, not a repeal.
+    assert_eq!(pick(50, 80, 100), Some("enact_law_serfdom".to_string()));
+    // The people press, but only half the price is there.
+    assert_eq!(pick(29, 50, 9), None);
+    // Nobles strong at 80 and the people low: +8 against -10, the law goes.
+    assert_eq!(pick(29, 80, 100), repeal);
+    // A law of succession is no matter of the factions.
+    let mut g = game(&d);
+    g.world.axes.insert(ax("loyalty_nobles"), Fx::from_int(10));
+    assert_eq!(auto.action(&mut g), None);
+}
+
+/// A repeal goes to the chronicle: «Отменён закон «…»», as does a law brought in.
+#[test]
+fn the_chronicle_tells_a_law_repealed_and_brought_in() {
+    let mut d = data_with(P);
+    (d.sim.traits, d.heirs.birth, d.sim.max_years) = (vec![], vec![], 3);
+    d.coronation = Default::default();
+    (d.sim.auto.noise, d.sim.auto.traits) = (Fx(0), Default::default());
+    let texts = |d: &Data, in_force: bool| {
+        let mut g = game(d);
+        if in_force {
+            g.world.flags.insert("law_p".into());
+            g.world.axes.insert(ax("loyalty_people"), Fx::from_int(5));
+        }
+        g.world.axes.insert(ax("treasury"), Fx::from_int(500));
+        let end = ReignEnd {
+            cause: "illness".into(),
+            tick: g.world.tick,
+            world: g.world.clone(),
+        };
+        let c = sim::run(end, d, Rng::from_seed(1));
+        c.entries.into_iter().map(|e| e.text).collect::<Vec<_>>()
+    };
+    d.sim.auto.base = [("pressure".to_string(), Fx::from_int(100))].into();
+    let told = texts(&d, true);
+    assert!(told.contains(&"Отменён закон «P».".to_string()), "{told:?}");
+    d.sim.auto.base = [("law_p".to_string(), Fx::from_int(100))].into();
+    let told = texts(&d, false);
+    assert!(told.contains(&"Введён закон «P».".to_string()), "{told:?}");
+    // One of a group replaced by another is no repeal.
+    let mut d = data_with(&X.replace("cost: 20, years: 1", "name: \"Y\", cost: 20, years: 1"));
+    (d.sim.traits, d.heirs.birth, d.sim.max_years) = (vec![], vec![], 3);
+    d.coronation = Default::default();
+    (d.sim.auto.noise, d.sim.auto.traits) = (Fx(0), Default::default());
+    d.sim.auto.base = [("law_y".to_string(), Fx::from_int(100))].into();
+    let mut g = game(&d);
+    g.world.flags.insert("law_x".into());
+    g.world.axes.insert(ax("treasury"), Fx::from_int(500));
+    let end = ReignEnd {
+        cause: "illness".into(),
+        tick: g.world.tick,
+        world: g.world.clone(),
+    };
+    let told: Vec<_> = (sim::run(end, &d, Rng::from_seed(1)).entries.into_iter())
+        .map(|e| e.text)
+        .collect();
+    assert!(told.contains(&"Введён закон «Y».".to_string()), "{told:?}");
+    assert!(!told.iter().any(|t| t.starts_with("Отменён")), "{told:?}");
+}

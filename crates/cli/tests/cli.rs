@@ -116,7 +116,15 @@ fn every_strategy_plays_and_an_unknown_one_fails() {
     let all: std::collections::BTreeMap<String, ron::Value> = ron::from_str(&text).unwrap();
     assert_eq!(
         all.keys().collect::<Vec<_>>(),
-        ["builder", "crown_all", "vassal_all", "warmonger"]
+        [
+            "builder",
+            "crown_all",
+            "free_towns",
+            "scholar",
+            "serf_lord",
+            "vassal_all",
+            "warmonger"
+        ]
     );
     for s in all.keys() {
         assert!(batch(&["--runs", "1", "--strategy", s]).contains("# runs 1\n"));
@@ -196,6 +204,29 @@ fn trace_tells_the_edges_into_a_node() {
         .unwrap();
     assert!(!bad.status.success());
     assert!(String::from_utf8_lossy(&bad.stderr).contains("нет оси nothing"));
+    // Stage 19: under a law, its anchor shift and its edge multipliers. The founder brings in
+    // serfdom: anchor 30 + 30, e4 × 1.5.
+    let script = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("serfdom.ron");
+    std::fs::write(&script, r#"[Action("enact_law_serfdom", None), Wait(40)]"#).unwrap();
+    let script = script.to_str().unwrap();
+    let args = [
+        "trace", "--seed", "42", "--script", script, "--node", "serfdom",
+    ];
+    let out = stdout(cli(&args));
+    let first = out.lines().next().unwrap();
+    let target: i64 = first
+        .split(" → ")
+        .nth(1)
+        .unwrap()
+        .split(':')
+        .next()
+        .unwrap()
+        .split('.')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(target >= 60, "{out}");
 }
 
 /// Stage 8b acceptance: 1000 games in under 60 s. Only meaningful in release:
@@ -399,8 +430,8 @@ fn calibration_criteria_hold() {
     assert!(deserted >= 10, "{deserted}");
 }
 
-/// Stage 16: a batch may start on any law of `heirs.laws`; it tells the share of contested
-/// successions and of law changes; an unknown law fails.
+/// Stage 16: a batch may start on any law of `heirs.laws` (stage 19: of `laws`); it tells the
+/// share of contested successions and of law changes; an unknown law fails.
 #[test]
 fn batch_starts_on_a_law() {
     let out = batch(&["--runs", "3", "--law", "law_salic"]);
@@ -412,6 +443,10 @@ fn batch_starts_on_a_law() {
     );
     assert!(out.contains("# воцарения бастардов: "), "{out}");
     assert_ne!(out, batch(&["--runs", "3"]));
+    // Stage 19: any law of rules.ron `laws`, in place of its group's; the laws at the fall.
+    let out = batch(&["--runs", "3", "--law", "law_serfdom"]);
+    assert!(out.contains(" law_serfdom "), "{out}");
+    assert!(out.contains("# отмена закона в "), "{out}");
     let out = Command::new(env!("CARGO_BIN_EXE_cli"))
         .args(["batch", "--runs", "1", "--law", "law_nope"])
         .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))

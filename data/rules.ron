@@ -90,7 +90,7 @@
         (id: "e1", from: "serfdom", to: "strata", k: 0.5, rest: 30, delay: 10),
         // Flat above 85.
         (id: "e2", from: "strata", to: "mobility", rest: 40, delay: 5, curve: [(0, 30), (40, 0), (85, -33.75)]),
-        (id: "e3", from: "mobility", to: "strata", k: -0.8, rest: 40, delay: 10),
+        (id: "e3", from: "mobility", to: "strata", k: -0.6, rest: 40, delay: 10),
         // 0.8 above nobles 50, nothing below.
         (id: "e4", from: "loyalty_nobles", to: "serfdom", rest: 50, delay: 5, curve: [(50, 0), (100, 40)]),
         (id: "e5", from: "serfdom", to: "loyalty_nobles", k: 0.4, rest: 30),
@@ -138,6 +138,11 @@
         repeal: "Отменить закон «{law}»",
         repeal_share: 0.5,
         min_crown_power: 40,
+        // A faction above 70 presses the automaton for the laws that raise its anchor and
+        // against those that lower it or that it resists, one below 30 only against (the
+        // weight `pressure` of sim.auto, per point); only so pressed does it repeal a law, at
+        // the full price.
+        pressure: (30, 70),
         list: [
             (id: "law_primogeniture", group: "Наследование", keep: true, cost: 60, years: 3,
                 requires: NotFlag("succession_contested"),
@@ -174,7 +179,7 @@
                 name: "Крепостное право",
                 description: "Крестьян прикрепляют к земле господина. Сразу знать довольна, барщина даёт казне 3 в год, ополчение пополняет армию. Закон держит крестьян в крепости, а знать — у барщины: довольные бароны требуют новых повинностей, гнёт растёт и запирает простолюдина в его сословии. Через два-три поколения народ ожесточается, начинаются мужицкие войны.",
                 resistance: [("loyalty_people", -10)],
-                anchors: [("serfdom", 40), ("loyalty_nobles", 8)], edges: [("e4", 2), ("e2", 1.4)],
+                anchors: [("serfdom", 30), ("loyalty_nobles", 8)], edges: [("e4", 1.5)],
                 treasury: 3, on_complete: [Axis("army", 10)]),
             (id: "law_free_peasants", group: "Крестьяне", cost: 90, years: 4,
                 name: "Вольные крестьяне",
@@ -514,12 +519,15 @@
                 // to usurpation (stage 15, docs/calibration.md).
                 "overreach": 0,
                 "usurped": -12, "plot": -20, "plague": -20,
+                // Laws change rarely: `law` for any change, then per point of a law's anchor
+                // shift or resistance on a pressing faction (laws.pressure).
+                "law": -10, "pressure": 2,
             },
             traits: {
                 "greedy": {"treasury": 0.3, "income": 2, "province_income": 2},
-                "cautious": {"war": -20, "army": 0.3, "stability": 1, "health": 1, "law_primogeniture": 8},
-                "warlike": {"war": 25, "army": 0.4, "prestige": 0.7, "province": 20, "law_male": 5},
-                "pious": {"loyalty_church": 1.2, "law_salic": 10},
+                "cautious": {"war": -20, "army": 0.3, "stability": 1, "health": 1, "law_primogeniture": 18},
+                "warlike": {"war": 25, "army": 0.4, "prestige": 0.7, "province": 20, "law_male": 15},
+                "pious": {"loyalty_church": 1.2, "law_salic": 20},
             },
         ),
         // (title, text) of the entries the simulation makes itself. Rulers of either sex:
@@ -532,6 +540,9 @@
             heir_died: ("Смерть наследника", "Не стало первого в очереди на престол: {heir}."),
             // The law in force changed (an action done or a choice); {law} is its name.
             law_changed: ("Новый закон о престоле", "Отныне престол наследуют по закону «{law}»."),
+            // Any other law of `laws` brought in, or repealed with none of its group instead.
+            law_enacted: ("Новый закон", "Введён закон «{law}»."),
+            law_repealed: ("Отмена закона", "Отменён закон «{law}»."),
             partition: ("Земли поделены между братьями", "По закону о разделе младшие сыновья получили уделы: {lands}."),
             // What ended a reign (a RulerDies cause or the abdication event id) and the dynasty,
             // as shown to the player.

@@ -148,11 +148,11 @@ fn golden_seed_42_script_a() {
     // Stage 18: the influence graph and a derived stability whose shocks fade; weddings
     // only in war: Конрад reigns 37 years through two «Смута», Вейр and Арден revolt,
     // Кунигунда inherits a shrinking realm and Вейр takes it in the year 82.
-    // Stage 19: ten laws-institutions join the automaton's options, resistance to a law is an
-    // anchor: seven rulers, the dynasty falls to usurpation in the year 177.
+    // Stage 19: the automaton weighs laws by their anchors, upkeep and the pressure of the
+    // factions; the Смута of a split society
     assert_eq!(
         (c.years, &c.fall, c.entries.len()),
-        (177, &FallReason::Usurped, 53)
+        (176, &FallReason::NoCrownLand, 50)
     );
     let hint = |h: &'static str| Some(h);
     assert_eq!(
@@ -1100,20 +1100,20 @@ fn kin_of_seed_42_script_a() {
     // Конрад, 6 at the start, reigned 1225..1254; his brothers died uncrowned, as below.
     assert_eq!(
         (k[1].name.as_str(), k[1].born, k[1].crowned, k[1].died),
-        ("Конрад", 1181, Some(1225), Some(1254))
+        ("Конрад", 1181, Some(1225), Some(1257))
     );
     assert_eq!(
         (k[2].name.as_str(), k[2].born, k[2].parent, k[2].crowned),
         ("Генрих", 1193, Some(0), None)
     );
-    assert_eq!(k[2].died, Some(1264));
+    assert_eq!(k[2].died, Some(1270));
     assert_eq!(
         (k[3].name.as_str(), k[3].born, k[3].parent, k[3].died),
-        ("Освальд", 1199, Some(0), Some(1260))
+        ("Освальд", 1199, Some(0), Some(1271))
     );
     assert_eq!(
         (k[4].name.as_str(), k[4].born, k[4].parent, k[4].died),
-        ("Рейнхольд", 1202, Some(0), Some(1259))
+        ("Рейнхольд", 1202, Some(0), Some(1268))
     );
     // Every ruler in the chronicle is a crowned kin, in order; children point at a ruler.
     let crowned: Vec<(&str, u32)> = (k.iter())

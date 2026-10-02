@@ -29,6 +29,13 @@ pub struct ScoreRules {
     pub crisis_importance: u32,
     /// Institutions: these flags, alive at the fall, count for `legacy`.
     pub legacy_flags: Vec<String>,
+    /// A law of `Data.laws` in force at the fall counts for `legacy` once this many years
+    /// have passed since it was brought in (`World.laws`); None: laws do not count.
+    #[serde(default)]
+    pub legacy_law_years: Option<u32>,
+    /// The ids of `Data.laws`, filled by `load`.
+    #[serde(skip)]
+    pub laws: BTreeSet<String>,
     /// The events with `sign: Good`, filled by `load`.
     #[serde(skip)]
     pub good_events: BTreeSet<String>,
@@ -67,6 +74,7 @@ pub fn load(text: &str, data: &Data) -> Result<ScoreRules, DataError> {
     let events = data.events.iter().chain(&data.sim_events);
     let good = events.filter(|e| e.sign == Sign::Good);
     rules.good_events = good.map(|e| e.id.clone()).collect();
+    rules.laws = data.laws.list.iter().map(|l| l.id.clone()).collect();
     Ok(rules)
 }
 
@@ -77,7 +85,8 @@ pub fn load(text: &str, data: &Data) -> Result<ScoreRules, DataError> {
 /// - `prestige`: `prestige_axis`, summed over the years.
 /// - `stability`: crises the dynasty outlived (its fall came in a later year, or never)
 ///   with no fewer provinces than the entry before.
-/// - `legacy`: `legacy_flags` set in the last snapshot.
+/// - `legacy`: `legacy_flags` set in the last snapshot, and the laws then in force for
+///   `legacy_law_years` or more.
 pub fn compute(c: &Chronicle, decisions: &[Decision], rules: &ScoreRules) -> Score {
     let year = |e: &ChronicleEntry| e.tick.year(e.snapshot.time_unit);
     let (mut territory, mut prestige, mut i) = (0, Fx(0), 0);
@@ -103,9 +112,16 @@ pub fn compute(c: &Chronicle, decisions: &[Decision], rules: &ScoreRules) -> Sco
         before = now;
     }
 
-    let flags = c.entries.last().map(|e| &e.snapshot.flags);
-    let legacy = flags.map_or(0, |f| {
-        rules.legacy_flags.iter().filter(|l| f.contains(*l)).count()
+    let last = c.entries.last().map(|e| &e.snapshot);
+    let legacy = last.map_or(0, |w| {
+        let flags = rules.legacy_flags.iter().filter(|l| w.flags.contains(*l));
+        let old = |since: &crate::time::Tick| {
+            let held = c.years.saturating_sub(since.year(w.time_unit));
+            rules.legacy_law_years.is_some_and(|y| held >= y)
+        };
+        let laws = (w.laws.iter())
+            .filter(|(id, since)| rules.laws.contains(*id) && w.flags.contains(*id) && old(since));
+        flags.count() + laws.count()
     });
 
     let raw = [
@@ -422,6 +438,25 @@ mod tests {
         assert_eq!(compute(&c, &[], &r).parts["legacy"], 100);
         let c = chronicle(50, FallReason::NoHeir, Vec::new());
         assert_eq!(compute(&c, &[], &r).parts["legacy"], 0);
+    }
+
+    /// Acceptance (stage 19): a law in force for 100 years or more at the fall is legacy.
+    #[test]
+    fn a_law_of_a_hundred_years_is_legacy() {
+        let r = rules();
+        let legacy = |since: u32, years: u32, in_force: bool| {
+            let mut w = world(10, 0);
+            let ticks = since * w.time_unit.ticks_per_year;
+            w.laws.insert("law_schools".into(), Tick(ticks));
+            if in_force {
+                w.flags.insert("law_schools".into());
+            }
+            let c = chronicle(years, FallReason::NoHeir, vec![entry(0, &w)]);
+            compute(&c, &[], &r).parts["legacy"]
+        };
+        assert_eq!(legacy(20, 120, true), 100);
+        assert_eq!(legacy(21, 120, true), 0);
+        assert_eq!(legacy(0, 150, false), 0);
     }
 
     #[test]

@@ -219,13 +219,13 @@ impl Game {
         if !(self.data.action_slots).free(&self.world, &self.data.actions, action) {
             return Err(GameError::NoSlot);
         }
+        // The simulation's automaton pays its own price (`Data::auto_cost`).
+        let cost = match record {
+            true => action.cost,
+            false => self.data.auto_cost(action),
+        };
         let w = &mut self.world;
-        add_axis(
-            w,
-            &self.data,
-            &self.data.economy.treasury,
-            Fx(0) - action.cost,
-        );
+        add_axis(w, &self.data, &self.data.economy.treasury, Fx(0) - cost);
         w.active_actions.push(ActiveAction {
             id: id.into(),
             target: target.as_ref().map(target_key),
@@ -394,7 +394,11 @@ impl Game {
             w.ruler.age += 1;
             (w.heirs.iter_mut().chain(&mut w.bastards)).for_each(|h| h.age += 1);
             heirs_year(d, w, &mut self.rng);
-            for tags in w.marks.values_mut() {
+            for (k, tags) in w.marks.iter_mut() {
+                // The mark of a law lives while the law is in force.
+                if matches!(k, MarkKey::Flag(f) if w.flags.contains(f) && d.law(f).is_some()) {
+                    continue;
+                }
                 tags.iter_mut()
                     .for_each(|t| t.weight = t.weight * d.sim.decay);
                 tags.retain(|t| t.weight > Fx(0));

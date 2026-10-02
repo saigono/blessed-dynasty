@@ -1,4 +1,5 @@
 use crate::fx::Fx;
+use crate::graph::{Influence, Stability};
 use crate::rng::Rng;
 use crate::rules::{Action, ActionTarget, Event, Predicate};
 use crate::sim::FallReason;
@@ -21,6 +22,16 @@ pub struct Data {
     pub action_slots: ActionSlots,
     pub economy: Economy,
     pub drift: Drift,
+    /// The influence graph's edges, counted in this order (`graph::tick`).
+    #[serde(default)]
+    pub influences: Vec<Influence>,
+    /// Loops of the graph by their edge ids in order, each edge's `to` the next one's `from`;
+    /// for `data_lint`.
+    #[serde(default)]
+    pub loops: Vec<(String, Vec<String>)>,
+    /// Stability derived from the graph; None: a plain axis, written directly.
+    #[serde(default)]
+    pub stability: Option<Stability>,
     /// Weight of "nothing happens" in the random event pick.
     pub quiet_weight: u32,
     /// Province loyalty below this shows as unrest. Display only.
@@ -112,10 +123,12 @@ impl ActionSlots {
     }
 }
 
-/// Per year: `treasury += crown province income + sum(axis * coefficient over flows)`.
+/// Per year: `treasury += crown province income + sum(axis * coefficient over flows)`, plus
+/// the `Flow` edges into the treasury (`war::income_parts`). New data writes flows as edges.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Economy {
     pub treasury: AxisId,
+    #[serde(default)]
     pub flows: Vec<(AxisId, Fx)>,
 }
 
@@ -460,6 +473,19 @@ pub struct AxisDef {
     /// 0: never.
     #[serde(default)]
     pub notable: Fx,
+    /// A hidden node of the influence graph: no number for the player.
+    #[serde(default)]
+    pub hidden: bool,
+    /// Yearly step toward the target (`graph::step`); None: `drift.step` for a faction axis,
+    /// 0 for the rest.
+    #[serde(default)]
+    pub step: Option<Fx>,
+    /// The bureaucracy that reveals a hidden node to the player.
+    #[serde(default)]
+    pub reveal: Option<Fx>,
+    /// The target before the edges (`graph::target`); None: `default`.
+    #[serde(default)]
+    pub anchor: Option<Fx>,
 }
 
 /// Coefficients of `World::recompute_crown_power`.
@@ -833,6 +859,28 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
             return Err(DataError::Invalid(format!("unknown axis {}", a.0)));
         }
     }
+    for e in &data.influences {
+        if !is_axis(&e.from) || !is_axis(&e.to) || data.is_derived(&e.to) {
+            return Err(invalid(&e.id, "influences: unknown or derived axis".into()));
+        }
+    }
+    for (name, ids) in &data.loops {
+        let edge = |id: &String| data.influences.iter().find(|e| e.id == *id);
+        let edges: Option<Vec<_>> = ids.iter().map(edge).collect();
+        let closed = edges.is_some_and(|es| {
+            let next = es.iter().cycle().skip(1);
+            !es.is_empty() && es.iter().zip(next).all(|(a, b)| a.to == b.from)
+        });
+        if !closed {
+            return Err(invalid(name, "loops: unknown edges or not a cycle".into()));
+        }
+    }
+    if let Some(s) = &data.stability {
+        let plain = |a| is_axis(a) && !data.is_derived(a);
+        if !plain(&s.axis) || !plain(&s.shocks) || s.axis == s.shocks {
+            return Err(DataError::Invalid("stability: needs two plain axes".into()));
+        }
+    }
     let w = &data.war;
     if w.treasury_full <= Fx(0) || w.roll.0 > w.roll.1 {
         return Err(DataError::Invalid(
@@ -885,7 +933,7 @@ mod tests {
     fn rules_ron_loads() {
         let data = load(RULES).unwrap();
         assert_eq!(data.time_unit, TimeUnit { ticks_per_year: 1 });
-        assert_eq!(data.axes.len(), 11);
+        assert_eq!(data.axes.len(), 20);
         assert!(data.is_derived(&AxisId("loyalty".into())));
         assert!(!data.is_derived(&AxisId("loyalty_nobles".into())));
     }
@@ -922,7 +970,7 @@ mod tests {
             (r#"axis: "bureaucracy""#, r#"axis: "nothing""#),
             (r#"treasury: "treasury""#, r#"treasury: "nothing""#),
             (r#"treasury: "treasury""#, r#"treasury: "loyalty""#),
-            (r#"("income", 1)"#, r#"("nothing", 1)"#),
+            (r#"from: "income""#, r#"from: "nothing""#),
             (r#"army: "army""#, r#"army: "nothing""#),
             (r#"("loyalty_nobles", 0.005)"#, r#"("nothing", 0.005)"#),
             ("treasury_full: 100", "treasury_full: 0"),

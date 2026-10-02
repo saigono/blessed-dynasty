@@ -162,7 +162,7 @@ fn snapshot_table(ui: &mut Ui, e: &ChronicleEntry, d: &Data) {
             ui.end_row();
         };
         row("Провинций", realm(w));
-        for a in &d.axes {
+        for a in d.axes.iter().filter(|a| !a.hidden) {
             row(axis_name(d, &a.id), round(w.axes[&a.id]));
         }
         row("Наследников", w.heirs.len().to_string());
@@ -316,7 +316,7 @@ pub fn reign_over(
                 }
                 heading(ui, "Состояние");
                 Grid::new("reign-axes").show(ui, |ui| {
-                    for a in &d.axes {
+                    for a in d.axes.iter().filter(|a| !a.hidden) {
                         let (from, to) = (start.axes[&a.id], w.axes[&a.id]);
                         let up = (to != from).then_some(to > from);
                         ui.small(axis_name(d, &a.id));

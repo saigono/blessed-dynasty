@@ -376,7 +376,7 @@ impl Game {
         }
     }
 
-    /// Treasury, aging, desertion, drift. Yearly amounts are spread over the ticks of a year.
+    /// Treasury, aging, desertion, the influence graph, drift. Yearly amounts are spread over the ticks of a year.
     fn passive(&mut self) {
         let (d, w) = (&self.data, &mut self.world);
         let per_tick = |v: Fx| v / Fx::from_int(d.time_unit.ticks_per_year as i64);
@@ -407,15 +407,7 @@ impl Game {
             true => (v + step).min(base),
             false => (v - step).max(base),
         };
-        for f in &d.factions {
-            let def = d
-                .axes
-                .iter()
-                .find(|a| a.id == f.axis)
-                .expect("checked on load");
-            let v = w.axes.get_mut(&f.axis).expect("the world has every axis");
-            *v = toward(*v, def.default);
-        }
+        crate::graph::tick(d, w);
         for p in w.provinces.values_mut() {
             p.loyalty = toward(p.loyalty, d.drift.province_loyalty);
         }
@@ -1075,6 +1067,7 @@ mod tests {
     #[test]
     fn land_over_the_limit_costs_every_year_until_granted() {
         let mut g = map_game();
+        g.data.stability = None; // a plain axis: the penalty stays, no shock fades
         g.world.axes.insert(ax("bureaucracy"), Fx::from_int(100)); // three slots
         g.data.crown_capacity.per_power = Fx(50); // capital crown power 90: room for 4 of 6
         g.data.crown_capacity.per_axis = vec![];
@@ -1135,6 +1128,7 @@ mod tests {
     #[test]
     fn within_the_limit_there_is_no_penalty() {
         let mut g = map_game();
+        g.data.stability = None; // a plain axis: the penalty stays, no shock fades
         assert_eq!(g.data.crown_capacity.room(&g.world), 8);
         assert!(g.data.crown_capacity.over(&g.world).is_empty());
         let mut big = g.clone();
@@ -1770,6 +1764,7 @@ mod tests {
         let mut data = bare();
         data.time_unit = TimeUnit { ticks_per_year: 4 };
         data.economy.flows = vec![(ax("income"), Fx::from_int(1)), (ax("army"), Fx(-100))];
+        data.influences.clear(); // the flows above only
         data.war.army_upkeep.clear(); // the linear upkeep above only
         data.drift.step = Fx::from_int(1);
         data.drift.province_loyalty = Fx::from_int(50);

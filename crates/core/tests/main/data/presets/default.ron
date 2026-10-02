@@ -1,0 +1,43 @@
+// «Наследник угасшего дома»: корона по праву, но без поддержки. Средняя сложность.
+// The map lives in data/maps/default.ron: load with `Preset::load_with_map`.
+// Weir holds holm and weir, Arden holds arden and mar (see the map).
+(
+    start_year: 1187,
+    // Overrides of rules.ron defaults; unlisted axes start at their default.
+    axes: {
+        "legitimacy": 45,
+        "stability": 55,
+        "loyalty_nobles": 40,
+        "loyalty_church": 60,
+        "loyalty_people": 50,
+        "bureaucracy": 20,
+        "treasury": 150,
+        // Above the axis minimum, so a war on a friend can cost prestige from the start.
+        "prestige": 20,
+    },
+    capital: (province: "capital", crown_bonus: 20),
+    vassals: [
+        (id: "weir", name: "Вейр", loyalty: 55, strength: 6),
+        (id: "arden", name: "Арден", loyalty: 50, strength: 4),
+    ],
+    ruler: (
+        name: "Ульрих",
+        age: 32,
+        health: 80,
+        traits: ["pious"],
+        reign_start: 0,
+        sex: Male,
+    ),
+    heirs: [
+        (name: "Конрад", age: 6, ability: 50, claim: 70, status: Home, sex: Male),
+    ],
+    // Nordmark hostile, Purpur neutral, Vestrum friendly (rules.ron neighbour_ai thresholds).
+    neighbours: [
+        (id: "nordmark", name: "Нордмарк", relation: -40, strength: 60, stance: Defend),
+        (id: "purpur", name: "Пурпуляндия", relation: 0, strength: 70, stance: Wait),
+        (id: "vestrum", name: "Веструм", relation: 40, strength: 45, stance: Trade),
+    ],
+    // The succession law and the ruler's marriage.
+    flags: ["law_primogeniture", "married"],
+    intro: "1187 год. Старый королевский дом угас, и корона по праву крови перешла к Ульриху, дальнему родичу последнего короля. Право на его стороне, поддержки почти нет: знать держится настороже, а бароны Вейр и Арден правят своими землями сами. С севера грозит враждебный Нордмарк, на востоке выжидает сильная Пурпуляндия, на западе дружбы ищет Веструм. У Ульриха пока один наследник, шестилетний сын Конрад.",
+)

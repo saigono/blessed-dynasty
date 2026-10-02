@@ -1,0 +1,234 @@
+// End of the reign. Death events are spawned by the death roll (rules.ron `death`), never
+// from the random pool (weight 0). A failed rescue applies RulerDies; a rescue gives part
+// of the health back, and the event's cooldown keeps its risk off for a while.
+[
+    (
+        id: "illness",
+        title: "Тяжёлый недуг",
+        text: "{ruler} в жару и не встаёт с постели. Лекари качают головами, монахи служат молебны.",
+        when: All([]),
+        weight: 0,
+        once: false,
+        cooldown_years: 3,
+        importance: 3,
+        target: None,
+        choices: [
+            (
+                text: "Позвать лучших лекарей, не считая денег",
+                effects: [
+                    RulerHealth(-25),
+                    Axis("treasury", -60),
+                    Chance((
+                        percent: 60,
+                        then: [RulerHealth(15)],
+                        otherwise: [RulerDies("illness")],
+                    )),
+                ],
+                cause_tag: "illness_doctors",
+                hint: "Золото покупает время, но не всегда.",
+            ),
+            (
+                text: "Молиться и ждать Божьей воли",
+                effects: [
+                    RulerHealth(-25),
+                    Axis("loyalty_church", 5),
+                    Chance((
+                        percent: 40,
+                        then: [RulerHealth(15)],
+                        otherwise: [RulerDies("illness")],
+                    )),
+                ],
+                cause_tag: "illness_prayer",
+                hint: "Церковь не забудет смирения государя.",
+            ),
+            (
+                text: "Не показывать слабости и править из постели",
+                effects: [
+                    RulerHealth(-25),
+                    Chance((
+                        percent: 20,
+                        then: [RulerHealth(10), Axis("prestige", 5)],
+                        otherwise: [RulerDies("illness")],
+                    )),
+                ],
+                cause_tag: "illness_ignored",
+                hint: "Государь, правящий с одра, держит двор в страхе и в надежде.",
+            ),
+        ],
+    ),
+    (
+        id: "assassination",
+        title: "Покушение",
+        text: "Ночью в королевские покои пробрались люди с ножами. Стража подняла тревогу.",
+        when: All([]),
+        weight: 0,
+        once: false,
+        cooldown_years: 2,
+        importance: 5,
+        target: None,
+        choices: [
+            (
+                text: "Положиться на верных баронов",
+                effects: [
+                    Chance((
+                        percent: 20,
+                        axes: [("loyalty_nobles", 0.6)],
+                        bonus: [(Flag("guard"), 25)],
+                        then: [RulerHealth(-15), ClearFlag("plot"), Axis("loyalty_nobles", 3)],
+                        otherwise: [RulerDies("assassination")],
+                    )),
+                ],
+                cause_tag: "plot_nobles",
+                hint: "Кто спас государя, тот потребует награды.",
+            ),
+            (
+                text: "Бежать потайным ходом",
+                effects: [
+                    Chance((
+                        percent: 30,
+                        axes: [("loyalty_nobles", 0.3)],
+                        bonus: [(Flag("guard"), 25)],
+                        then: [RulerHealth(-5), Axis("prestige", -10), Axis("legitimacy", -3)],
+                        otherwise: [RulerDies("assassination")],
+                    )),
+                ],
+                cause_tag: "plot_fled",
+                hint: "Бегство спасает жизнь, но не честь.",
+            ),
+            (
+                text: "Встретить убийц с мечом в руке",
+                effects: [
+                    Chance((
+                        percent: 15,
+                        bonus: [(Flag("guard"), 25)],
+                        then: [RulerHealth(-25), ClearFlag("plot"), Axis("prestige", 15)],
+                        otherwise: [RulerDies("assassination")],
+                    )),
+                ],
+                cause_tag: "plot_fought",
+                hint: "Отвага у трона рождает легенды, если хватит удачи.",
+            ),
+        ],
+    ),
+    (
+        id: "war_wound",
+        title: "Рана в бою",
+        text: "Тяжёлая рана в сече: {ruler} на волосок от смерти, с поля несут на щитах.",
+        when: AtWar,
+        weight: 0,
+        once: false,
+        cooldown_years: 2,
+        importance: 5,
+        target: None,
+        choices: [
+            (
+                text: "Везти в столицу к лекарям",
+                effects: [
+                    RulerHealth(-30),
+                    Axis("treasury", -40),
+                    Chance((
+                        percent: 55,
+                        then: [RulerHealth(15)],
+                        otherwise: [RulerDies("war_wound")],
+                    )),
+                ],
+                cause_tag: "wound_doctors",
+                hint: "Войско без государя воюет осторожнее.",
+            ),
+            (
+                text: "Остаться при войске",
+                effects: [
+                    RulerHealth(-30),
+                    Axis("army", 10),
+                    Chance((
+                        percent: 35,
+                        then: [RulerHealth(10), Axis("prestige", 10)],
+                        otherwise: [RulerDies("war_wound")],
+                    )),
+                ],
+                cause_tag: "wound_stayed",
+                hint: "Войско помнит государя, что проливал кровь вместе с ним.",
+            ),
+        ],
+    ),
+    (
+        // Old age (rules.ron death.risks, from 70): its own cooldown, so it adds to illness
+        // instead of waiting for it, and few rulers live past 80.
+        id: "old_age",
+        title: "Старость",
+        text: "{ruler} слабеет с каждой зимой. Государь всё дольше спит днём и всё чаще зовёт духовника.",
+        when: All([]),
+        weight: 0,
+        once: false,
+        cooldown_years: 2,
+        importance: 3,
+        target: None,
+        choices: [
+            (
+                text: "Не жалеть денег на лекарей и травников",
+                effects: [
+                    Axis("treasury", -40),
+                    Chance((
+                        percent: 50,
+                        then: [RulerHealth(-10)],
+                        otherwise: [RulerDies("old_age")],
+                    )),
+                ],
+                cause_tag: "old_age_doctors",
+                hint: "Лекари выигрывают зиму, но не годы.",
+            ),
+            (
+                text: "Готовить душу и наследника",
+                effects: [
+                    Axis("loyalty_church", 3),
+                    Axis("legitimacy", 3),
+                    Chance((
+                        percent: 35,
+                        then: [RulerHealth(-10)],
+                        otherwise: [RulerDies("old_age")],
+                    )),
+                ],
+                cause_tag: "old_age_prepared",
+                hint: "Государь, заранее назвавший преемника, оставил двору меньше споров.",
+            ),
+            (
+                text: "Держать двор, как прежде",
+                effects: [
+                    Chance((
+                        percent: 25,
+                        then: [RulerHealth(-15), Axis("prestige", 3)],
+                        otherwise: [RulerDies("old_age")],
+                    )),
+                ],
+                cause_tag: "old_age_ignored",
+                hint: "Старый государь не дал двору увидеть свою слабость.",
+            ),
+        ],
+    ),
+    (
+        // Fired by Game::abdicate only.
+        id: "abdication",
+        title: "Отречение",
+        text: "{ruler} объявляет совету, что слагает корону. Бароны переглядываются.",
+        when: All([]),
+        weight: 0,
+        once: false,
+        cooldown_years: 0,
+        importance: 5,
+        target: None,
+        choices: [
+            (
+                text: "Сложить корону",
+                effects: [SetFlag("abdicated"), Axis("loyalty_nobles", -5), Abdicate],
+                cause_tag: "abdication",
+                hint: "Корона, снятая при жизни, ложится на голову наследника тяжелее.",
+            ),
+            (
+                text: "Передумать",
+                effects: [Axis("legitimacy", -2)],
+                cause_tag: "abdication_cancelled",
+                hint: "Слух о несостоявшемся отречении долго ходит по двору.",
+            ),
+        ],
+    ),
+]

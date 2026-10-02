@@ -84,8 +84,9 @@ fn batch_of_ten_is_deterministic() {
         assert_eq!(out, batch(&args));
         let mut lines = out.lines();
         let header = "seed,reign_years,dynasty_years,score,fall_reason,early_death,army,\
-                      treasury,deserted,treasury_10,treasury_20,treasury_30";
-        assert_eq!(lines.next(), Some(header));
+                      treasury,deserted,treasury_10,treasury_20,treasury_30,";
+        let head = lines.next().unwrap();
+        assert!(head.starts_with(header), "{head}");
         let rows: Vec<_> = lines.clone().filter(|l| !l.starts_with('#')).collect();
         assert_eq!(rows.len(), 10, "{out}");
         assert!(
@@ -148,6 +149,55 @@ fn trace_links_entries_to_decisions() {
     assert!(out.contains("  без решений основателя\n"), "{out}");
 }
 
+/// Stage 18: the hidden nodes of the graph at the dynasty's 100th and 150th year and at the
+/// fall, one column each, and their share of years at a bound.
+#[test]
+fn batch_reports_the_hidden_nodes() {
+    let out = batch(&["--runs", "3"]);
+    let mut lines = out.lines();
+    let head: Vec<_> = lines.next().unwrap().split(',').collect();
+    for col in ["serfdom_100", "serfdom_150", "serfdom_fall", "faith_150"] {
+        assert!(head.contains(&col), "{col}: {head:?}");
+    }
+    // Hidden, but no node: no edge leads to or from the shocks.
+    assert!(!head.contains(&"shocks_fall"), "{head:?}");
+    let row: Vec<_> = lines.next().unwrap().split(',').collect();
+    assert_eq!(row.len(), head.len());
+    let fall = head.iter().position(|c| *c == "faith_fall").unwrap();
+    assert!(row[fall].parse::<i64>().is_ok(), "{row:?}");
+    assert!(out.contains("#   faith "), "{out}");
+    assert!(out.contains("# узло-лет на краях "), "{out}");
+}
+
+/// Stage 18: `trace --node` tells a node's value, target and edges year by year.
+#[test]
+fn trace_tells_the_edges_into_a_node() {
+    let args = [
+        "trace",
+        "--seed",
+        "42",
+        "--script",
+        "data/scripts/test.ron",
+        "--node",
+    ];
+    let out = stdout(cli(&[&args[..], &["serfdom"]].concat()));
+    let first = out.lines().next().unwrap();
+    // «1218 serfdom 30 → 30: e4 +0»: the year, the value, the target, edge e4 from the nobles.
+    assert!(
+        first.contains(" serfdom ") && first.contains(" → "),
+        "{out}"
+    );
+    assert!(first.contains(": e4 "), "{out}");
+    assert!(out.lines().count() > 50, "{out}");
+    let bad = Command::new(env!("CARGO_BIN_EXE_cli"))
+        .args([&args[..], &["nothing"]].concat())
+        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+        .output()
+        .unwrap();
+    assert!(!bad.status.success());
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("нет оси nothing"));
+}
+
 /// Stage 8b acceptance: 1000 games in under 60 s. Only meaningful in release:
 /// `cargo test --release -p cli -- --ignored batch_of_a_thousand`.
 #[test]
@@ -158,6 +208,84 @@ fn batch_of_a_thousand_is_fast() {
     let took = t.elapsed();
     assert!(out.contains("# runs 1000\n"));
     assert!(took.as_secs() < 60, "{took:?}");
+}
+
+/// `batch --runs 1000` of each strategy at once, from `data` (relative to the repository).
+fn batches(strategies: &[&str], data: &str) -> Vec<String> {
+    let runs: Vec<_> = (strategies.iter())
+        .map(|s| {
+            Command::new(env!("CARGO_BIN_EXE_cli"))
+                .args(["batch", "--runs", "1000", "--strategy", s, "--data", data])
+                .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+    (runs.into_iter())
+        .map(|c| stdout(c.wait_with_output().unwrap()))
+        .collect()
+}
+
+/// Stage 18, criterion 5 of docs/design/hidden-state.html: the graph does not explode. On
+/// every strategy at most 5% of the node-years lie at a bound (0 or 100), and no median of a
+/// node (at the 100th and 150th year, at the fall) does.
+/// `cargo test --release -p cli -- --ignored graph_does_not_explode`.
+#[test]
+#[ignore = "release only, a minute"]
+fn graph_does_not_explode() {
+    let strategies = ["neutral", "crown_all", "vassal_all", "warmonger", "builder"];
+    for (s, out) in strategies.iter().zip(batches(&strategies, "data")) {
+        let line = |p: &str| {
+            out.lines()
+                .find_map(|l| l.strip_prefix(p))
+                .unwrap()
+                .to_string()
+        };
+        let share = line("# узло-лет на краях ");
+        let (int, frac) = share.trim_end_matches('%').split_once('.').unwrap();
+        let permille: u32 = int.parse::<u32>().unwrap() * 10 + frac.parse::<u32>().unwrap();
+        assert!(permille <= 50, "{s}: {share}");
+        let nodes = (out.lines())
+            .skip_while(|l| !l.starts_with("# скрытые узлы"))
+            .skip(1)
+            .map_while(|l| l.strip_prefix("#   "));
+        let mut n = 0;
+        for l in nodes {
+            n += 1;
+            let parts: Vec<_> = l.split(" | ").collect();
+            for q in &parts[..3] {
+                let median = q.split(" / ").nth(1).unwrap();
+                assert!(median != "0" && median != "100", "{s}: {l}");
+            }
+        }
+        assert_eq!(n, 8, "{s}: {out}");
+    }
+}
+
+/// Stage 18, criterion 6: `neutral` on 1000 games at most 15% slower than on main's data
+/// (`crates/core/tests/main/data`): the graph's cost.
+/// `cargo test --release -p cli -- --ignored graph_costs`.
+#[test]
+#[ignore = "release only, half a minute"]
+fn graph_costs_at_most_15_percent() {
+    // The faster of two runs each, one after the other.
+    let time = |data: &str| {
+        (0..2)
+            .map(|_| {
+                let t = std::time::Instant::now();
+                let out = batch(&["--runs", "1000", "--data", data]);
+                assert!(out.contains("# runs 1000\n"));
+                t.elapsed()
+            })
+            .min()
+            .unwrap()
+    };
+    let (old, new) = (time("crates/core/tests/main/data"), time("data"));
+    assert!(
+        new.as_millis() * 100 <= old.as_millis() * 115,
+        "{old:?} -> {new:?}"
+    );
 }
 
 /// The `#` summary of a batch: (median score, median reign years, early death %, the share
@@ -222,6 +350,8 @@ fn falls_differ_by_15_points_of_one_reason() {
 /// the dynasties. Stage 17b: the fall reasons of neighbours by score differ (`falls_differ`)
 /// instead of the dominant one, and warmonger heirs wed in war: its NoHeir at most 5 points
 /// above neutral's. `cargo test --release -p cli -- --ignored calibration`.
+/// Stage 18: fails on `falls_differ` (crown_all / warmonger 7 points), a question to the
+/// design; see docs/calibration.md, stage 18.
 #[test]
 #[ignore = "release only, a few minutes"]
 fn calibration_criteria_hold() {

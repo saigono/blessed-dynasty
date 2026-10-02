@@ -10,7 +10,6 @@
         (id: "income", min: -100, max: 1000, default: 5, name: "Доход", notable: 2),
         (id: "army", min: 0, max: 1000, default: 50, name: "Армия", notable: 10),
         (id: "legitimacy", min: 0, max: 100, default: 50, name: "Легитимность", notable: 5),
-        // Derived (`stability` below): the default is its anchor.
         (id: "stability", min: 0, max: 100, default: 50, name: "Стабильность", notable: 5),
         (id: "bureaucracy", min: 0, max: 100, default: 20, name: "Бюрократия", notable: 5),
         (id: "loyalty_nobles", min: 0, max: 100, default: 50, name: "Знать", notable: 5),
@@ -19,25 +18,7 @@
         (id: "prestige", min: 0, max: 1000, default: 0, name: "Престиж", notable: 5),
         // Derived from the faction axes, never written directly; the default is ignored.
         (id: "loyalty", min: 0, max: 100, default: 50, name: "Лояльность"),
-        // What events do to stability: fades by `step` a year toward 0.
-        (id: "shocks", min: -100, max: 100, default: 0, name: "Потрясения", hidden: true, step: 3),
-        // Hidden nodes of the influence graph (docs/design/hidden-state.html, section 2): no
-        // number for the player; `reveal`: the bureaucracy that shows one in words; `step`:
-        // a year toward the target.
-        (id: "serfdom", min: 0, max: 100, default: 30, name: "Закрепощение", hidden: true, step: 0.4, reveal: 40),
-        (id: "strata", min: 0, max: 100, default: 40, name: "Расслоение", hidden: true, step: 0.4, reveal: 70),
-        (id: "mobility", min: 0, max: 100, default: 40, name: "Подвижность сословий", hidden: true, step: 0.5, reveal: 70),
-        (id: "liberties", min: 0, max: 100, default: 15, name: "Городские вольности", hidden: true, step: 0.6, reveal: 40),
-        (id: "trade", min: 0, max: 100, default: 30, name: "Торговля", hidden: true, step: 1.5, reveal: 20),
-        (id: "grain", min: 0, max: 100, default: 50, name: "Хлебные запасы", hidden: true, step: 5, reveal: 20),
-        (id: "literacy", min: 0, max: 100, default: 10, name: "Грамотность", hidden: true, step: 0.25, reveal: 55),
-        (id: "faith", min: 0, max: 100, default: 65, name: "Единоверие", hidden: true, step: 0.5, reveal: 55),
     ],
-
-    // Stability is derived: its anchor (the axis default) plus the Target edges into it plus
-    // `shocks`, clamped. Axis("stability", x) in effects and rules goes to `shocks`; a
-    // preset's stability is where it starts, the gap a shock.
-    stability: (axis: "stability", shocks: "shocks"),
 
     // Each faction's loyalty is its axis. `loyalty_axis` = weighted mean, rounded toward zero.
     factions: [
@@ -67,61 +48,12 @@
     // The actions of a war going on (target Enemy) have `war_slots` of their own.
     action_slots: (axis: "bureaucracy", steps: [(0, 1), (40, 2), (70, 3)], war_slots: 1),
 
-    // Per year: treasury += income of crown provinces + the Flow edges into it (influences).
-    // The army's upkeep and the war's toll are in `war`.
+    // Per year: treasury += income of crown provinces + sum(axis * coefficient).
+    // Negative coefficients are upkeep. The army's upkeep and the war's toll are in `war`.
     economy: (
         treasury: "treasury",
+        flows: [("income", 1)],
     ),
-
-    // The influence graph, counted in this order once a year after the passive changes:
-    // lagged sources, then targets and steps, then flows. An edge adds k * (source - rest),
-    // or by its `curve` of (source, contribution) points; `delay`: years the source is
-    // smoothed over. Target: to the target of `to` (its anchor plus the edges; the axis steps
-    // toward it by its `step` a year). Flow: to the stock `to` every year.
-    influences: [
-        (id: "income", from: "income", to: "treasury", k: 1, kind: Flow),
-        // Stability: 50 + 0.6 * (loyalty - 50) + 0.4 * (legitimacy - 50) - heresy + shocks.
-        (id: "st_loyalty", from: "loyalty", to: "stability", k: 0.6, rest: 50),
-        (id: "st_legitimacy", from: "legitimacy", to: "stability", k: 0.4, rest: 50),
-        // Heresy: 0 at faith 60 and above, 5 at 45, 12 at 30, 20 at 15.
-        (id: "st_heresy", from: "faith", to: "stability", curve: [(15, -20), (30, -12), (45, -5), (60, 0)]),
-        // The graph of section 3. At the start every source stands at its rest: the graph is
-        // silent and the targets are the defaults.
-        (id: "e1", from: "serfdom", to: "strata", k: 0.5, rest: 30, delay: 10),
-        // Flat above 85.
-        (id: "e2", from: "strata", to: "mobility", rest: 40, delay: 5, curve: [(0, 30), (40, 0), (85, -33.75)]),
-        (id: "e3", from: "mobility", to: "strata", k: -0.8, rest: 40, delay: 10),
-        // 0.8 above nobles 50, nothing below.
-        (id: "e4", from: "loyalty_nobles", to: "serfdom", rest: 50, delay: 5, curve: [(50, 0), (100, 40)]),
-        (id: "e5", from: "serfdom", to: "loyalty_nobles", k: 0.4, rest: 30),
-        // -0.6 up to 60, -1.0 above, flat above 85.
-        (id: "e6", from: "strata", to: "loyalty_people", rest: 40, curve: [(0, 24), (40, 0), (60, -12), (85, -37)]),
-        // Off until the law «Городские вольности» (stage 19): k 0.4.
-        (id: "e7", from: "strata", to: "liberties", k: 0, rest: 50, delay: 10),
-        (id: "e8", from: "liberties", to: "mobility", k: 0.5, rest: 15, delay: 10),
-        (id: "e9", from: "liberties", to: "trade", k: 0.6, rest: 15, delay: 5),
-        (id: "e10", from: "trade", to: "grain", k: 0.4, rest: 30),
-        (id: "e11", from: "grain", to: "trade", k: -0.3, rest: 50),
-        // 0.5, twice as steep below 30: famine hurts more than plenty pleases.
-        (id: "e12", from: "grain", to: "loyalty_people", rest: 50, curve: [(0, -40), (30, -10), (50, 0), (100, 25)]),
-        (id: "e13", from: "trade", to: "treasury", k: 0.1, rest: 30, kind: Flow),
-        (id: "e14", from: "literacy", to: "faith", k: -0.8, rest: 10, delay: 15),
-        // -1.5 within faith 35..60, flat outside.
-        (id: "e15", from: "faith", to: "literacy", rest: 60, delay: 5, curve: [(35, 37.5), (60, 0)]),
-        (id: "e16", from: "faith", to: "loyalty_church", k: 0.4, rest: 65),
-        (id: "e17", from: "literacy", to: "mobility", k: 0.4, rest: 10, delay: 15),
-        (id: "e18", from: "literacy", to: "bureaucracy", k: 0.02, rest: 10, kind: Flow),
-    ],
-
-    // Loops of the graph (section 4), by their edges in order: `data_lint` checks the gain
-    // of each outside its curves.
-    loops: [
-        ("П1 Гнёт", ["e2", "e3"]),
-        ("П2 Барщина", ["e4", "e5"]),
-        ("П3 Ересь книжников", ["e14", "e15"]),
-        ("С1 Хлеб и цена", ["e11", "e10"]),
-        ("С2 Вольный город", ["e7", "e8", "e3"]),
-    ],
 
     // Per year: faction axes move by `step` toward their default, province loyalty toward
     // `province_loyalty`, crown power modifiers from effects toward 0.

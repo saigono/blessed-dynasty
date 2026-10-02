@@ -677,8 +677,13 @@ impl ProvinceTarget {
     }
 }
 
-/// Adds `d` to the axis, clamped to its bounds from `rules.ron`.
+/// Adds `d` to the axis, clamped to its bounds from `rules.ron`. The derived stability
+/// takes it as a shock (`graph::Stability`).
 pub(crate) fn add_axis(w: &mut World, data: &Data, id: &AxisId, d: Fx) {
+    if let Some(s) = data.stability.as_ref().filter(|s| s.axis == *id) {
+        add_axis(w, data, &s.shocks, d);
+        return crate::graph::recompute_stability(data, w);
+    }
     let def = data
         .axes
         .iter()

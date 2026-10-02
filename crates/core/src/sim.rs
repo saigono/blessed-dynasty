@@ -34,6 +34,20 @@ pub struct Chronicle {
     /// Years the army deserted for want of pay after the founder (`World.deserted`).
     #[serde(default)]
     pub deserted: u32,
+    /// The graph at the end of every simulated year; only with `Data.influences`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub nodes: Vec<NodeYear>,
+}
+
+/// The axes and the lagged sources of the influence graph after a year's tick.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct NodeYear {
+    /// Years from tick 0.
+    pub year: u32,
+    /// In `Data.axes` order.
+    pub axes: Vec<Fx>,
+    /// `World.lagged`.
+    pub lagged: Vec<Fx>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -98,6 +112,7 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
         kin: Vec::new(),
         axes: Axes::new(),
         deserted: 0,
+        nodes: Vec::new(),
     };
     let mut world = reign_end.world;
     let deserted = world.deserted;
@@ -158,6 +173,14 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
             let first = successor(&g.world, &g.data).map(|i| g.world.heirs[i].clone());
             let law = g.data.heirs.law(&g.world).map(|l| l.flag.clone());
             let step = g.wait().expect("the reign goes on");
+            let w = &g.world;
+            if !g.data.influences.is_empty() && w.tick.0.is_multiple_of(tpy) {
+                c.nodes.push(NodeYear {
+                    year: w.tick.year(w.time_unit),
+                    axes: g.data.axes.iter().map(|a| w.axes[&a.id]).collect(),
+                    lagged: w.lagged.clone(),
+                });
+            }
             // Within a tick only the yearly age risk takes an heir; events do on resolve.
             if let Some(h) = first.filter(|h| g.world.heir_index(h.id).is_none()) {
                 let (title, text) = &s.texts.heir_died;

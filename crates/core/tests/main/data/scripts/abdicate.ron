@@ -1,0 +1,7 @@
+// Abdication at once, confirmed. Steps after the end of the reign are skipped.
+[
+    Abdicate,
+    ChooseByTag("abdication"),
+    Wait(1),
+    Wait(1),
+]

@@ -1705,6 +1705,36 @@ mod tests {
         assert!(texts_of(&mut h).contains(&"Тихий год".to_string()));
     }
 
+    /// Stage 15: land over the crown's limit shows its yearly penalty and what to do.
+    #[test]
+    fn the_side_panel_tells_the_penalty_over_the_limit() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(1));
+        h.click_label("Править");
+        let over = |t: &[String]| t.iter().any(|t| t.starts_with("Сверх предела"));
+        assert!(!over(&texts_of(&mut h)), "room 8 for 6 at the start");
+        let c = &mut h.app.game.as_mut().unwrap().data.crown_capacity;
+        (c.per_power, c.per_axis) = (Fx(50), vec![]); // room 4 for 6
+        let texts = texts_of(&mut h);
+        let line = texts
+            .iter()
+            .find(|t| t.starts_with("Сверх предела"))
+            .unwrap();
+        assert!(line.starts_with("Сверх предела: 2 земли ("), "{line}");
+        assert!(
+            line.ends_with("штраф в год: стабильность -2, доход -4, лояльность этих земель -3"),
+            "{line}"
+        );
+        let hint = texts
+            .iter()
+            .find(|t| t.starts_with("Корона сама держит"))
+            .unwrap();
+        assert!(
+            hint.contains("не больше 4 земель") && hint.contains("Пожалуйте"),
+            "{hint}"
+        );
+    }
+
     /// Every text painted in the frame, tooltips and cards included.
     fn texts(out: &egui::FullOutput) -> Vec<String> {
         fn walk(s: &egui::Shape, out: &mut Vec<String>) {

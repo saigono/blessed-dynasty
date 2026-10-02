@@ -181,8 +181,10 @@
     // `unmarried` without the married flag. The ruler's children (World.line_from) stand
     // first, in birth order, then the collateral line; "eldest" is heirs[0].
     // `death`: yearly risk of every heir in per mille by age, like death.base.
-    // Births run to 65: only the reigning ruler has children, and a table ending at 50
-    // leaves most dynasties without heirs (stage 15, docs/calibration.md).
+    // Both tables are steps: the row of the largest age_from <= age holds to the end of life.
+    // Births end at 50; a ruler crowned grown had children before (sim::born_before: the
+    // same table over his adult years, each child past `death`), so few lines die out
+    // (stage 15, docs/calibration.md).
     heirs: (
         adult_age: 16,
         growth_home: 2,

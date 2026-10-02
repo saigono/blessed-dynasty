@@ -152,6 +152,60 @@
         ],
     ),
     (
+        // Old age (rules.ron death.risks, from 70): its own cooldown, so it adds to illness
+        // instead of waiting for it, and few rulers live past 80.
+        id: "old_age",
+        title: "Старость",
+        text: "{ruler} слабеет с каждой зимой. Государь всё дольше спит днём и всё чаще зовёт духовника.",
+        when: All([]),
+        weight: 0,
+        once: false,
+        cooldown_years: 2,
+        importance: 3,
+        target: None,
+        choices: [
+            (
+                text: "Не жалеть денег на лекарей и травников",
+                effects: [
+                    Axis("treasury", -40),
+                    Chance((
+                        percent: 50,
+                        then: [RulerHealth(-10)],
+                        otherwise: [RulerDies("old_age")],
+                    )),
+                ],
+                cause_tag: "old_age_doctors",
+                hint: "Лекари выигрывают зиму, но не годы.",
+            ),
+            (
+                text: "Готовить душу и наследника",
+                effects: [
+                    Axis("loyalty_church", 3),
+                    Axis("legitimacy", 3),
+                    Chance((
+                        percent: 35,
+                        then: [RulerHealth(-10)],
+                        otherwise: [RulerDies("old_age")],
+                    )),
+                ],
+                cause_tag: "old_age_prepared",
+                hint: "Государь, заранее назвавший преемника, оставил двору меньше споров.",
+            ),
+            (
+                text: "Держать двор, как прежде",
+                effects: [
+                    Chance((
+                        percent: 25,
+                        then: [RulerHealth(-15), Axis("prestige", 3)],
+                        otherwise: [RulerDies("old_age")],
+                    )),
+                ],
+                cause_tag: "old_age_ignored",
+                hint: "Старый государь не дал двору увидеть свою слабость.",
+            ),
+        ],
+    ),
+    (
         // Fired by Game::abdicate only.
         id: "abdication",
         title: "Отречение",

@@ -117,33 +117,33 @@ fn golden_seed_42_script_a() {
     let (g, end) = script_a(42);
     let c = sim::run(end, &g.data, g.rng.clone());
     // Stage 12: Конрад does not live to reign (heirs.death), Агнесса does.
-    // Stage 14: armies cost by the upkeep curve, the dynasty wars with its own actions;
-    // Вейр rises, Нордмарк declares war, and the realm lives to the horizon.
-    assert_eq!((c.years, &c.fall), (300, &FallReason::Alive));
+    // Stage 14: armies cost by the upkeep curve, the dynasty wars with its own actions.
+    // Stage 15: gentler heir deaths, Конрад reigns with children born before; less money;
+    // Вейр, grown by the three grants, revolts and takes the land bit by bit.
+    assert_eq!((c.years, &c.fall), (152, &FallReason::NoCrownLand));
     let hint = |h: &'static str| Some(h);
-    let raid = hint("Набег, отбитый при основателе, научил соседа осторожности.");
     assert_eq!(
         texts(&c)[..4],
         [
             (
                 "Новое правление",
-                "Престол наследует Агнесса.",
+                "Престол наследует Конрад.",
                 hint("Основатель породнил наследника с домом своего барона."),
             ),
             (
                 "Мятеж дома Вейр",
-                "В тот год дом Вейр поднял мятеж в земле Хольм и отказался присягать короне.",
-                hint("Обитель у святого источника, поставленная основателем, кормила край."),
+                "В тот год дом Вейр поднял мятеж в земле Вейр и отказался присягать короне.",
+                hint("Набег, отбитый при основателе, научил соседа осторожности."),
             ),
             (
-                "Нордмарк объявляет войну",
-                "Нордмарк шлёт глашатаев, и те бросают к трону перчатку. Вражье войско собирается у границы.",
-                raid,
+                "Спор наследников",
+                "Двое королевских детей не уступают друг другу, у каждого свои сторонники при дворе.",
+                None,
             ),
             (
-                "Война: Нордмарк",
-                "Объявлена война, против короны стоит Нордмарк. Войско надо собрать прежде, чем враг перейдёт границу.",
-                raid,
+                "Мятеж дома Вейр",
+                "В тот год дом Вейр поднял мятеж в земле Гарт и отказался присягать короне.",
+                hint("Набег, отбитый при основателе, научил соседа осторожности."),
             ),
         ]
     );
@@ -343,6 +343,36 @@ fn a_child_reigns_under_regency_and_a_weak_claim_is_contested() {
     assert!(!w.flags.contains("regency") && !w.flags.contains("succession_contested"));
 }
 
+/// Stage 15: an adult crowned had children before: a birth roll for every adult year, each
+/// child past the heir deaths of its years, all before the collateral line.
+#[test]
+fn children_born_before_the_coronation() {
+    let mut data = content();
+    quiet(&mut data);
+    yearly(&mut data, "");
+    data.heirs.birth = vec![(0, Fx(0)), (20, Fx::from_int(100))];
+    data.heirs.death = vec![];
+    data.sim.max_years = 1;
+    let crowned = |data: &Data| {
+        let g = heirs(
+            data,
+            &[(25, 80, HeirStatus::Home), (23, 75, HeirStatus::Home)],
+        );
+        let c = sim::run(end_now(&g), data, Rng::from_seed(1));
+        let w = c.entries[0].snapshot.clone();
+        (w.heirs.iter().map(|h| (h.name.clone(), h.age, h.ability))).collect::<Vec<_>>()
+    };
+    let line = crowned(&data);
+    let ages: Vec<u32> = line.iter().map(|h| h.1).collect();
+    assert_eq!(ages, [5, 4, 3, 2, 1, 23], "{line:?}");
+    assert_eq!(line[5].0, "h1");
+    // Ability grows at home (growth_home 2 a year) as it would have year by year.
+    assert_eq!(line[0].2, Fx::from_int(60));
+    // Children die by heirs.death in the years before the coronation.
+    data.heirs.death = vec![(0, Fx::from_int(1000))];
+    assert_eq!(crowned(&data).len(), 1);
+}
+
 /// Stage 12: h0 is crowned; his brother h1 becomes the collateral line, and the child born
 /// to h0 a year later stands before him and takes the eldest's claim target.
 #[test]
@@ -350,7 +380,8 @@ fn the_new_rulers_child_goes_before_his_brother() {
     let mut data = content();
     quiet(&mut data);
     yearly(&mut data, "");
-    data.heirs.birth = vec![(0, Fx::from_int(100))];
+    // No children before the coronation at 30 (see children_born_before_the_coronation).
+    data.heirs.birth = vec![(30, Fx::from_int(100))];
     data.sim.max_years = 4;
     let g = heirs(
         &data,
@@ -493,8 +524,8 @@ fn a_king_under_church_regency_takes_the_vows_when_he_comes_of_age() {
     assert!(flag(&c.entries[1]), "{:?}", texts(&c)); // the council
     let crowned = c.entries.iter().rfind(|e| e.title == "Новое правление");
     assert!(!flag(crowned.unwrap()));
-    // A church without that loyalty (50, +6 from the council) keeps its ward on the throne.
-    assert_eq!(vows(&data, 12, 50).rulers.len(), 2);
+    // A church without that loyalty (40, +6 from the council) keeps its ward on the throne.
+    assert_eq!(vows(&data, 12, 40).rulers.len(), 2);
 }
 
 /// Stage 12: a grown king takes the vows only with a very loyal church.
@@ -864,9 +895,10 @@ fn auto_chooser_grants_land_over_the_limit() {
             .into(),
         noise: Fx(0),
     };
-    // Room 6 for the 6 crown provinces at the start: a grant only costs.
+    // Room 8 for the 6 crown provinces at the start: a grant only costs.
     assert_eq!(auto.action(&mut g), None);
-    g.data.crown_capacity.per_power = Fx(50); // room 4
+    g.data.crown_capacity.per_power = Fx(50);
+    g.data.crown_capacity.per_axis.clear(); // room 4
     let (id, target) = auto.action(&mut g).unwrap();
     assert_eq!((id.as_str(), target.is_some()), ("grant_province", true));
 }
@@ -886,7 +918,7 @@ fn the_score_of_a_dynasty_is_deterministic() {
 }
 
 /// Stage 13: the year's summary for script A, seed 42: what `World::changes` reports
-/// between the starts of consecutive years, the first ten years with something.
+/// between the starts of consecutive years, every year with something (nine in this reign).
 #[test]
 fn year_changes_of_seed_42_script_a() {
     use bd_core::state::Change;
@@ -909,7 +941,8 @@ fn year_changes_of_seed_42_script_a() {
         }
         last = Some(g.world.clone());
     });
-    let nobles = |v| Change::Axis(ax("loyalty_nobles"), Fx::from_int(v));
+    let axis = |a: &str, v| Change::Axis(ax(a), Fx::from_int(v));
+    let nobles = |v| axis("loyalty_nobles", v);
     let granted = |p: &str| {
         let weir = Holder::Vassal(VassalId("weir".into()));
         [
@@ -925,17 +958,15 @@ fn year_changes_of_seed_42_script_a() {
         (1189, vec![nobles(9), l1, l2]),
         (1190, vec![nobles(7), b1, b2]),
         (1191, vec![nobles(-6)]),
-        (1193, vec![Change::HeirGone("Конрад".into())]),
-        (1196, vec![Change::Born("Агнесса".into())]),
-        (1198, vec![nobles(-7)]),
-        (
-            1200,
-            vec![Change::Axis(ax("loyalty_people"), Fx::from_int(6))],
-        ),
-        (1204, vec![nobles(-5)]),
-        (1205, vec![Change::Born("Матильда".into())]),
+        (1194, vec![axis("loyalty_people", 7)]),
+        (1207, vec![axis("loyalty_church", 5)]),
+        (1212, vec![nobles(-5)]),
+        // Агнесса, born and dead in 1196, never shows between two years; no births after
+        // the founder's fiftieth year (1205).
+        (1222, vec![nobles(-5)]),
+        (1226, vec![axis("loyalty_church", 5)]),
     ];
-    assert_eq!(log[..10], want);
+    assert_eq!(log, want);
 }
 
 /// Stage 13: the family tree follows births, deaths and coronations into the chronicle.
@@ -951,14 +982,19 @@ fn kin_of_seed_42_script_a() {
     );
     assert_eq!((k[0].crowned, k[0].parent), (Some(1187), None));
     assert_eq!(k[0].died, Some(1187 + c.rulers[0].end.0));
-    // Конрад, 6 at the start, died in 1193 as the year summary says; Агнесса born 1196.
+    // Конрад, 6 at the start, reigned 1228-1239; Агнесса born 1196 died in her first year.
     assert_eq!(
-        (k[1].name.as_str(), k[1].born, k[1].died),
-        ("Конрад", 1181, Some(1193))
+        (k[1].name.as_str(), k[1].born, k[1].crowned, k[1].died),
+        ("Конрад", 1181, Some(1228), Some(1239))
+    );
+    // Матильда, born to Конрад in 1201 before his coronation, reigned after him.
+    assert_eq!(
+        (k[3].name.as_str(), k[3].born, k[3].parent, k[3].crowned),
+        ("Матильда", 1201, Some(1), Some(1239))
     );
     assert_eq!(
-        (k[2].name.as_str(), k[2].born, k[2].parent),
-        ("Агнесса", 1196, Some(0))
+        (k[2].name.as_str(), k[2].born, k[2].parent, k[2].died),
+        ("Агнесса", 1196, Some(0), Some(1196))
     );
     // Every ruler in the chronicle is a crowned kin, in order; children point at a ruler.
     let crowned: Vec<(&str, u32)> = (k.iter())
@@ -1046,4 +1082,22 @@ fn bonds_name_the_married_neighbour() {
     assert_eq!(bonds, [(vestrum, "брачный союз".to_string(), Tick(0))]);
     g.world.flags.remove("royal_marriage");
     assert!(g.bonds().is_empty());
+}
+
+/// Stage 15: the chronicle counts the years the army deserted in the simulation only, not
+/// the founder's.
+#[test]
+fn the_chronicle_counts_desertions_of_the_dynasty() {
+    let data = content();
+    let mut g = game(&data, 3);
+    g.world.deserted = 1000;
+    g.world.axes.insert(ax("treasury"), Fx::from_int(-1000));
+    g.world.axes.insert(ax("army"), Fx::from_int(200));
+    let c = sim::run(end_now(&g), &data, g.rng.clone());
+    assert!(
+        0 < c.deserted && c.deserted <= c.years,
+        "{} in {}",
+        c.deserted,
+        c.years
+    );
 }

@@ -277,6 +277,17 @@ impl HeirRules {
     pub fn law(&self, w: &World) -> Option<&Law> {
         self.laws.iter().find(|l| w.flags.contains(&l.flag))
     }
+
+    /// Yearly birth chance in percent of a ruler of this age (`birth`, `unmarried`).
+    pub fn birth_chance(&self, w: &World, age: u32) -> Fx {
+        let married = w.flags.contains(&self.married_flag);
+        by_age(&self.birth, age)
+            * if married {
+                Fx::from_int(1)
+            } else {
+                self.unmarried
+            }
+    }
 }
 
 /// Claim target: `eldest` for heir 0, `others` for the rest, plus `ability * ability_k`.
@@ -474,6 +485,9 @@ pub struct GrantRules {
     /// Otherwise a new house from `Data.names.vassals` is founded with these.
     pub new_loyalty: Fx,
     pub new_strength: Fx,
+    /// An existing house that takes the province grows this much stronger.
+    #[serde(default)]
+    pub strength: Fx,
 }
 
 /// War, see `war::strengths` and `war::clash`.

@@ -721,13 +721,7 @@ fn heirs_year(d: &Data, w: &mut World, rng: &mut Rng) {
         }
         h.claim = pct(h.claim + claim);
     }
-    let married = w.flags.contains(&r.married_flag);
-    let factor = if married {
-        Fx::from_int(1)
-    } else {
-        r.unmarried
-    };
-    let chance = by_age(&r.birth, w.ruler.age) * factor;
+    let chance = r.birth_chance(w, w.ruler.age);
     if rng.range(0, Fx::from_int(100).0) < chance.0 {
         w.add_heir(d.newborn(w.next_heir_id));
     }
@@ -1030,6 +1024,7 @@ mod tests {
         let mut g = map_game();
         g.world.axes.insert(ax("bureaucracy"), Fx::from_int(100)); // three slots
         g.data.crown_capacity.per_power = Fx(50); // capital crown power 90: room for 4 of 6
+        g.data.crown_capacity.per_axis = vec![];
         let c = g.data.crown_capacity.clone();
         assert_eq!(
             (c.penalty.clone(), c.income),
@@ -1082,11 +1077,12 @@ mod tests {
         assert_eq!(income(&g), income(&room));
     }
 
-    /// Stage 15: within the limit the crown pays nothing. The start realm fits: room 6 for 6.
+    /// Stage 15: within the limit the crown pays nothing. The start realm fits: room 8 for 6
+    /// (capital crown power 90 * 0.07 + bureaucracy 20 * 0.1).
     #[test]
     fn within_the_limit_there_is_no_penalty() {
         let mut g = map_game();
-        assert_eq!(g.data.crown_capacity.room(&g.world), 6);
+        assert_eq!(g.data.crown_capacity.room(&g.world), 8);
         assert!(g.data.crown_capacity.over(&g.world).is_empty());
         let mut big = g.clone();
         big.data.crown_capacity.per_power = Fx::from_int(1);
@@ -1271,11 +1267,11 @@ mod tests {
         assert_eq!(g.world.active_actions[0].ends_at, Tick(2));
         g.wait().unwrap();
         assert_eq!(g.world.axes[&ax("legitimacy")], Fx::from_int(45));
-        assert_eq!(g.world.provinces[&pid("holm")].income, Fx::from_int(6));
+        assert_eq!(g.world.provinces[&pid("holm")].income, Fx::from_int(4));
         g.wait().unwrap();
         assert_eq!(g.world.tick, Tick(2));
         assert_eq!(g.world.axes[&ax("legitimacy")], Fx::from_int(50));
-        assert_eq!(g.world.provinces[&pid("holm")].income, Fx::from_int(9));
+        assert_eq!(g.world.provinces[&pid("holm")].income, Fx::from_int(7));
         assert!(g.world.active_actions.is_empty());
     }
 
@@ -1721,7 +1717,7 @@ mod tests {
         data.drift.province_loyalty = Fx::from_int(50);
         let mut g = game(data, 1);
         // The yearly sum below, as the UI shows it.
-        assert_eq!(g.data.economy.yearly_income(&g.world), Fx::from_int(49));
+        assert_eq!(g.data.economy.yearly_income(&g.world), Fx::from_int(27));
         g.world.crown_modifiers.insert(pid("holm"), Fx(500));
         g.wait().unwrap();
         assert_eq!(g.world.crown_modifiers[&pid("holm")], Fx(250));
@@ -1731,9 +1727,9 @@ mod tests {
         assert_eq!(g.world.ruler.age, 32);
         g.wait().unwrap();
         let w = &g.world;
-        // Per year: crown provinces 12 + 7 + 5 + 8 + 6 + 6 + income 10 - army 50 * 0.1 = 49,
+        // Per year: crown provinces 7 + 4 + 3 + 5 + 4 + 4 + income 5 - army 50 * 0.1 = 27,
         // in quarters.
-        assert_eq!(w.axes[&ax("treasury")], Fx::from_int(199));
+        assert_eq!(w.axes[&ax("treasury")], Fx::from_int(177)); // 150 + 27
         assert_eq!((w.ruler.age, w.heirs[0].age), (33, 7));
         // Toward the axis default 50, toward province_loyalty 50, a year's step of 1.
         assert_eq!(w.axes[&ax("loyalty_nobles")], Fx::from_int(41));

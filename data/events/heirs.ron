@@ -124,7 +124,7 @@
                 text: "Позвать лучших лекарей",
                 effects: [
                     Axis("treasury", -40),
-                    Chance((percent: 60, then: [HeirOp(TargetAbility(-3))], otherwise: [HeirOp(TargetRemove)])),
+                    Chance((percent: 80, then: [HeirOp(TargetAbility(-3))], otherwise: [HeirOp(TargetRemove)])),
                 ],
                 cause_tag: "heir_doctors",
                 hint: "Хорошие лекари дороги, но жизнь наследника дороже.",
@@ -133,7 +133,7 @@
                 text: "Молиться",
                 effects: [
                     Axis("loyalty_church", 3),
-                    Chance((percent: 40, then: [HeirOp(TargetAbility(-3))], otherwise: [HeirOp(TargetRemove)])),
+                    Chance((percent: 65, then: [HeirOp(TargetAbility(-3))], otherwise: [HeirOp(TargetRemove)])),
                 ],
                 cause_tag: "heir_prayer",
                 hint: "Церковь запомнит смирение двора, исход в руках Божьих.",
@@ -141,7 +141,7 @@
             (
                 text: "Положиться на крепость юности",
                 effects: [
-                    Chance((percent: 25, then: [HeirOp(TargetAbility(3))], otherwise: [HeirOp(TargetRemove)])),
+                    Chance((percent: 45, then: [HeirOp(TargetAbility(3))], otherwise: [HeirOp(TargetRemove)])),
                 ],
                 cause_tag: "heir_left_alone",
                 hint: "Наследник, выживший сам, не будет обязан ни лекарям, ни монахам.",

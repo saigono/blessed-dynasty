@@ -1636,10 +1636,16 @@ mod tests {
         let mut h = Harness::new();
         six_years(&mut h);
         let line = |s: &str, up| (s.to_string(), up);
+        // Every year opens with the treasury, notable or not.
+        let money = line("Казна: +28 (доход +33, содержание -4, траты 0)", Some(true));
         let want = vec![
             (
                 "1188",
                 vec![
+                    line(
+                        "Казна: -13 (доход +32, содержание -5, траты -40)",
+                        Some(false),
+                    ),
                     line("«Беда с наследником»: Позвать лучших лекарей", None),
                     line("Смерть наследника: Конрад", Some(false)),
                 ],
@@ -1647,28 +1653,36 @@ mod tests {
             (
                 "1189",
                 vec![
+                    line("Казна: +28 (доход +33, содержание -5, траты 0)", Some(true)),
                     line("Рождение: Агнесса", Some(true)),
                     line("Завершено: Проложить дорогу (Берг)", None),
                 ],
             ),
-            ("1190", vec![line("«Набег: Арден»: Выслать войско", None)]),
+            (
+                "1190",
+                vec![money.clone(), line("«Набег: Арден»: Выслать войско", None)],
+            ),
             (
                 "1191",
-                vec![line(
-                    "«Паломники»: Взять паломников под охрану короны",
-                    None,
-                )],
+                vec![
+                    money.clone(),
+                    line("«Паломники»: Взять паломников под охрану короны", None),
+                ],
             ),
             (
                 "1192",
                 vec![
+                    money.clone(),
                     line("«Заговор»: Схватить всех подозреваемых", None),
                     line("Знать -7", Some(false)),
                 ],
             ),
             (
                 "1193",
-                vec![line("«Гильдии просят хартию»: Даровать хартию", None)],
+                vec![
+                    money,
+                    line("«Гильдии просят хартию»: Даровать хартию", None),
+                ],
             ),
         ];
         let got: Vec<_> = (h.app.journal.iter())
@@ -1683,7 +1697,11 @@ mod tests {
         let d = &mut h.app.game.as_mut().unwrap().data;
         (d.quiet_weight, d.heirs.birth) = (1_000_000, vec![]);
         h.app.apply(Cmd::Wait);
-        assert_eq!(h.app.journal.last().unwrap(), &("1194".to_string(), vec![]));
+        let quiet = vec![line(
+            "Казна: +30 (доход +35, содержание -4, траты 0)",
+            Some(true),
+        )];
+        assert_eq!(h.app.journal.last().unwrap(), &("1194".to_string(), quiet));
         assert!(texts_of(&mut h).contains(&"Тихий год".to_string()));
     }
 
@@ -1768,7 +1786,7 @@ mod tests {
         h.click_label("Править");
         let road = hover(&mut h, "Проложить дорогу");
         for t in [
-            "Стоимость 40 · 2 года",
+            "Стоимость 60 · 2 года",
             "сила короны в провинции +5",
             "доход провинции +1",
             "Нужна сила короны от 20",

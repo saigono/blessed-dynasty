@@ -487,6 +487,9 @@ fn chronicle_json(c: &sim::Chronicle) -> serde_json::Value {
         "fall": c.fall,
         "years": c.years,
         "rulers": c.rulers,
+        "axes": c.axes.iter().map(|(a, v)| (a.0.clone(), v.0 / Fx::SCALE)).collect::<BTreeMap<_, _>>(),
+        "deserted": c.deserted,
+        "kin": c.kin,
     })
 }
 

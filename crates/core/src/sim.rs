@@ -263,8 +263,9 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     if let Some(k) = w.kin.iter_mut().find(|k| k.heir == Some(heir.id)) {
         (k.name, k.crowned) = (ruler.name.clone(), Some(year));
     }
-    // His brothers and sisters become the collateral line, behind his children to come.
+    // His brothers and sisters become the collateral line, behind his children.
     w.line_from = w.next_heir_id;
+    born_before(d, w, rng, ruler.age);
     if let Some(l) = d.heirs.law(w) {
         // Each heir left is a rival: a chance of dispute per head, rolled only if the law has one.
         let rivals = l.dispute_per_heir * Fx::from_int(w.heirs.len() as i64);
@@ -288,6 +289,27 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     let causes = causes(&g.world, [MarkKey::Heir(heir.id)].into());
     c.entries.push(entry(g, told, g.data.sim.notable, causes));
     true
+}
+
+/// The children a new ruler of `age` had before the coronation: a roll of
+/// `HeirRules::birth_chance` for every adult year, and each child born then a roll of
+/// `heirs.death` for every year of its own; ability grown at home until adulthood.
+fn born_before(d: &Data, w: &mut World, rng: &mut Rng, age: u32) {
+    let r = &d.heirs;
+    for at in r.adult_age..age {
+        if rng.range(0, Fx::from_int(100).0) >= r.birth_chance(w, at).0 {
+            continue;
+        }
+        let years = age - at;
+        let risk = |y| crate::data::by_age(&r.death, y).0;
+        if (0..years).any(|y| rng.range(0, 1000 * Fx::SCALE) < risk(y)) {
+            continue;
+        }
+        let mut h = d.newborn(w.next_heir_id);
+        let grown = r.growth_home * Fx::from_int(years.min(r.adult_age).into());
+        (h.age, h.ability) = (years, (h.ability + grown).min(Fx::from_int(100)));
+        w.add_heir(h);
+    }
 }
 
 /// The reigning ruler's death in the family tree, unless the reign ended by abdication.

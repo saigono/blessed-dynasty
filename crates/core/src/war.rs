@@ -214,7 +214,7 @@ mod tests {
         let base = data.economy.yearly_income(&w);
         let upkeep = |army: i64| crate::data::curve(&data.war.army_upkeep, Fx::from_int(army));
         assert_eq!(yearly_income(&w, &data), base - upkeep(50));
-        // At war the crown provinces (12 + 7 + 5 + 8 + 6 + 6) bring income_penalty less.
+        // At war the crown provinces (7 + 4 + 3 + 5 + 4 + 4) bring income_penalty less.
         w.war = Some(War {
             enemy: nordmark(),
             stage: WarStage::Fighting,
@@ -225,7 +225,7 @@ mod tests {
             target: None,
             battles: vec![],
         });
-        let penalty = Fx::from_int(44) * data.war.income_penalty;
+        let penalty = Fx::from_int(27) * data.war.income_penalty;
         assert!(penalty > Fx(0));
         assert_eq!(yearly_income(&w, &data), base - upkeep(50) - penalty);
         // Upkeep grows faster than the army: twice the army costs more than twice as much.

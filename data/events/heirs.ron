@@ -38,23 +38,23 @@
         id: "heir_marriage",
         title: "Брак наследника",
         text: "{heir}: пора подумать о браке. Соседние дворы присылают сватов.",
-        when: NotFlag("heir_married"),
-        weight: 5,
+        when: All([]),
+        weight: 15,
         once: false,
         cooldown_years: 3,
         importance: 3,
         sign: Good,
-        target: Heir(16, 30),
+        target: UnmarriedHeir(16, 30),
         choices: [
             (
                 text: "Искать пару при чужеземном дворе",
-                effects: [SetFlag("heir_married"), Axis("prestige", 10), Axis("loyalty_nobles", -3)],
+                effects: [HeirOp(TargetMarry), Axis("prestige", 10), Axis("loyalty_nobles", -3)],
                 cause_tag: "heir_married_foreign",
                 hint: "Чужеземный брак приводит ко двору чужих советников.",
             ),
             (
                 text: "Искать пару среди своих баронов",
-                effects: [SetFlag("heir_married"), Axis("loyalty_nobles", 5), HeirOp(TargetClaim(5))],
+                effects: [HeirOp(TargetMarry), Axis("loyalty_nobles", 5), HeirOp(TargetClaim(5))],
                 cause_tag: "heir_married_noble",
                 hint: "Род, породнившийся с короной, захочет большего.",
             ),
@@ -63,6 +63,65 @@
                 effects: [Axis("prestige", -2)],
                 cause_tag: "heir_marriage_delayed",
                 hint: "Свадьба, отложенная надолго, может не состояться вовсе.",
+            ),
+        ],
+    ),
+    (
+        // An unmarried ruler (no heirs.married_flag): mostly a ruler crowned before his
+        // heir_marriage came. Without it births are rare (heirs.unmarried).
+        id: "ruler_marriage",
+        title: "Брак на троне",
+        text: "У престола нет супруга, а у короны мало наследников. Двор ждёт свадьбы, {neighbour} присылает сватов.",
+        when: NotFlag("married"),
+        weight: 40,
+        once: false,
+        cooldown_years: 2,
+        importance: 3,
+        sign: Good,
+        target: Neighbour,
+        choices: [
+            (
+                text: "Принять сватов из-за границы",
+                effects: [Marry(
+                    then: [Relation(EventTarget, 20), Axis("prestige", 5)],
+                    otherwise: [Relation(EventTarget, -5), Axis("prestige", -5), SpawnEvent("marriage_refused", 0)],
+                )],
+                cause_tag: "ruler_married_foreign",
+                hint: "Брак с чужим двором роднит корону с соседом, пока жив супруг и нет войны.",
+            ),
+            (
+                text: "Породниться с домом своего барона",
+                effects: [SetFlag("married"), Axis("loyalty_nobles", 5), Axis("prestige", -3)],
+                cause_tag: "ruler_married_noble",
+                hint: "Барон, ставший роднёй короны, ждёт милостей.",
+            ),
+            (
+                text: "Повременить со свадьбой",
+                effects: [Axis("prestige", -2)],
+                cause_tag: "ruler_marriage_delayed",
+                hint: "Без свадьбы у престола мало наследников.",
+            ),
+        ],
+    ),
+    (
+        // After a suit turned down (marry_neighbour, Effect::Marry); its costs are the
+        // suit's `otherwise`.
+        id: "marriage_refused",
+        title: "{neighbour} отверг сватовство",
+        text: "Сваты вернулись ни с чем: {neighbour} не отдаёт руки за наш дом. При соседних дворах об этом судачат.",
+        when: All([]),
+        weight: 0,
+        once: false,
+        cooldown_years: 0,
+        importance: 4,
+        sign: Bad,
+        target: None,
+        choices: [
+            (
+                text: "Стерпеть обиду",
+                effects: [],
+                cause_tag: "marriage_refused",
+                hint: "Отказ запоминают при всех дворах.",
             ),
         ],
     ),
@@ -174,7 +233,7 @@
             ),
             (
                 text: "Уступить совету баронов",
-                effects: [Axis("legitimacy", -10), Axis("loyalty_nobles", 10), ClearFlag("law_primogeniture"), ClearFlag("law_none"), SetFlag("law_elective")],
+                effects: [Axis("legitimacy", -10), Axis("loyalty_nobles", 10), ClearFlag("law_primogeniture"), ClearFlag("law_male"), ClearFlag("law_salic"), ClearFlag("law_seniority"), ClearFlag("law_partition"), SetFlag("law_elective")],
                 cause_tag: "succession_yielded",
                 hint: "Однажды уступив выбор знати, корона его не вернёт.",
             ),

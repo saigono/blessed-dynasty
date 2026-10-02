@@ -26,9 +26,10 @@
         health: 80,
         traits: ["pious"],
         reign_start: 0,
+        sex: Male,
     ),
     heirs: [
-        (name: "Конрад", age: 6, ability: 50, claim: 70, status: Home),
+        (name: "Конрад", age: 6, ability: 50, claim: 70, status: Home, sex: Male),
     ],
     // Nordmark hostile, Purpur neutral, Vestrum friendly (rules.ron neighbour_ai thresholds).
     neighbours: [

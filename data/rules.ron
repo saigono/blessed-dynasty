@@ -192,25 +192,68 @@
         growth_hostage: 1,
         hostage_claim: -4,
         claim_step: 2,
-        // A new ruler's claim below the law's crisis_claim contests the succession.
+        // Who succeeds is the law's `rule` (sim::successor): Absolute, Male, Salic,
+        // Seniority, Elective, Partition. Claims say how firm the new ruler sits: the heir the
+        // rule puts first moves toward `eldest`, the rest toward `others`, plus ability *
+        // ability_k; a new ruler's claim below crisis_claim contests the succession, and so may
+        // every heir left (dispute_per_heir percent each). `coronation`: axis shifts at every
+        // coronation under the law. `house`: Partition's (loyalty, strength) of a son's house.
         laws: [
             // `name` and `description` are for the UI; {eldest}, {others}, {ability_k},
             // {crisis_claim}, {dispute_per_heir} stand for the numbers of the law.
-            (flag: "law_primogeniture", eldest: 75, others: 35, ability_k: 0, crisis_claim: 70,
-                name: "Первородство",
-                description: "Трон получает старший ребёнок правителя, сын или дочь. Если он умрёт, первым становится следующий по старшинству. Претензия старшего год за годом растёт к {eldest}, остальных держится у {others}. Если у наследника претензия ниже {crisis_claim}, престол оспорят."),
-            (flag: "law_elective", eldest: 0, others: 0, ability_k: 0.9, crisis_claim: 65,
-                name: "Выбор совета",
-                description: "Совет избирает самого способного из наследников: претензия каждого растёт к его способностям × {ability_k}, старшинство не важно. Если у избранного претензия ниже {crisis_claim}, престол оспорят."),
-            // Without a law all claims meet at 50: rivals quarrel instead, dispute_per_heir
-            // percent per heir left after the coronation.
-            (flag: "law_none", eldest: 50, others: 50, ability_k: 0, crisis_claim: 45, dispute_per_heir: 15,
-                name: "Воля государя",
-                description: "Твёрдого закона нет: претензии всех наследников сходятся к {others}, трон получает старший ребёнок. Зато каждый оставшийся наследник — соперник: по {dispute_per_heir}% на каждого, что престол оспорят."),
-        ],        birth: [(0, 0), (16, 25), (35, 20), (45, 10), (50, 0)],
+            (flag: "law_primogeniture", rule: Absolute, eldest: 75, others: 35, ability_k: 0, crisis_claim: 70,
+                name: "Абсолютное первородство",
+                description: "Трон получает старший ребёнок правителя, сын или дочь, без детей — старший из боковой линии. Претензия первого в очереди год за годом растёт к {eldest}, остальных держится у {others}. Если у наследника претензия ниже {crisis_claim}, престол оспорят."),
+            (flag: "law_male", rule: Male, eldest: 75, others: 35, ability_k: 0, crisis_claim: 70,
+                name: "Мужское первородство",
+                description: "Трон получает старший сын правителя. Дочь наследует, только если сыновей нет. Претензия первого в очереди растёт к {eldest}, остальных держится у {others}. Если у наследника претензия ниже {crisis_claim}, престол оспорят."),
+            (flag: "law_salic", rule: Salic, eldest: 75, others: 35, ability_k: 0, crisis_claim: 70,
+                coronation: [("legitimacy", 5)],
+                name: "Салический закон",
+                description: "Престол только мужчинам: сначала сыновья правителя, без них мужчина боковой линии. Женщины не наследуют вовсе: если мужчин в роду не осталось, династия пресекается. Зато право такого короля бесспорнее: легитимность при воцарении выше. Если у наследника претензия ниже {crisis_claim}, престол оспорят."),
+            (flag: "law_seniority", rule: Seniority, eldest: 75, others: 35, ability_k: 0, crisis_claim: 70, dispute_per_heir: 6,
+                name: "Лествичное право",
+                description: "Престол старшему в роду: сначала братья правителя по старшинству, потом его дети. На трон приходит взрослый, но дети умершего не уступают дяде: по {dispute_per_heir}% на каждого оставшегося наследника, что престол оспорят."),
+            (flag: "law_elective", rule: Elective, eldest: 0, others: 0, ability_k: 0.9, crisis_claim: 65, dispute_per_heir: 3,
+                coronation: [("loyalty_nobles", 5), ("legitimacy", -10)],
+                name: "Выборный закон",
+                description: "Совет избирает самого способного из наследников: претензия каждого растёт к его способностям × {ability_k}, старшинство не важно. Знать при каждом избрании довольна, легитимность ниже. Проигравшие спорят: по {dispute_per_heir}% на каждого оставшегося наследника, и престол оспорят, если у избранного претензия ниже {crisis_claim}."),
+            (flag: "law_partition", rule: Partition, eldest: 75, others: 35, ability_k: 0, crisis_claim: 70,
+                coronation: [("loyalty_nobles", 5)], house: (50, 20),
+                name: "Разделение",
+                description: "Корону получает старший сын, а каждый следующий сын при воцарении — коронную землю в удел и свой дом. Уделы раздаются от дальних земель к столице, столица остаётся у короны. Знать довольна, но земель у короны всё меньше. Если у наследника претензия ниже {crisis_claim}, престол оспорят."),
+        ],
+        birth: [(0, 0), (16, 25), (35, 20), (45, 10), (50, 0)],
+        // Chance in percent that a child is a son.
+        male_percent: 50,
         married_flag: "married",
         unmarried: 0.2,
         death: [(0, 120), (1, 40), (5, 6), (16, 6), (30, 10), (40, 15), (50, 30), (55, 60), (60, 90), (65, 130), (70, 180), (80, 300)],
+    ),
+
+    // A suit (Effect::Marry, marry_neighbour): the ruler weds without heirs.married_flag,
+    // else the first heir in line of `age` or older not yet married. A court at war with the
+    // crown, already wed to it or with a relation below refuse_below turns it away outright;
+    // else it agrees with the chance in percent: percent + relation * relation_k
+    // + sum(axis * k) + (our strength / theirs - 1) * strength_k (war::strengths), 0..=100.
+    marriage: (
+        age: 14,
+        refuse_below: -20,
+        percent: 30,
+        relation_k: 0.5,
+        axes: [("prestige", 0.1)],
+        strength_k: 20,
+    ),
+
+    // Every coronation in the simulation (sim::crown), in this order: each faction axis moves
+    // `reset` of the way back to its default (a new page); the axis of legitimacy_from_claim
+    // moves its share of the way toward the new ruler's claim (0.5: the mean of the two);
+    // a contested succession (abdication.contested_flag) adds `contested`; then the law's
+    // `coronation`, then the `axes` of the ruler's traits (sim.traits).
+    coronation: (
+        reset: 0.3,
+        legitimacy_from_claim: ("legitimacy", 0.5),
+        contested: [("legitimacy", -10), ("loyalty_nobles", -10)],
     ),
 
     // The dynasty after the founder (sim::run): the same rules year by year, the choices
@@ -242,18 +285,29 @@
         secession_relation: -50,
         // Trait chance of a new ruler in percent: percent + ability * ability_k, plus
         // `studying` or `hostage` by the heir's status.
+        // `axes`: shifts once, at the coronation; `told`: (of a king, of a queen), added to the
+        // coronation entry for the trait with the largest shift.
         traits: [
-            (id: "greedy", percent: 35, ability_k: -0.3, studying: 0, hostage: 10),
-            (id: "cautious", percent: 10, ability_k: 0.3, studying: 10, hostage: 15),
-            (id: "warlike", percent: 30, ability_k: 0, studying: -15, hostage: 10),
-            (id: "pious", percent: 10, ability_k: 0, studying: 35, hostage: -5),
+            (id: "greedy", percent: 35, ability_k: -0.3, studying: 0, hostage: 10,
+                axes: [("loyalty_people", -10)],
+                told: ("Народ ропщет: на троне жадный король.", "Народ ропщет: на троне жадная королева.")),
+            (id: "cautious", percent: 10, ability_k: 0.3, studying: 10, hostage: 15,
+                axes: [("stability", 5)],
+                told: ("Страна спокойна: на троне осторожный король.", "Страна спокойна: на троне осторожная королева.")),
+            (id: "warlike", percent: 30, ability_k: 0, studying: -15, hostage: 10,
+                axes: [("loyalty_nobles", 10)],
+                told: ("Знать ликует: на троне воинственный король.", "Знать ликует: на троне воинственная королева.")),
+            (id: "pious", percent: 10, ability_k: 0, studying: 35, hostage: -5,
+                axes: [("loyalty_church", 10)],
+                told: ("Церковь ликует: на троне набожный король.", "Церковь ликует: на троне набожная королева.")),
         ],
         // AutoChooser: an option scores sum(weight[key] * amount) over its effects, plus a
-        // roll in 0..=noise. Keys: axis ids, flag ids (+1 set, -1 cleared) and effect kinds:
+        // roll in 0..=noise. Keys: axis ids, flag ids (+1 set, -1 cleared; only a change
+        // counts, so a law change weighs the new law's flag less the old one's) and effect kinds:
         // province_income, province_population, province_loyalty, health, relation,
         // crown_power, heir_ability, heir_claim (by the delta), army_upkeep (by the change in
         // yearly upkeep an army change brings, war.army_upkeep); build, grant, revoke, secede,
-        // war, hostage, death, abdicate (+1); overreach (+1 for a grant while the crown is over
+        // war, hostage, death, abdicate, marriage (+1 a wedding; a suit by its chance); overreach (+1 for a grant while the crown is over
         // crown_capacity); province (+1 gained, -1 given); heir (+1, -1).
         // Weights of the ruler's traits add to `base`.
         auto: (
@@ -266,18 +320,18 @@
                 "health": 0.5, "relation": 0.1, "crown_power": 0.5,
                 "build": 3, "grant": -20, "revoke": -3, "secede": -10, "war": -10, "hostage": -10,
                 "death": -500, "abdicate": -500, "province": 20, "heir": 60,
-                "heir_ability": 0.3, "heir_claim": 0.2, "army_upkeep": -0.1,
+                "heir_ability": 0.3, "heir_claim": 0.2, "army_upkeep": -0.1, "marriage": 20, "married": 30,
                 // Beyond the limit a grant is weighed like any other (grant, province); with
                 // overreach 30 the heirs give the conquests away and warmonger dynasties fall
                 // to usurpation (stage 15, docs/calibration.md).
                 "overreach": 0,
-                "usurped": -22, "plot": -20, "plague": -20,
+                "usurped": -26, "plot": -20, "plague": -20,
             },
             traits: {
                 "greedy": {"treasury": 0.3, "income": 2, "province_income": 2},
-                "cautious": {"war": -20, "army": 0.3, "stability": 1, "health": 1},
-                "warlike": {"war": 25, "army": 0.4, "prestige": 0.7, "province": 20},
-                "pious": {"loyalty_church": 1.2},
+                "cautious": {"war": -20, "army": 0.3, "stability": 1, "health": 1, "law_primogeniture": 8},
+                "warlike": {"war": 25, "army": 0.4, "prestige": 0.7, "province": 20, "law_male": 5},
+                "pious": {"loyalty_church": 1.2, "law_salic": 10},
             },
         ),
         // (title, text) of the entries the simulation makes itself. Rulers of either sex:
@@ -288,6 +342,9 @@
             province_gained: ("Земля возвращена", "Земля {province} отошла к короне. Прежний владелец: {neighbour}."),
             // The heir first in line died of age risk (heirs.death); see heir_death_age.
             heir_died: ("Смерть наследника", "Не стало первого в очереди на престол: {heir}."),
+            // The law in force changed (an action done or a choice); {law} is its name.
+            law_changed: ("Новый закон о престоле", "Отныне престол наследуют по закону «{law}»."),
+            partition: ("Земли поделены между братьями", "По закону о разделе младшие сыновья получили уделы: {lands}."),
             // What ended a reign (a RulerDies cause or the abdication event id) and the dynasty,
             // as shown to the player.
             reign_ends: {

@@ -78,6 +78,16 @@ pub struct Ruler {
     pub health: Fx,
     pub traits: BTreeSet<String>,
     pub reign_start: Tick,
+    #[serde(default)]
+    pub sex: Sex,
+}
+
+/// Rolled at birth (`HeirRules::sex`); a preset sets it.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum Sex {
+    #[default]
+    Male,
+    Female,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -91,6 +101,11 @@ pub struct Heir {
     pub ability: Fx,
     pub claim: Fx,
     pub status: HeirStatus,
+    #[serde(default)]
+    pub sex: Sex,
+    /// Wed by a marriage (`Effect::Marry`) or the `heir_marriage` event: never twice.
+    #[serde(default)]
+    pub married: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -172,6 +187,17 @@ pub struct World {
     /// Years the army deserted for want of pay (`war.desertion`), over the whole game.
     #[serde(default)]
     pub deserted: u32,
+    /// Marriages into foreign courts (`Effect::Marry`), one per court. A union ends with its
+    /// spouse (an heir dead, a ruler's reign over) or a war with that court.
+    #[serde(default)]
+    pub unions: BTreeMap<NeighbourId, Union>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Union {
+    /// The heir wed (`Heir.id`); None: the ruler.
+    pub spouse: Option<u32>,
+    pub since: Tick,
 }
 
 /// A member of the dynasty. Years are calendar years.
@@ -253,6 +279,7 @@ impl World {
             marks: BTreeMap::new(),
             kin: Vec::new(),
             deserted: 0,
+            unions: BTreeMap::new(),
         };
         let r = &world.ruler;
         let founder = Kin {
@@ -313,6 +340,9 @@ impl World {
                 k.died = Some(year);
             }
         }
+        // A union ends with its heir.
+        let heirs = &self.heirs;
+        (self.unions).retain(|_, u| u.spouse.is_none_or(|id| heirs.iter().any(|h| h.id == id)));
     }
 
     /// What changed since `before`: notable axis moves, births, heirs gone, provinces that

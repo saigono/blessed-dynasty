@@ -4,7 +4,7 @@
 mod chronicle;
 mod map;
 
-use bd_core::data::Data;
+use bd_core::data::{Data, Law};
 use bd_core::fx::Fx;
 use bd_core::game::{EventView, Game, GameError, ReignEnd, Step};
 use bd_core::link;
@@ -13,7 +13,7 @@ use bd_core::rules::{Action, ActionTarget, Effect, ProvinceField, Target};
 use bd_core::score::{self, Score, ScoreRules};
 use bd_core::sim::{self, Chronicle};
 use bd_core::state::{
-    AxisId, Change, HeirStatus, Holder, NeighbourId, Preset, ProvinceId, Stance, World,
+    AxisId, Change, HeirStatus, Holder, NeighbourId, Preset, ProvinceId, Sex, Stance, World,
 };
 use bd_core::war::War;
 use eframe::egui::{self, Button, Grid, ProgressBar, RichText, Ui};
@@ -79,6 +79,8 @@ enum Cmd {
     Begin,
     /// Open or close the family tree.
     Tree(bool),
+    /// Open or close the list of succession laws to bring in.
+    Laws(bool),
 }
 
 /// A line of the journal or of an effect list; `Some(true)` good, `Some(false)` bad.
@@ -114,6 +116,8 @@ struct App {
     intro: bool,
     /// The family tree card is up.
     tree: bool,
+    /// The list of laws to bring in is up, in place of the actions.
+    laws: bool,
     /// What happened, year by year: the date and its lines, oldest first.
     journal: Vec<(String, Vec<Line>)>,
     /// The world when «Подождать год» was pressed, and the choices made since: the year's
@@ -182,6 +186,7 @@ impl App {
             linked: false,
             intro: false,
             tree: false,
+            laws: false,
             journal: Vec::new(),
             year_start: None,
             chosen: Vec::new(),
@@ -219,6 +224,10 @@ impl App {
             }
             Cmd::Tree(open) => {
                 self.tree = open;
+                return;
+            }
+            Cmd::Laws(open) => {
+                (self.laws, self.picking) = (open, None);
                 return;
             }
             Cmd::Choose(i) => {
@@ -259,7 +268,7 @@ impl App {
                 return;
             }
             Cmd::Act(id, target) => {
-                self.picking = None;
+                (self.picking, self.laws) = (None, false);
                 g.start_action(&id, target).map(|_| Step::Idle)
             }
             Cmd::Choose(idx) => match g.choose(idx) {
@@ -275,15 +284,18 @@ impl App {
             | Cmd::Summary
             | Cmd::CopyLink
             | Cmd::Begin
-            | Cmd::Tree(_) => {
+            | Cmd::Tree(_)
+            | Cmd::Laws(_) => {
                 unreachable!("handled above")
             }
         };
         self.step(res);
-        if closes_year && matches!(self.screen, Screen::Reign) {
+        // A year waiting on its event is not recorded yet: its money line comes with it.
+        let closed = closes_year && matches!(self.screen, Screen::Reign);
+        if closed {
             self.close_year();
         }
-        if closes_year || spends {
+        if closed || spends {
             self.money_line();
         }
     }
@@ -388,6 +400,7 @@ impl App {
         (self.screen, self.picking, self.dynasty) = (Screen::Reign, None, None);
         (self.played, self.seed, self.entry) = (seed, seed.to_string(), 0);
         (self.intro, self.tree, self.year_start) = (true, false, None);
+        self.laws = false;
         (self.journal, self.chosen, self.money) = (Vec::new(), Vec::new(), None);
     }
 
@@ -421,6 +434,10 @@ impl App {
             Screen::Reign if self.intro => {
                 self.reign(ui);
                 intro(&ctx, &self.presets[self.preset])
+            }
+            Screen::Reign if self.laws => {
+                self.reign(ui);
+                laws(&ctx, self.game.as_ref().expect("in a game"))
             }
             Screen::Reign => self.reign(ui),
             Screen::Event(v) => {
@@ -593,8 +610,20 @@ impl App {
                         "Цель для «{}», на карте или из списка:",
                         action_name(w, d, id)
                     ));
+                    let suit = d
+                        .actions
+                        .iter()
+                        .find(|a| a.id == *id)
+                        .filter(|a| a.marries());
                     for t in targets {
-                        if ui.button(target_name(w, t)).clicked() {
+                        let label = match (suit, t) {
+                            (Some(_), Target::Neighbour(n)) => {
+                                let chance = d.marriage.chance(w, d, n);
+                                format!("{} · {}%", target_name(w, t), round(chance))
+                            }
+                            _ => target_name(w, t),
+                        };
+                        if ui.button(label).clicked() {
                             cmd = Some(Cmd::Act(id.clone(), Some(t.clone())));
                         }
                     }
@@ -605,8 +634,17 @@ impl App {
             }
             None => {
                 ui.horizontal_wrapped(|ui| {
+                    // The laws to bring in go to a list of their own.
+                    let others = (d.actions.iter())
+                        .filter(|a| law_of(d, a).is_some_and(|l| d.heirs.law(w) != Some(l)));
+                    if others.count() > 0 && ui.button("Сменить закон").clicked() {
+                        cmd = Some(Cmd::Laws(true));
+                    }
                     for (id, targets) in g.available_actions() {
                         let def = d.actions.iter().find(|a| a.id == id);
+                        if def.is_some_and(|a| law_of(d, a).is_some()) {
+                            continue;
+                        }
                         let button = ui.button(action_name(w, d, &id));
                         let button = match def {
                             Some(a) => button.on_hover_ui(|ui| action_tip(ui, w, d, a)),
@@ -647,6 +685,67 @@ impl App {
         ui.add_space(4.0);
         cmd
     }
+}
+
+/// The law an action brings in: the one whose flag its `on_complete` sets.
+fn law_of<'a>(d: &'a Data, a: &Action) -> Option<&'a Law> {
+    let sets = |f: &String| a.on_complete.contains(&Effect::SetFlag(f.clone()));
+    d.heirs.laws.iter().find(|l| sets(&l.flag))
+}
+
+/// «Сменить закон»: a card with every law but the one in force, its text, price and
+/// resistance; those not to be had now are greyed out.
+fn laws(ctx: &egui::Context, g: &Game) -> Option<Cmd> {
+    let (w, d) = (&g.world, &g.data);
+    let mut cmd = None;
+    let open: Vec<String> = (g.available_actions().into_iter())
+        .map(|(id, _)| id)
+        .collect();
+    egui::Modal::new(egui::Id::new("laws")).show(ctx, |ui| {
+        ui.set_width(640.0);
+        ui.label(RichText::new("Сменить закон").size(20.0).strong());
+        ui.label("Новый закон о престоле вводят годами, за деньги и против воли знати или церкви.");
+        if w.flags.contains(&d.abdication.contested_flag) {
+            let busy = "Пока идёт спор о престоле, закон не сменить.";
+            ui.label(RichText::new(busy).color(RUBRIC));
+        }
+        for a in &d.actions {
+            let Some(l) = law_of(d, a).filter(|l| d.heirs.law(w) != Some(*l)) else {
+                continue;
+            };
+            ui.separator();
+            let button = Button::new(RichText::new(&l.name).strong());
+            if ui.add_enabled(open.contains(&a.id), button).clicked() {
+                cmd = Some(Cmd::Act(a.id.clone(), None));
+            }
+            ui.label(l.text());
+            let n = a.duration_years.0;
+            let mut price = format!("Стоимость {} · {n} {}", round(a.cost), years(n));
+            if a.min_crown_power > Fx(0) {
+                price += &format!(" · сила короны от {}", round(a.min_crown_power));
+            }
+            ui.label(RichText::new(price).color(FG2));
+            // «пока вводят, в год: Церковь -2 · по введении: Знать +3, Церковь -2».
+            let list = |es: &[Effect]| {
+                let lines: Vec<String> = effects(d, es).into_iter().map(|(t, _)| t).collect();
+                lines.join(", ")
+            };
+            let parts = [
+                ("пока вводят, в год", list(&a.yearly)),
+                ("по введении", list(&a.on_complete)),
+            ];
+            let parts: Vec<String> = (parts.iter())
+                .filter(|(_, l)| !l.is_empty())
+                .map(|(when, l)| format!("{when}: {l}"))
+                .collect();
+            ui.small(RichText::new(parts.join(" · ")).color(FG2));
+        }
+        ui.separator();
+        if ui.button("Отмена").clicked() {
+            cmd = Some(Cmd::Laws(false));
+        }
+    });
+    cmd
 }
 
 /// «Действия k из n, военные j из m: идёт X, t из T лет»; the war slots only at war.
@@ -820,8 +919,27 @@ fn action_tip(ui: &mut Ui, w: &World, d: &Data, a: &Action) {
         let need = format!("Нужна сила короны от {}", round(a.min_crown_power));
         ui.label(RichText::new(need).color(FG2));
     }
-    for (text, up) in effects(d, &a.on_complete) {
+    let yearly = effects(d, &a.yearly).into_iter();
+    let yearly = yearly.map(|(t, up)| (format!("пока идёт, в год: {t}"), up));
+    for (text, up) in yearly.chain(effects(d, &a.on_complete)) {
         ui.small(RichText::new(text).color(tone(up)));
+    }
+    if a.marries() {
+        // The chance of every court before the suit; 0: it turns any suit away.
+        let (yes, no): (Vec<_>, Vec<_>) = (w.neighbours.values())
+            .map(|n| (n, d.marriage.chance(w, d, &n.id)))
+            .partition(|(_, c)| *c > Fx(0));
+        let yes: Vec<String> = yes
+            .iter()
+            .map(|(n, c)| format!("{} {}%", n.name, round(*c)))
+            .collect();
+        if !yes.is_empty() {
+            ui.label(format!("Шанс согласия: {}", yes.join(", ")));
+        }
+        let no: Vec<&str> = no.iter().map(|(n, _)| n.name.as_str()).collect();
+        if !no.is_empty() {
+            ui.label(RichText::new(format!("Сватов не примут: {}", no.join(", "))).color(FG2));
+        }
     }
 }
 
@@ -907,7 +1025,7 @@ fn side(ui: &mut Ui, g: &Game) {
         ui.label(RichText::new(hint).small().color(FG2));
     }
     heading(ui, "Наследники");
-    let first = bd_core::sim::next_heir(w);
+    let first = bd_core::sim::successor(w, d);
     match d.heirs.law(w) {
         Some(l) => {
             let law = ui.label(format!("Закон: {} (?)", l.name));
@@ -937,7 +1055,11 @@ fn side(ui: &mut Ui, g: &Game) {
                     RichText::new(format!("заложник: {n}")).color(RUBRIC)
                 }
             };
-            ui.label(format!("{}, {}", h.name, h.age));
+            let sex = match h.sex {
+                Sex::Male => "♂",
+                Sex::Female => "♀",
+            };
+            ui.label(format!("{sex} {}, {}", h.name, h.age));
             ui.small(status);
             ui.small(format!(
                 "спос. {} · прет. {}",
@@ -983,6 +1105,14 @@ fn side(ui: &mut Ui, g: &Game) {
                 ui.label(format!("Сила {}, {stance}", round(n.strength)));
                 for t in &ties {
                     ui.label(t);
+                }
+                // Who is wed into that court: the ruler or an heir.
+                if let Some(u) = w.unions.get(&n.id) {
+                    let spouse = match u.spouse {
+                        None => Some(&w.ruler.name),
+                        Some(id) => w.heir_index(id).map(|i| &w.heirs[i].name),
+                    };
+                    ui.label(format!("В браке: {}", spouse.map_or("", |s| s)));
                 }
                 if ties.is_empty() {
                     ui.label(RichText::new("Союзов и браков нет").color(FG2));
@@ -1214,6 +1344,16 @@ fn effects(d: &Data, list: &[Effect]) -> Vec<Line> {
             Effect::IfFriendly(es) => {
                 let friendly = effects(d, es).into_iter();
                 out.extend(friendly.map(|(t, up)| (format!("если сосед — друг: {t}"), up)));
+                continue;
+            }
+            Effect::Marry { then, otherwise } => {
+                let yes = effects(d, then)
+                    .into_iter()
+                    .map(|(t, up)| (format!("согласие: {t}"), up));
+                let no = effects(d, otherwise)
+                    .into_iter()
+                    .map(|(t, up)| (format!("отказ: {t}"), up));
+                out.extend(yes.chain(no));
                 continue;
             }
             Effect::Chance(_) if !out.iter().any(|(t, _)| t == "риск") => ("риск".into(), None),
@@ -1637,7 +1777,7 @@ mod tests {
         six_years(&mut h);
         let line = |s: &str, up| (s.to_string(), up);
         // Every year opens with the treasury, notable or not.
-        let money = line("Казна: +28 (доход +33, содержание -4, траты 0)", Some(true));
+        let money = line("Казна: +28 (доход +33, содержание -5, траты 0)", Some(true));
         let want = vec![
             (
                 "1188",
@@ -1653,35 +1793,47 @@ mod tests {
             (
                 "1189",
                 vec![
-                    line("Казна: +28 (доход +33, содержание -5, траты 0)", Some(true)),
-                    line("Рождение: Агнесса", Some(true)),
+                    line(
+                        "Казна: -8 (доход +32, содержание -5, траты -35)",
+                        Some(false),
+                    ),
+                    line("«Неурожай»: Раздать зерно из казны", None),
+                    line("Рождение: Генрих", Some(true)),
                     line("Завершено: Проложить дорогу (Берг)", None),
                 ],
             ),
             (
                 "1190",
-                vec![money.clone(), line("«Набег: Арден»: Выслать войско", None)],
+                vec![money.clone(), line("Рождение: Освальд", Some(true))],
             ),
             (
                 "1191",
                 vec![
                     money.clone(),
-                    line("«Паломники»: Взять паломников под охрану короны", None),
+                    line("«Знать требует»: Подтвердить вольности", None),
+                    line("Бюрократия -5", Some(false)),
+                    line("Знать +11", Some(true)),
                 ],
             ),
             (
                 "1192",
                 vec![
-                    money.clone(),
-                    line("«Заговор»: Схватить всех подозреваемых", None),
-                    line("Знать -7", Some(false)),
+                    line(
+                        "Казна: +43 (доход +33, содержание -5, траты +15)",
+                        Some(true),
+                    ),
+                    line("«Пограничная стычка»: Потребовать виру", None),
+                    line("Рождение: Рейнхольд", Some(true)),
                 ],
             ),
             (
                 "1193",
                 vec![
                     money,
-                    line("«Гильдии просят хартию»: Даровать хартию", None),
+                    line("«Церковь требует»: Платить десятину", None),
+                    line("Доход -2", Some(false)),
+                    line("Церковь +9", Some(true)),
+                    line("Смерть наследника: Рейнхольд", Some(false)),
                 ],
             ),
         ];
@@ -1698,7 +1850,7 @@ mod tests {
         (d.quiet_weight, d.heirs.birth) = (1_000_000, vec![]);
         h.app.apply(Cmd::Wait);
         let quiet = vec![line(
-            "Казна: +30 (доход +35, содержание -4, траты 0)",
+            "Казна: +26 (доход +31, содержание -5, траты 0)",
             Some(true),
         )];
         assert_eq!(h.app.journal.last().unwrap(), &("1194".to_string(), quiet));
@@ -1765,6 +1917,10 @@ mod tests {
         h.ctx
             .global_style_mut(|s| s.interaction.tooltip_delay = 0.0);
         h.ctx.enable_accesskit();
+        // Away first: the last tooltip, which takes the pointer, may cover the widget.
+        for _ in 0..3 {
+            h.frame(vec![Event::PointerMoved(Pos2::new(1.0, 1.0))]);
+        }
         let out = h.frame(vec![]);
         let tree = out
             .platform_output
@@ -1823,18 +1979,30 @@ mod tests {
         ] {
             assert!(road.contains(&t.to_string()), "{t}: {road:?}");
         }
+        // A widowed king may wed; Веструм agrees for sure.
+        let g = h.app.game.as_mut().unwrap();
+        g.world.flags.remove("married");
+        g.data.marriage.percent = Fx::from_int(100);
         let marriage = hover(&mut h, "Заключить брачный союз");
         assert!(
-            marriage.contains(&"отношения +30".to_string()),
+            marriage.contains(&"согласие: отношения +30".to_string())
+                && marriage.contains(&"отказ: Престиж -5".to_string()),
             "{marriage:?}"
         );
         assert!(
             marriage
                 .iter()
-                .any(|t| t.starts_with("Брак правящего дома"))
+                .any(|t| t.starts_with("Посвататься к соседнему двору"))
         );
+        // The chance of every court before the suit (here a flat 100), Нордмарк at -40 none.
+        for t in [
+            "Шанс согласия: Пурпуляндия 99%, Веструм 100%",
+            "Сватов не примут: Нордмарк",
+        ] {
+            assert!(marriage.contains(&t.to_string()), "{t}: {marriage:?}");
+        }
 
-        let law = hover(&mut h, "Закон: Первородство (?)");
+        let law = hover(&mut h, "Закон: Абсолютное первородство (?)");
         let text = h.game().data.heirs.laws[0].text();
         assert!(law.contains(&text) && text.contains("ниже 70"), "{law:?}");
         assert!(texts_of(&mut h).contains(&"Первый в очереди: Конрад".to_string()));
@@ -1855,7 +2023,70 @@ mod tests {
             h.app.apply(Cmd::Choose(0));
         }
         let n = hover(&mut h, "Веструм ♥");
-        assert!(n.contains(&"брачный союз с 1187".to_string()), "{n:?}");
+        // Dated by the wedding, a year after the suit.
+        assert!(n.contains(&"брачный союз с 1188".to_string()), "{n:?}");
+    }
+
+    /// Acceptance (stage 16): a law changes by mouse: «Сменить закон», the list with every
+    /// other law's text and price, a pick; the law is in force once the years pass.
+    #[test]
+    fn the_law_changes_from_its_list() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(1));
+        h.click_label("Править");
+        let row = texts_of(&mut h);
+        assert!(
+            !row.iter().any(|t| t.starts_with("Ввести закон")),
+            "{row:?}"
+        );
+        h.click_label("Сменить закон");
+        assert!(h.app.laws);
+        // A card sizes itself in its first frame.
+        h.frame(vec![]);
+        let list = texts_of(&mut h);
+        let d = h.game().data.clone();
+        for l in d.heirs.laws.iter().skip(1) {
+            assert!(
+                list.contains(&l.name) && list.contains(&l.text()),
+                "{}: {list:?}",
+                l.name
+            );
+        }
+        let current = &d.heirs.laws[0].name;
+        assert!(!list.contains(current), "the law in force is not offered");
+        for t in [
+            "Стоимость 45 · 2 года · сила короны от 40",
+            "пока вводят, в год: Церковь -2 · по введении: Знать +3, Церковь -2",
+        ] {
+            assert!(list.iter().any(|x| x.starts_with(t)), "{t}: {list:?}");
+        }
+        h.click_label("Салический закон");
+        assert!(!h.app.laws);
+        let running = &h.game().world.active_actions;
+        assert_eq!(running[0].id, "change_succession_law_salic");
+        for _ in 0..2 {
+            h.app.apply(Cmd::Wait);
+            while let Screen::Event(_) = h.app.screen {
+                h.app.apply(Cmd::Choose(0));
+            }
+        }
+        assert!(texts_of(&mut h).contains(&"Закон: Салический закон (?)".to_string()));
+        // While the throne is disputed, nothing to pick and the reason said.
+        h.app
+            .game
+            .as_mut()
+            .unwrap()
+            .world
+            .flags
+            .insert("succession_contested".into());
+        h.click_label("Сменить закон");
+        h.frame(vec![]);
+        let list = texts_of(&mut h);
+        assert!(list.contains(&"Пока идёт спор о престоле, закон не сменить.".to_string()));
+        h.click_label("Мужское первородство");
+        assert!(h.app.laws && h.game().world.active_actions.is_empty());
+        h.click_label("Отмена");
+        assert!(!h.app.laws);
     }
 
     #[test]
@@ -1906,13 +2137,16 @@ mod tests {
         for t in [
             "♔ Ульрих (р. 1155), правил с 1187",
             "Конрад (1181–1188)",
-            "Агнесса (р. 1189)",
+            "Генрих (р. 1189)",
         ] {
             assert!(shown.contains(&t.to_string()), "{t}: {shown:?}");
         }
         // Children under their parent, deeper.
         let kin = &h.game().world.kin;
-        assert_eq!(chronicle::family(kin), [(0, 0), (1, 1), (2, 1)]);
+        assert_eq!(
+            chronicle::family(kin),
+            [(0, 0), (1, 1), (2, 1), (3, 1), (4, 1)]
+        );
         h.click_label("Закрыть");
         assert!(!h.app.tree);
 

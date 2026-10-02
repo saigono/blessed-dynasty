@@ -1,12 +1,16 @@
 //! The dynasty after the founder: the same `Game` year by year, choices by `AutoChooser`,
 //! until the dynasty falls or `sim.max_years` pass. The result is a `Chronicle`.
 
-use crate::data::Data;
+use crate::data::{Data, SuccessionRule, TraitRule};
 use crate::fx::Fx;
 use crate::game::{ActionId, Game, PendingEvent, ReignEnd, Step};
 use crate::rng::Rng;
+use crate::rules::add_axis;
 use crate::rules::{Choice, Effect, Event, HeirOp, NewHolder, Predicate, ProvinceField, Target};
-use crate::state::{Axes, CauseTag, HeirStatus, Holder, Kin, MarkKey, ProvinceId, Ruler, World};
+use crate::state::{
+    Axes, CauseTag, HeirStatus, Holder, Kin, MarkKey, NeighbourId, ProvinceId, Ruler, Sex, Vassal,
+    VassalId, World,
+};
 use crate::time::Tick;
 use crate::war::WarStage;
 use serde::{Deserialize, Serialize};
@@ -148,7 +152,8 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
                 .values()
                 .map(|p| p.holder.clone())
                 .collect();
-            let first = next_heir(&g.world).map(|i| g.world.heirs[i].clone());
+            let first = successor(&g.world, &g.data).map(|i| g.world.heirs[i].clone());
+            let law = g.data.heirs.law(&g.world).map(|l| l.flag.clone());
             let step = g.wait().expect("the reign goes on");
             // Within a tick only the yearly age risk takes an heir; events do on resolve.
             if let Some(h) = first.filter(|h| g.world.heir_index(h.id).is_none()) {
@@ -198,6 +203,7 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
                 }
             }
             province_entries(&g, &holders, &mut c);
+            law_entry(&g, law, &mut c);
         }
     };
     let w = &g.world;
@@ -212,11 +218,10 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
     c
 }
 
-/// The next ruler: the heir with the highest claim (claims follow the succession law), the
-/// eldest on a tie. He keeps his name unless it is the newborn placeholder, then one from
+/// The next ruler: the heir `successor` names. He keeps his name unless it is the newborn placeholder, then one from
 /// `names.rulers`; traits roll by `sim.traits`; health `sim.ruler_health`. None: no heir.
 pub fn succession(w: &World, data: &Data, rng: &mut Rng) -> Option<Ruler> {
-    let heir = &w.heirs[next_heir(w)?];
+    let heir = &w.heirs[successor(w, data)?];
     let pool = &data.names.rulers;
     let name = match heir.name == data.new_heir.name && !pool.is_empty() {
         true => pool[rng.range(0, pool.len() as i64) as usize].clone(),
@@ -240,7 +245,31 @@ pub fn succession(w: &World, data: &Data, rng: &mut Rng) -> Option<Ruler> {
         health: data.sim.ruler_health,
         traits,
         reign_start: w.tick,
+        sex: heir.sex,
     })
+}
+
+/// Who succeeds now by the rule of the law in force (`SuccessionRule`); `next_heir` without
+/// a law. None: nobody may.
+pub fn successor(w: &World, data: &Data) -> Option<usize> {
+    let Some(law) = data.heirs.law(w) else {
+        return next_heir(w);
+    };
+    let h = &w.heirs;
+    let son = |i: &usize| h[*i].sex == Sex::Male;
+    let child = |i: &usize| h[*i].id >= w.line_from;
+    let mut all = 0..h.len();
+    match law.rule {
+        SuccessionRule::Absolute => all.next(),
+        SuccessionRule::Male | SuccessionRule::Partition => {
+            all.min_by_key(|i| (!child(i), !son(i), *i))
+        }
+        SuccessionRule::Salic => all.find(son),
+        SuccessionRule::Seniority => {
+            all.min_by_key(|i| (!son(i), child(i), Reverse(h[*i].age), *i))
+        }
+        SuccessionRule::Elective => all.min_by_key(|i| (Reverse(h[*i].ability), *i)),
+    }
 }
 
 /// Who succeeds now: the index in `heirs` of the highest claim, the eldest on a tie.
@@ -258,14 +287,33 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
         return false;
     };
     let (d, w, rng) = (&g.data, &mut g.world, &mut g.rng);
-    let heir = w.heirs.remove(next_heir(w).expect("succession found one"));
+    let heir = w
+        .heirs
+        .remove(successor(w, d).expect("succession found one"));
+    // The late ruler's unions end with him; the new one's come with him to the throne.
+    w.unions.retain(|_, u| u.spouse.is_some());
+    for u in w.unions.values_mut().filter(|u| u.spouse == Some(heir.id)) {
+        u.spouse = None;
+    }
+    // The late ruler's other sons, eldest first, for a partition.
+    let sons: Vec<_> = (w.heirs.iter())
+        .filter(|h| h.id >= w.line_from && h.sex == Sex::Male)
+        .map(|h| (h.id, h.name.clone()))
+        .collect();
     let year = w.year();
     if let Some(k) = w.kin.iter_mut().find(|k| k.heir == Some(heir.id)) {
         (k.name, k.crowned) = (ruler.name.clone(), Some(year));
     }
     // His brothers and sisters become the collateral line, behind his children.
     w.line_from = w.next_heir_id;
+    // Children before the coronation come as in wedlock, as heir marriages were never
+    // tracked year by year (stage 15); from now on births follow his own marriage.
+    let married = &d.heirs.married_flag;
+    w.flags.insert(married.clone());
     born_before(d, w, rng, ruler.age);
+    if !heir.married {
+        w.flags.remove(married);
+    }
     if let Some(l) = d.heirs.law(w) {
         // Each heir left is a rival: a chance of dispute per head, rolled only if the law has one.
         let rivals = l.dispute_per_heir * Fx::from_int(w.heirs.len() as i64);
@@ -277,18 +325,101 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     for f in &d.sim.reign_flags {
         w.flags.remove(f);
     }
+    let law = d.heirs.law(w);
+    let lands = match law.filter(|l| l.rule == SuccessionRule::Partition) {
+        Some(l) => partition(w, l.house, &sons),
+        None => vec![],
+    };
+    if !lands.is_empty() {
+        w.recompute_crown_power(d);
+    }
     if ruler.age < d.sim.regency_age {
         w.flags.insert(d.sim.regency_flag.clone());
     }
+    let cheer = coronation(w, d, heir.claim, &ruler);
     let (title, text) = &d.sim.texts.crowned;
     let fill = |s: &String| s.replace("{ruler}", &ruler.name);
-    let told = (fill(title), fill(text));
+    let mut told = (fill(title), fill(text));
+    if let Some(cheer) = cheer {
+        told.1 = format!("{} {cheer}", told.1);
+    }
     c.rulers.push(record(&ruler));
     w.ruler = ruler;
     (g.ended, g.reported) = (None, false);
     let causes = causes(&g.world, [MarkKey::Heir(heir.id)].into());
     c.entries.push(entry(g, told, g.data.sim.notable, causes));
+    if !lands.is_empty() {
+        let (title, text) = &g.data.sim.texts.partition;
+        let told = (title.clone(), text.replace("{lands}", &lands.join(", ")));
+        c.entries.push(entry(g, told, g.data.sim.notable, vec![]));
+    }
     true
+}
+
+/// The axes at a coronation (`Data.coronation`, see `CoronationRules`) for a new ruler of
+/// `claim`. Returns how the chronicle tells the trait that moved an axis most, if it is told.
+fn coronation(w: &mut World, d: &Data, claim: Fx, ruler: &Ruler) -> Option<String> {
+    let c = &d.coronation;
+    for f in &d.factions {
+        let def = d
+            .axes
+            .iter()
+            .find(|a| a.id == f.axis)
+            .expect("checked on load");
+        let back = (def.default - w.axes[&f.axis]) * c.reset;
+        add_axis(w, d, &f.axis, back);
+    }
+    if let Some((a, k)) = &c.legitimacy_from_claim {
+        let toward = (claim - w.axes[a]) * *k;
+        add_axis(w, d, a, toward);
+    }
+    let contested = w.flags.contains(&d.abdication.contested_flag);
+    let law = d.heirs.law(w).map_or(&[][..], |l| &l.coronation);
+    for (a, v) in c.contested.iter().filter(|_| contested).chain(law) {
+        add_axis(w, d, a, *v);
+    }
+    let traits = d.sim.traits.iter().filter(|t| ruler.traits.contains(&t.id));
+    let mut most: Option<(Fx, &TraitRule)> = None;
+    for t in traits {
+        for (a, v) in &t.axes {
+            add_axis(w, d, a, *v);
+        }
+        let shift = t.axes.iter().map(|(_, v)| Fx(v.0.abs())).max();
+        if let Some(shift) = shift.filter(|s| most.is_none_or(|(m, _)| *s > m)) {
+            most = Some((shift, t));
+        }
+    }
+    w.recompute_loyalty(d);
+    let (king, queen) = &most?.1.told;
+    let told = if ruler.sex == Sex::Male { king } else { queen };
+    (!told.is_empty()).then(|| told.clone())
+}
+
+/// `SuccessionRule::Partition`: each son, eldest first, gets the crown province farthest from
+/// the capital (the smallest id on a tie) as a house of his name with `(loyalty, strength)`;
+/// the capital stays with the crown. «Сын — земля» for every grant.
+fn partition(w: &mut World, (loyalty, strength): (Fx, Fx), sons: &[(u32, String)]) -> Vec<String> {
+    let mut told = vec![];
+    for (id, name) in sons {
+        let far = (w.provinces.values())
+            .filter(|p| p.holder == Holder::Crown && p.id != w.capital.province)
+            .max_by_key(|p| (p.distance_to_capital, Reverse(&p.id)));
+        let Some(p) = far.map(|p| p.id.clone()) else {
+            break;
+        };
+        let house = VassalId(format!("{name}_{id}"));
+        let v = Vassal {
+            id: house.clone(),
+            name: name.clone(),
+            loyalty,
+            strength,
+        };
+        w.vassals.insert(house.clone(), v);
+        let p = w.provinces.get_mut(&p).expect("found above");
+        p.holder = Holder::Vassal(house);
+        told.push(format!("{name} — {}", p.name));
+    }
+    told
 }
 
 /// The children a new ruler of `age` had before the coronation: a roll of
@@ -305,7 +436,7 @@ fn born_before(d: &Data, w: &mut World, rng: &mut Rng, age: u32) {
         if (0..years).any(|y| rng.range(0, 1000 * Fx::SCALE) < risk(y)) {
             continue;
         }
-        let mut h = d.newborn(w.next_heir_id);
+        let mut h = d.newborn_of(w.next_heir_id, r.sex(rng));
         let grown = r.growth_home * Fx::from_int(years.min(r.adult_age).into());
         (h.age, h.ability) = (years, (h.ability + grown).min(Fx::from_int(100)));
         w.add_heir(h);
@@ -370,6 +501,21 @@ fn province_entries(g: &Game, holders: &[Holder], c: &mut Chronicle) {
         let told = (fill(title), fill(text));
         c.entries.push(entry(g, told, g.data.sim.notable, causes));
     }
+}
+
+/// An entry when the law in force is no longer `was`.
+fn law_entry(g: &Game, was: Option<String>, c: &mut Chronicle) {
+    let Some(law) = g
+        .data
+        .heirs
+        .law(&g.world)
+        .filter(|l| Some(&l.flag) != was.as_ref())
+    else {
+        return;
+    };
+    let (title, text) = &g.data.sim.texts.law_changed;
+    let told = (title.clone(), text.replace("{law}", &law.name));
+    c.entries.push(entry(g, told, g.data.sim.notable, vec![]));
 }
 
 fn entry(
@@ -492,9 +638,15 @@ impl AutoChooser {
 
     /// Index of the best choice.
     pub fn choose(&self, g: &mut Game, choices: &[Choice]) -> usize {
+        // The neighbour of the event, for a suit among the choices.
+        let p = g.pending_event.as_ref();
+        let nb = p.and_then(|p| match &p.target {
+            Some(Target::Neighbour(n)) => Some(n),
+            _ => p.neighbour.as_ref(),
+        });
         let scores = choices
             .iter()
-            .map(|c| self.worth(&c.effects, &g.world, &g.data));
+            .map(|c| self.worth(&c.effects, &g.world, &g.data, nb));
         let scores: Vec<Fx> = scores.collect();
         self.best(&scores, &mut g.rng)
     }
@@ -511,8 +663,19 @@ impl AutoChooser {
             if !g.data.action_slots.free(&g.world, &g.data.actions, a) {
                 continue;
             }
-            let score = self.worth(&a.on_complete, &g.world, &g.data) - treasury * a.cost;
+            let years = Fx::from_int(a.duration_years.0.max(1) as i64);
+            let (w, d) = (&g.world, &g.data);
+            let score = |nb| {
+                self.worth(&a.on_complete, w, d, nb) - treasury * a.cost
+                    + self.worth(&a.yearly, w, d, None) * years
+            };
+            let first = score(None);
             for t in 0..targets.len().max(1) {
+                // Only a suit weighs its court; the rest score alike on every target.
+                let score = match targets.get(t) {
+                    Some(Target::Neighbour(n)) if a.marries() => score(Some(n)),
+                    _ => first,
+                };
                 options.push(Some((k, t)));
                 scores.push(score);
             }
@@ -537,14 +700,15 @@ impl AutoChooser {
         self.weights.get(key).copied().unwrap_or_default()
     }
 
-    /// Keys: axis ids (by the delta), flag ids (+1 set, -1 cleared), `province_income`,
+    /// Keys: axis ids (by the delta), flag ids (+1 set, -1 cleared; a flag already so counts
+    /// nothing), `province_income`,
     /// `province_population`, `province_loyalty`, `health`, `relation`, `crown_power`
     /// (by the delta), `build`, `grant`, `revoke`, `secede`, `war`, `hostage`, `death`,
     /// `abdicate` (+1 each), `overreach` (+1 for a grant while the crown holds more than its
     /// room, `crown_capacity`), `province` (+1 gained, -1 given away), `heir` (+1 born, -1 lost),
     /// `heir_ability`, `heir_claim` (by the delta), `army_upkeep` (by the change in the yearly
     /// upkeep a change of the army brings). A chance weighs both branches by its odds.
-    fn worth(&self, effects: &[Effect], w: &World, data: &Data) -> Fx {
+    fn worth(&self, effects: &[Effect], w: &World, data: &Data, nb: Option<&NeighbourId>) -> Fx {
         let one = Fx::from_int(1);
         let mut sum = Fx(0);
         for e in effects {
@@ -562,6 +726,9 @@ impl AutoChooser {
                 Effect::Province(_, ProvinceField::Income, d) => ("province_income", *d),
                 Effect::Province(_, ProvinceField::Population, d) => ("province_population", *d),
                 Effect::Province(_, ProvinceField::Loyalty, d) => ("province_loyalty", *d),
+                // Only a change counts: a flag set again or an absent one cleared is nothing.
+                Effect::SetFlag(f) if w.flags.contains(f) => continue,
+                Effect::ClearFlag(f) if !w.flags.contains(f) => continue,
                 Effect::SetFlag(f) => (f, one),
                 Effect::ClearFlag(f) => (f, Fx::from_int(-1)),
                 Effect::RulerHealth(d) => ("health", *d),
@@ -586,6 +753,7 @@ impl AutoChooser {
                     ("province", Fx::from_int(-1))
                 }
                 Effect::HeirOp(HeirOp::Add) => ("heir", one),
+                Effect::HeirOp(HeirOp::TargetMarry) => ("marriage", one),
                 Effect::HeirOp(HeirOp::Remove(_) | HeirOp::TargetRemove) => {
                     ("heir", Fx::from_int(-1))
                 }
@@ -595,12 +763,19 @@ impl AutoChooser {
                 Effect::HeirOp(HeirOp::Claim(_, d) | HeirOp::TargetClaim(d)) => ("heir_claim", *d),
                 Effect::Chance(c) => {
                     let hit = c.percent(w) / Fx::from_int(100);
-                    sum = sum + self.worth(&c.then, w, data) * hit;
-                    sum = sum + self.worth(&c.otherwise, w, data) * (one - hit);
+                    sum = sum + self.worth(&c.then, w, data, nb) * hit;
+                    sum = sum + self.worth(&c.otherwise, w, data, nb) * (one - hit);
+                    continue;
+                }
+                Effect::Marry { then, otherwise } => {
+                    let chance = nb.map_or(Fx(0), |n| data.marriage.chance(w, data, n));
+                    let yes = chance / Fx::from_int(100);
+                    let wed = self.worth(then, w, data, nb) + self.weight("marriage");
+                    sum = sum + wed * yes + self.worth(otherwise, w, data, nb) * (one - yes);
                     continue;
                 }
                 Effect::IfFriendly(es) => {
-                    sum = sum + self.worth(es, w, data);
+                    sum = sum + self.worth(es, w, data, nb);
                     continue;
                 }
                 Effect::HeirOp(HeirOp::SetStatus(..) | HeirOp::TargetStatus(_))

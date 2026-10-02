@@ -8,3 +8,16 @@ edition = "2024"
 
 [profile.test]
 opt-level = 1
+
+# Stage 16: the wasm sits at the 8 MiB limit (crates/ui wasm_release_fits_8_mb). Dependencies
+# (egui, eframe) and the UI are built for size; the core stays at opt-level 3 for `cli batch`.
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.release.package."*"]
+opt-level = "z"
+
+[profile.release.package.ui]
+opt-level = "z"

@@ -6,7 +6,9 @@ use bd_core::game::{DecisionKind, Game, PendingEvent, ReignEnd, Step};
 use bd_core::rng::Rng;
 use bd_core::rules::Target;
 use bd_core::sim::{self, AutoChooser, Chronicle, FallReason};
-use bd_core::state::{AxisId, Heir, HeirStatus, Holder, MarkKey, Preset, ProvinceId, VassalId};
+use bd_core::state::{
+    AxisId, Heir, HeirStatus, Holder, MarkKey, Preset, ProvinceId, Sex, VassalId,
+};
 use bd_core::time::Tick;
 use std::fs;
 use std::path::PathBuf;
@@ -120,30 +122,43 @@ fn golden_seed_42_script_a() {
     // Stage 14: armies cost by the upkeep curve, the dynasty wars with its own actions.
     // Stage 15: gentler heir deaths, Конрад reigns with children born before; less money;
     // Вейр, grown by the three grants, revolts and takes the land bit by bit.
-    assert_eq!((c.years, &c.fall), (152, &FallReason::NoCrownLand));
+    // Stage 16: sons and daughters, the coronation resets the factions and tells the trait,
+    // heirs marry one by one: Конрад outlives his father and reigns 31 years.
+    assert_eq!((c.years, &c.fall), (91, &FallReason::Usurped));
     let hint = |h: &'static str| Some(h);
+    let raid = hint("Набег, отбитый при основателе, научил соседа осторожности.");
     assert_eq!(
-        texts(&c)[..4],
+        texts(&c)[..6],
         [
             (
                 "Новое правление",
-                "Престол наследует Конрад.",
+                "Престол наследует Конрад. Церковь ликует: на троне набожный король.",
                 hint("Основатель породнил наследника с домом своего барона."),
             ),
             (
-                "Мятеж дома Вейр",
-                "В тот год дом Вейр поднял мятеж в земле Вейр и отказался присягать короне.",
-                hint("Набег, отбитый при основателе, научил соседа осторожности."),
-            ),
-            (
-                "Спор наследников",
-                "Двое королевских детей не уступают друг другу, у каждого свои сторонники при дворе.",
+                "Смерть наследника",
+                "Не стало первого в очереди на престол: Гизела.",
                 None,
             ),
             (
-                "Мятеж дома Вейр",
-                "В тот год дом Вейр поднял мятеж в земле Гарт и отказался присягать короне.",
-                hint("Набег, отбитый при основателе, научил соседа осторожности."),
+                "Мятеж дома Арден",
+                "В тот год дом Арден поднял мятеж в земле Мар и отказался присягать короне.",
+                raid,
+            ),
+            (
+                "Потеря земли",
+                "Земля Арден потеряна, ею владеет Арден.",
+                raid
+            ),
+            (
+                "Потеря земли",
+                "Земля Мар потеряна, ею владеет Арден.",
+                None
+            ),
+            (
+                "Великое бедствие",
+                "В тот год великое наводнение, а за ним мор опустошили землю Оствик.",
+                hint("Основатель кормил край после наводнения."),
             ),
         ]
     );
@@ -241,6 +256,9 @@ fn heirs(data: &Data, list: &[(u32, i64, HeirStatus)]) -> Game {
             ability: Fx::from_int(50),
             claim: Fx::from_int(*claim),
             status: status.clone(),
+            sex: Sex::Male,
+            // Grown heirs are wed, as `heir_marriage` would have it, and crowned so.
+            married: *age >= 16,
         });
     }
     g
@@ -250,8 +268,10 @@ fn heirs(data: &Data, list: &[(u32, i64, HeirStatus)]) -> Game {
 fn succession_takes_the_highest_claim_then_the_eldest() {
     let data = content();
     let home = HeirStatus::Home;
+    // Without a law (stage 16: every law has a rule of its own, tests/laws.rs).
     let next = |list: &[(u32, i64, HeirStatus)]| {
-        let g = heirs(&data, list);
+        let mut g = heirs(&data, list);
+        g.world.flags.retain(|f| !f.starts_with("law_"));
         sim::succession(&g.world, &data, &mut Rng::from_seed(1)).unwrap()
     };
     let r = next(&[(20, 40, home.clone()), (18, 60, home.clone())]);
@@ -534,6 +554,8 @@ fn a_grown_king_takes_the_vows_with_a_loyal_church() {
     let mut data = only(&["monastery_late"]);
     data.sim_events[0].weight = 1_000_000;
     data.sim.max_years = 3;
+    // The church as given, not half-way back to its default after the coronation.
+    data.coronation = Default::default();
     let c = vows(&data, 30, 80);
     assert_eq!(c.rulers[1].cause.as_deref(), Some("monastery"));
     assert_eq!(vows(&data, 30, 60).rulers.len(), 2);
@@ -545,18 +567,19 @@ fn the_dispute_threshold_follows_the_law() {
     let mut data = content();
     quiet(&mut data);
     data.sim.max_years = 1;
-    let contested = |law: Option<&str>| {
-        let mut g = heirs(&data, &[(30, 60, HeirStatus::Home)]);
+    let contested = |law: Option<&str>, claim: i64| {
+        let mut g = heirs(&data, &[(30, claim, HeirStatus::Home)]);
         g.world.flags.retain(|f| !f.starts_with("law_"));
         g.world.flags.extend(law.map(String::from));
         let c = sim::run(end_now(&g), &data, Rng::from_seed(1));
         c.entries[0].snapshot.flags.contains("succession_contested")
     };
-    // Claim 60: below primogeniture's 70 and elective's 65, above law_none's 45.
-    assert!(contested(Some("law_primogeniture")));
-    assert!(contested(Some("law_elective")));
-    assert!(!contested(Some("law_none")));
-    assert!(!contested(None));
+    // Claim 60: below primogeniture's 70 and elective's 65; 68 only below primogeniture's.
+    assert!(contested(Some("law_primogeniture"), 60));
+    assert!(contested(Some("law_elective"), 60));
+    assert!(contested(Some("law_primogeniture"), 68));
+    assert!(!contested(Some("law_elective"), 68));
+    assert!(!contested(None, 60));
 }
 
 /// Stage 12: under a law with `dispute_per_heir` every heir left is a chance of dispute.
@@ -569,15 +592,15 @@ fn rivals_quarrel_by_their_number() {
         .heirs
         .laws
         .iter()
-        .position(|l| l.flag == "law_none")
+        .position(|l| l.flag == "law_seniority")
         .unwrap();
     data.heirs.laws[law].dispute_per_heir = Fx::from_int(25);
     let contested = |rivals: usize, seed: u64| {
-        let mut list = vec![(30, 60, HeirStatus::Home)];
+        let mut list = vec![(30, 80, HeirStatus::Home)];
         list.extend(std::iter::repeat_n((10, 50, HeirStatus::Home), rivals));
         let mut g = heirs(&data, &list);
         g.world.flags.retain(|f| !f.starts_with("law_"));
-        g.world.flags.insert("law_none".into());
+        g.world.flags.insert("law_seniority".into());
         let c = sim::run(end_now(&g), &data, Rng::from_seed(seed));
         c.entries[0].snapshot.flags.contains("succession_contested")
     };
@@ -918,7 +941,7 @@ fn the_score_of_a_dynasty_is_deterministic() {
 }
 
 /// Stage 13: the year's summary for script A, seed 42: what `World::changes` reports
-/// between the starts of consecutive years, every year with something (nine in this reign).
+/// between the starts of consecutive years, every year with something.
 #[test]
 fn year_changes_of_seed_42_script_a() {
     use bd_core::state::Change;
@@ -959,12 +982,12 @@ fn year_changes_of_seed_42_script_a() {
         (1190, vec![nobles(7), b1, b2]),
         (1191, vec![nobles(-6)]),
         (1194, vec![axis("loyalty_people", 7)]),
-        (1207, vec![axis("loyalty_church", 5)]),
-        (1212, vec![nobles(-5)]),
-        // Агнесса, born and dead in 1196, never shows between two years; no births after
-        // the founder's fiftieth year (1205).
-        (1222, vec![nobles(-5)]),
-        (1226, vec![axis("loyalty_church", 5)]),
+        (1196, vec![Change::Born("Генрих".into())]),
+        (1200, vec![Change::Born("Ирмгард".into())]),
+        (1205, vec![axis("army", 20)]),
+        (1206, vec![axis("loyalty_people", 6)]),
+        (1211, vec![axis("loyalty_church", 5)]),
+        (1213, vec![nobles(6)]),
     ];
     assert_eq!(log, want);
 }
@@ -982,19 +1005,24 @@ fn kin_of_seed_42_script_a() {
     );
     assert_eq!((k[0].crowned, k[0].parent), (Some(1187), None));
     assert_eq!(k[0].died, Some(1187 + c.rulers[0].end.0));
-    // Конрад, 6 at the start, reigned 1228-1239; Агнесса born 1196 died in her first year.
+    // Конрад, 6 at the start, reigned from 1221 to 1252; Генрих, born 1196, died 1265
+    // uncrowned; Ирмгард born 1200.
     assert_eq!(
         (k[1].name.as_str(), k[1].born, k[1].crowned, k[1].died),
-        ("Конрад", 1181, Some(1228), Some(1239))
-    );
-    // Матильда, born to Конрад in 1201 before his coronation, reigned after him.
-    assert_eq!(
-        (k[3].name.as_str(), k[3].born, k[3].parent, k[3].crowned),
-        ("Матильда", 1201, Some(1), Some(1239))
+        ("Конрад", 1181, Some(1221), Some(1252))
     );
     assert_eq!(
-        (k[2].name.as_str(), k[2].born, k[2].parent, k[2].died),
-        ("Агнесса", 1196, Some(0), Some(1196))
+        (k[2].name.as_str(), k[2].born, k[2].parent, k[2].crowned),
+        ("Генрих", 1196, Some(0), None)
+    );
+    assert_eq!(
+        (k[3].name.as_str(), k[3].born, k[3].parent, k[3].died),
+        ("Ирмгард", 1200, Some(0), Some(1236))
+    );
+    // Гизела, born to Конрад in 1201 before his coronation.
+    assert_eq!(
+        (k[4].name.as_str(), k[4].born, k[4].parent),
+        ("Гизела", 1201, Some(1))
     );
     // Every ruler in the chronicle is a crowned kin, in order; children point at a ruler.
     let crowned: Vec<(&str, u32)> = (k.iter())
@@ -1062,14 +1090,19 @@ fn law_texts_take_their_numbers_from_the_rules() {
     first.crisis_claim = Fx(65_500);
     assert!(first.text().contains("ниже 65.5"), "{}", first.text());
     let g = game(&data, 1);
-    assert_eq!(data.heirs.law(&g.world).unwrap().name, "Первородство");
+    assert_eq!(
+        data.heirs.law(&g.world).unwrap().name,
+        "Абсолютное первородство"
+    );
 }
 
-/// Stage 13: the bond of a finished marriage, while its flag holds.
+/// Stage 13: the bond of a finished marriage; stage 16: one per union (`World.unions`).
 #[test]
 fn bonds_name_the_married_neighbour() {
-    let data = content();
+    let mut data = content();
+    data.marriage.percent = Fx::from_int(100);
     let mut g = game(&data, 1);
+    g.world.flags.remove("married");
     let vestrum = bd_core::state::NeighbourId("vestrum".into());
     assert!(g.bonds().is_empty());
     g.start_action("marry_neighbour", Some(Target::Neighbour(vestrum.clone())))
@@ -1079,8 +1112,9 @@ fn bonds_name_the_married_neighbour() {
     let bonds: Vec<_> = (g.bonds().into_iter())
         .map(|(n, a, t)| (n, a.bond.clone(), t))
         .collect();
-    assert_eq!(bonds, [(vestrum, "брачный союз".to_string(), Tick(0))]);
-    g.world.flags.remove("royal_marriage");
+    // Dated by the wedding, a year after the suit.
+    assert_eq!(bonds, [(vestrum, "брачный союз".to_string(), Tick(1))]);
+    g.world.unions.clear();
     assert!(g.bonds().is_empty());
 }
 

@@ -59,6 +59,9 @@ enum Cmd {
         script: Option<PathBuf>,
         #[arg(long, default_value_t = 0)]
         seed_start: u64,
+        /// The succession law to start on (a flag of `heirs.laws`) instead of the preset's.
+        #[arg(long)]
+        law: Option<String>,
         #[command(flatten)]
         files: Files,
     },
@@ -189,9 +192,19 @@ fn run(cli: Cli) -> Result<(), String> {
             strategy,
             script,
             seed_start,
+            law,
             files,
         } => {
-            let start = load(&files, 0)?;
+            let mut start = load(&files, 0)?;
+            if let Some(law) = law {
+                let laws = &start.data.heirs.laws;
+                if !laws.iter().any(|l| l.flag == law) {
+                    return Err(format!("нет закона {law}"));
+                }
+                let flags = &mut start.world.flags;
+                flags.retain(|f| !laws.iter().any(|l| l.flag == *f));
+                flags.insert(law);
+            }
             let rules = score_rules(&files, &start)?;
             let auto = chooser(&files, &start, &strategy)?;
             let script = match script {
@@ -259,6 +272,11 @@ struct Row {
     deserted: u32,
     /// The treasury at the end of each year of the founder's reign.
     reign_treasury: Vec<i64>,
+    /// Coronations after the founder, those contested (`abdication.contested_flag`), and
+    /// changes of the succession law in the simulation.
+    successions: u32,
+    contested: u32,
+    law_changes: u32,
 }
 
 /// Reign years `batch` reports the treasury at.
@@ -289,7 +307,15 @@ fn batch_row(
         ));
     };
     let axis = |a| c.axes.get(a).map_or(0, |v: &Fx| v.0 / Fx::SCALE);
+    let t = &g.data.sim.texts;
+    let crowned = c.entries.iter().filter(|e| e.title == t.crowned.0);
+    let contested =
+        |e: &&sim::ChronicleEntry| e.snapshot.flags.contains(&g.data.abdication.contested_flag);
+    let laws = c.entries.iter().filter(|e| e.title == t.law_changed.0);
     Ok(Row {
+        successions: crowned.clone().count() as u32,
+        contested: crowned.filter(contested).count() as u32,
+        law_changes: laws.count() as u32,
         seed,
         reign,
         years: c.years,
@@ -352,6 +378,18 @@ fn batch_report(rows: &[Row]) -> String {
     out += &format!(
         "# дезертирство в {}% династий\n",
         percent(deserted, rows.len())
+    );
+    let sum = |f: fn(&Row) -> u32| rows.iter().map(f).sum::<u32>() as usize;
+    let disputed = rows.iter().filter(|r| r.contested > 0).count();
+    out += &format!(
+        "# спор о престоле: {}% воцарений, в {}% династий\n",
+        percent(sum(|r| r.contested), sum(|r| r.successions)),
+        percent(disputed, rows.len())
+    );
+    let changed = rows.iter().filter(|r| r.law_changes > 0).count();
+    out += &format!(
+        "# закон сменён после основателя в {}% династий\n",
+        percent(changed, rows.len())
     );
     out += "# причины падения:\n";
     let mut falls: BTreeMap<String, usize> = BTreeMap::new();
@@ -741,6 +779,9 @@ mod tests {
             treasury: score * 10,
             deserted,
             reign_treasury: (1..=reign as i64).collect(),
+            successions: 4,
+            contested: seed as u32,
+            law_changes: (seed == 3) as u32,
         };
         let rows = [
             row(0, 5, 10, FallReason::NoHeir, 0),
@@ -778,6 +819,8 @@ mod tests {
                 "#   казна к 30-му году правления 30 / 30 / 30",
                 "# ранняя смерть 25%",
                 "# дезертирство в 25% династий",
+                "# спор о престоле: 37% воцарений, в 75% династий",
+                "# закон сменён после основателя в 25% династий",
                 "# причины падения:",
                 "#   Usurped 50%",
                 "#   Alive 25%",

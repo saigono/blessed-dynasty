@@ -234,14 +234,14 @@ mod tests {
              cooldown_years: 0, importance: 1, target: None, choices: [{choices}])]"
         ))
         .unwrap();
-        data.add_actions(include_str!("../../../data/actions.ron"))
-            .unwrap();
-        // No action of the data targets an heir yet.
+        // No action of the data targets an heir yet. First, so the journal has one.
         data.add_actions(
             "[(id: \"tutor\", name: \"\", duration_years: 1, cost: 0, requires: All([]), \
              min_crown_power: 0, target: Heir, on_complete: [], cause_tag: \"tutor\")]",
         )
         .unwrap();
+        data.add_actions(include_str!("../../../data/actions.ron"))
+            .unwrap();
         let preset = Preset::load_with_map(PRESET, MAP, &data).unwrap();
         Game::new(data, &preset, seed)
     }

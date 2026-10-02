@@ -122,6 +122,10 @@ pub fn chronicle(
         ui.add_space(10.0);
         ui.label(RichText::new(&e.title).size(18.0).strong());
         ui.label(&e.text);
+        // What led to it through the graph (stage 20).
+        if let Some(chain) = &e.chain {
+            ui.label(RichText::new(&chain.text).color(FG2));
+        }
         if crowns {
             let prev = &c.rulers[r - 1];
             let cause = prev.cause.as_deref().map_or("", |c| reign_end(d, c));

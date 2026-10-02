@@ -224,7 +224,9 @@ fn run(cli: Cli) -> Result<(), String> {
                 .collect::<Result<Vec<_>, _>>()?;
             let hidden = hidden_nodes(&start.data).map(|(_, a)| a.id.0.as_str());
             let hidden: Vec<&str> = hidden.collect();
-            print!("{}", batch_report(&rows, &hidden));
+            let catastrophes = start.data.symptoms.iter().map(|(c, _)| c.as_str());
+            let catastrophes: Vec<&str> = catastrophes.collect();
+            print!("{}", batch_report(&rows, &hidden, &catastrophes));
             Ok(())
         }
         Cmd::Trace {
@@ -304,6 +306,50 @@ struct Row {
     bounds: Vec<(usize, usize)>,
     /// Years the shocks of stability (`Data.stability`) stood at a bound, of all simulated.
     shocks: (usize, usize),
+    /// The score of the dynasty's first `SCORE_AT` years, as if it lived on after them.
+    score_at: i64,
+    /// Every catastrophe of `Data.symptoms` in the chronicle (`symptom_gaps`).
+    catastrophes: Vec<Gap>,
+}
+
+/// The dynasty years of the second score in `batch`: most dynasties of `neutral` live to
+/// `sim.max_years`, so the full score hardly tells laws apart (stage 20).
+const SCORE_AT: u32 = 150;
+
+/// A catastrophe of `Data.symptoms`: its id, the years since the first entry of one of its
+/// symptoms in the chronicle, and since the first after the last catastrophe of its kind;
+/// None: no symptom came before it.
+type Gap = (String, Option<u32>, Option<u32>);
+
+/// Every catastrophe of `Data.symptoms` in the chronicle, in order (criterion 3 of
+/// docs/design/hidden-state.html).
+fn symptom_gaps(d: &Data, c: &sim::Chronicle) -> Vec<Gap> {
+    let year = |e: &sim::ChronicleEntry| e.tick.year(e.snapshot.time_unit);
+    let mut out = vec![];
+    for (k, e) in c.entries.iter().enumerate() {
+        let id = e.event.as_deref().unwrap_or_default();
+        let Some((_, symptoms)) = d.symptoms.iter().find(|(x, _)| x == id) else {
+            continue;
+        };
+        let to = c.entries[k..]
+            .iter()
+            .take_while(|x| x.tick == e.tick)
+            .count()
+            + k;
+        let last = c.entries[..k]
+            .iter()
+            .rposition(|x| x.event.as_deref() == Some(id));
+        let first = |from: usize| {
+            let symptom =
+                |x: &&sim::ChronicleEntry| (x.event.as_ref()).is_some_and(|i| symptoms.contains(i));
+            c.entries[from..to]
+                .iter()
+                .find(symptom)
+                .map(|f| year(e) - year(f))
+        };
+        out.push((id.to_string(), first(0), first(last.map_or(0, |i| i + 1))));
+    }
+    out
 }
 
 /// The hidden axes with an edge of the influence graph (not, say, the shocks of stability),
@@ -312,6 +358,10 @@ fn hidden_nodes(d: &Data) -> impl Iterator<Item = (usize, &AxisDef)> + Clone {
     let edge = |a: &AxisDef| (d.influences.iter()).any(|e| e.from == a.id || e.to == a.id);
     (d.axes.iter().enumerate()).filter(move |(_, a)| a.hidden && edge(a))
 }
+
+/// A symptom this many years before its catastrophe or more counts as foretelling it
+/// (criterion 3 of docs/design/hidden-state.html).
+const SYMPTOM_YEARS: u32 = 20;
 
 /// Dynasty years `batch` reports the hidden nodes at, besides the fall.
 const NODES_AT: [u32; 2] = [100, 150];
@@ -337,7 +387,7 @@ fn batch_row(
     play_script(&mut g, script, true, &mut log)?;
     play(&mut g, auto, &mut log)?;
     let reign = g.world.tick.year(g.world.time_unit);
-    let (Some(c), Some(s)) = dynasty(&g, rules) else {
+    let (Some(mut c), Some(s)) = dynasty(&g, rules) else {
         return Err(format!(
             "seed {seed}: правитель жив через {} лет",
             MAX_YEARS.0
@@ -371,32 +421,54 @@ fn batch_row(
     let shocks = (g.data.axes.iter().enumerate())
         .find(|(_, a)| g.data.stability.as_ref().is_some_and(|s| s.shocks == a.id))
         .map_or((0, 0), at_bound);
+    let catastrophes = symptom_gaps(&g.data, &c);
+    let laws_at_fall = c.entries.last().map_or(vec![], |e| {
+        let laws = g.data.laws_in_force(&e.snapshot);
+        laws.map(|l| l.id.clone()).collect()
+    });
+    let repeals = (c.entries.iter())
+        .filter(|e| e.title == t.law_repealed.0)
+        .count() as u32;
+    let (successions, contested) = (crowned.clone().count(), crowned.filter(contested).count());
+    let law_changes = laws.count() as u32;
+    let (years, fall, army, treasury) = (
+        c.years,
+        c.fall.clone(),
+        axis(&g.data.war.army),
+        axis(&g.data.economy.treasury),
+    );
+    let designated = c.rulers.iter().filter(|r| r.designated).count() as u32;
+    let bastards = (c.kin.iter())
+        .filter(|k| k.bastard && k.crowned.is_some())
+        .count() as u32;
+    // The first SCORE_AT years: a fall after them is no fall yet.
+    if c.years > SCORE_AT {
+        let year = |e: &sim::ChronicleEntry| e.tick.year(e.snapshot.time_unit);
+        c.entries.retain(|e| year(e) < SCORE_AT);
+        (c.years, c.fall) = (SCORE_AT, FallReason::Alive);
+    }
+    let score_at = score::compute(&c, &g.decisions, rules).total;
     Ok(Row {
         nodes,
         bounds,
         shocks,
-        successions: crowned.clone().count() as u32,
-        contested: crowned.filter(contested).count() as u32,
-        law_changes: laws.count() as u32,
-        laws: c.entries.last().map_or(vec![], |e| {
-            let laws = g.data.laws_in_force(&e.snapshot);
-            laws.map(|l| l.id.clone()).collect()
-        }),
-        repeals: (c.entries.iter())
-            .filter(|e| e.title == t.law_repealed.0)
-            .count() as u32,
-        designated: c.rulers.iter().filter(|r| r.designated).count() as u32,
-        bastards: (c.kin.iter())
-            .filter(|k| k.bastard && k.crowned.is_some())
-            .count() as u32,
+        score_at,
+        catastrophes,
+        successions: successions as u32,
+        contested: contested as u32,
+        law_changes,
+        laws: laws_at_fall,
+        repeals,
+        designated,
+        bastards,
         seed,
         reign,
-        years: c.years,
+        years,
         score: s.total,
-        army: axis(&g.data.war.army),
-        treasury: axis(&g.data.economy.treasury),
+        army,
+        treasury,
         deserted: c.deserted,
-        fall: Some(c.fall),
+        fall: Some(fall),
         reign_treasury: log,
     })
 }
@@ -404,8 +476,13 @@ fn batch_row(
 /// The CSV, then `#` lines: quartiles of the dynasty years, score, reign years, army and
 /// treasury at the end, the reign's treasury at `TREASURY_AT`, the share of early deaths and
 /// of dynasties whose army deserted, the fall reasons by frequency; the hidden nodes (`hidden`,
-/// the order of `Row.nodes`) at `NODES_AT` and the fall, and their years at a bound.
-fn batch_report(rows: &[Row], hidden: &[&str]) -> String {
+/// the order of `Row.nodes`) at `NODES_AT` and the fall, and their years at a bound; the score
+/// of the first `SCORE_AT` years and the share of falls; per catastrophe (`catastrophes`) the
+/// share of those with a symptom `SYMPTOM_YEARS` or more before (any, and one after the last
+/// catastrophe of the kind). The CSV ends with the score
+/// of `SCORE_AT` years and the years from the first symptom to the dynasty's first
+/// catastrophe (empty: none, `-`: no symptom before it).
+fn batch_report(rows: &[Row], hidden: &[&str], catastrophes: &[&str]) -> String {
     let mut out = String::from(
         "seed,reign_years,dynasty_years,score,fall_reason,early_death,army,treasury,deserted,\
          treasury_10,treasury_20,treasury_30",
@@ -413,7 +490,7 @@ fn batch_report(rows: &[Row], hidden: &[&str]) -> String {
     for id in hidden {
         out += &format!(",{id}_{},{id}_{},{id}_fall", NODES_AT[0], NODES_AT[1]);
     }
-    out += "\n";
+    out += &format!(",score_{SCORE_AT},symptom_years\n");
     for r in rows {
         let early = r.reign < EARLY_YEARS;
         let (seed, reign, years, score, army) = (r.seed, r.reign, r.years, r.score, r.army);
@@ -430,7 +507,12 @@ fn batch_report(rows: &[Row], hidden: &[&str]) -> String {
         for v in r.nodes.iter().flatten() {
             out += &format!(",{}", v.map_or(String::new(), |v| v.to_string()));
         }
-        out += "\n";
+        let gap = match r.catastrophes.first() {
+            None => String::new(),
+            Some((_, None, _)) => "-".into(),
+            Some((_, Some(y), _)) => y.to_string(),
+        };
+        out += &format!(",{},{gap}\n", r.score_at);
     }
     let quartiles = |mut v: Vec<i64>| {
         v.sort();
@@ -441,6 +523,7 @@ fn batch_report(rows: &[Row], hidden: &[&str]) -> String {
     let of = |f: fn(&Row) -> i64| quartiles(rows.iter().map(f).collect());
     out += &format!("#   лет династии {}\n", of(|r| r.years as i64));
     out += &format!("#   счёт {}\n", of(|r| r.score));
+    out += &format!("#   счёт за {SCORE_AT} лет {}\n", of(|r| r.score_at));
     out += &format!("#   лет правления {}\n", of(|r| r.reign as i64));
     out += &format!("#   армия в конце {}\n", of(|r| r.army));
     out += &format!("#   казна в конце {}\n", of(|r| r.treasury));
@@ -530,6 +613,32 @@ fn batch_report(rows: &[Row], hidden: &[&str]) -> String {
     let shocks = shocks.fold((0, 0), |(a, b), (n, of)| (a + n, b + of));
     if shocks.1 > 0 {
         out += &format!("# потрясения на краях {} лет\n", permille(shocks));
+    }
+    let fell = rows
+        .iter()
+        .filter(|r| r.fall != Some(FallReason::Alive))
+        .count();
+    out += &format!("# доля падений {}%\n", percent(fell, rows.len()));
+    if !catastrophes.is_empty() {
+        out += &format!("# симптом за {SYMPTOM_YEARS}+ лет до катастрофы:");
+    }
+    let early = |y: &Option<u32>| y.is_some_and(|y| y >= SYMPTOM_YEARS);
+    for k in catastrophes {
+        let all = rows
+            .iter()
+            .flat_map(|r| &r.catastrophes)
+            .filter(|(c, ..)| c == k);
+        let first = all.clone().filter(|(_, y, _)| early(y)).count();
+        let since = all.clone().filter(|(.., y)| early(y)).count();
+        let all = all.count();
+        out += &format!(
+            " {k} {}% (после прошлой {}%) из {all};",
+            percent(first, all),
+            percent(since, all)
+        );
+    }
+    if !catastrophes.is_empty() {
+        out += "\n";
     }
     out += "# причины падения:\n";
     let mut falls: BTreeMap<String, usize> = BTreeMap::new();

@@ -602,3 +602,17 @@ fn auto_chooser_acts_only_when_it_pays() {
     g.start_action(&id, target).unwrap();
     assert_eq!(flat(&[("build", 100)]).action(&mut g), None);
 }
+
+/// Stage 7: the score of a chronicle depends on nothing else.
+#[test]
+fn the_score_of_a_dynasty_is_deterministic() {
+    let data = content();
+    let rules = bd_core::score::load(&read("score.ron"), &data).unwrap();
+    let g = game(&data, 7);
+    let c = sim::run(end_now(&g), &data, g.rng.clone());
+    let s = bd_core::score::compute(&c, &g.decisions, &rules);
+    assert!(s.total > 0, "{s:?}");
+    assert_eq!(bd_core::score::compute(&c, &g.decisions, &rules), s);
+    let c2 = sim::run(end_now(&g), &data, g.rng.clone());
+    assert_eq!(bd_core::score::compute(&c2, &g.decisions, &rules), s);
+}

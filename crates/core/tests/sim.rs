@@ -478,6 +478,26 @@ fn a_king_under_church_regency_takes_the_vows() {
     assert_eq!(run(50).rulers.len(), 2);
 }
 
+/// Stage 12: each succession law has its own dispute threshold; no law, no dispute.
+#[test]
+fn the_dispute_threshold_follows_the_law() {
+    let mut data = content();
+    quiet(&mut data);
+    data.sim.max_years = 1;
+    let contested = |law: Option<&str>| {
+        let mut g = heirs(&data, &[(30, 60, HeirStatus::Home)]);
+        g.world.flags.retain(|f| !f.starts_with("law_"));
+        g.world.flags.extend(law.map(String::from));
+        let c = sim::run(end_now(&g), &data, Rng::from_seed(1));
+        c.entries[0].snapshot.flags.contains("succession_contested")
+    };
+    // Claim 60: below primogeniture's 70 and elective's 65, above law_none's 45.
+    assert!(contested(Some("law_primogeniture")));
+    assert!(contested(Some("law_elective")));
+    assert!(!contested(Some("law_none")));
+    assert!(!contested(None));
+}
+
 #[test]
 fn falls() {
     let mut data = content();

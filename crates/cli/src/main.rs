@@ -1,7 +1,9 @@
 //! Dev runner: one game from a seed and a script or strategy, and its replay from a journal.
 
-use bd_core::game::{Decision, DecisionKind, Game, Step};
+use bd_core::game::{Decision, DecisionKind, Game, ReignEnd, Step};
 use bd_core::rules::Target;
+use bd_core::score::{self, ScoreRules};
+use bd_core::sim;
 use bd_core::state::Preset;
 use bd_core::time::{Tick, Years};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -17,7 +19,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Plays a reign by a script or a strategy and prints the decision journal.
+    /// Plays a reign by a script or a strategy and prints the decision journal; once the
+    /// reign has ended, the chronicle of the dynasty and its score.
     Run {
         #[arg(long)]
         seed: u64,
@@ -48,7 +51,8 @@ struct Files {
     preset: PathBuf,
     #[arg(long, default_value = "data/maps/default.ron")]
     map: PathBuf,
-    /// Holds rules.ron, actions.ron, names.ron and events/*.ron (not subdirectories).
+    /// Holds rules.ron, actions.ron, names.ron, hints.ron, score.ron, events/*.ron and
+    /// events/sim/*.ron.
     #[arg(long, default_value = "data")]
     data: PathBuf,
 }
@@ -98,10 +102,13 @@ fn run(cli: Cli) -> Result<(), String> {
             json,
         } => {
             let mut g = load(&files, seed)?;
+            let rules = read(&files.data.join("score.ron"))?;
+            let rules = score::load(&rules, &g.data).map_err(|e| format!("score.ron: {e:?}"))?;
             match script {
                 Some(path) => play_script(&mut g, &parse(&read(&path)?)?)?,
                 None => play_neutral(&mut g)?,
             }
+            let (chronicle, score) = dynasty(&g, &rules);
             let (w, hash) = (&g.world, world_hash(&g));
             let date = w.tick.date(w.time_unit, w.start_year);
             if json {
@@ -112,8 +119,8 @@ fn run(cli: Cli) -> Result<(), String> {
                     "world_hash": hash,
                     "reign_end": g.ended,
                     "decisions": g.decisions,
-                    "chronicle": null,
-                    "score": null,
+                    "chronicle": chronicle.as_ref().map(chronicle_json),
+                    "score": score,
                 });
                 println!("{out:#}");
                 return Ok(());
@@ -128,8 +135,10 @@ fn run(cli: Cli) -> Result<(), String> {
                 Some(cause) => println!("Конец правления: {cause}"),
                 None => println!("Правление продолжается"),
             }
-            println!("Хроника: недоступно (нужен этап 6)");
-            println!("Счёт: недоступно (нужен этап 7)");
+            match (&chronicle, &score) {
+                (Some(c), Some(s)) => print_dynasty(&g, c, s),
+                _ => println!("Хроника: недоступно (правление продолжается)"),
+            }
             Ok(())
         }
         Cmd::Replay {
@@ -162,15 +171,16 @@ fn load(f: &Files, seed: u64) -> Result<Game, String> {
     let dir = &f.data;
     let rules = read(&dir.join("rules.ron"))?;
     let mut data = bd_core::data::load(&rules).map_err(|e| format!("rules.ron: {e:?}"))?;
-    let events = fs::read_dir(dir.join("events")).map_err(|e| format!("events: {e}"))?;
-    let mut events: Vec<PathBuf> = events.filter_map(|e| Some(e.ok()?.path())).collect();
-    events.retain(|p| p.extension().is_some_and(|x| x == "ron"));
-    // read_dir order is up to the OS.
-    events.sort();
-    for p in events {
+    for p in ron_files(&dir.join("events"))? {
         let res = data.add_events(&read(&p)?);
         res.map_err(|e| format!("{}: {e:?}", p.display()))?;
     }
+    for p in ron_files(&dir.join("events/sim"))? {
+        let res = data.add_sim_events(&read(&p)?);
+        res.map_err(|e| format!("{}: {e:?}", p.display()))?;
+    }
+    let res = data.add_hints(&read(&dir.join("hints.ron"))?);
+    res.map_err(|e| format!("hints.ron: {e:?}"))?;
     let res = data.add_actions(&read(&dir.join("actions.ron"))?);
     res.map_err(|e| format!("actions.ron: {e:?}"))?;
     let res = data.add_names(&read(&dir.join("names.ron"))?);
@@ -178,6 +188,77 @@ fn load(f: &Files, seed: u64) -> Result<Game, String> {
     let preset = Preset::load_with_map(&read(&f.preset)?, &read(&f.map)?, &data);
     let preset = preset.map_err(|e| format!("пресет: {e:?}"))?;
     Ok(Game::new(data, &preset, seed))
+}
+
+/// The `.ron` files of a directory, sorted: read_dir order is up to the OS.
+fn ron_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let files = fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let mut files: Vec<PathBuf> = files.filter_map(|e| Some(e.ok()?.path())).collect();
+    files.retain(|p| p.extension().is_some_and(|x| x == "ron"));
+    files.sort();
+    Ok(files)
+}
+
+/// The dynasty after an ended reign (the simulation goes on with the game's rng) and its
+/// score; None while the reign goes on.
+fn dynasty(g: &Game, rules: &ScoreRules) -> (Option<sim::Chronicle>, Option<score::Score>) {
+    let Some(cause) = g.ended.clone() else {
+        return (None, None);
+    };
+    let end = ReignEnd {
+        cause,
+        tick: g.world.tick,
+        world: g.world.snapshot(),
+    };
+    let c = sim::run(end, &g.data, g.rng.clone());
+    let s = score::compute(&c, &g.decisions, rules);
+    (Some(c), Some(s))
+}
+
+/// The chronicle without the entry snapshots: JSON maps need string keys, and `World.marks`
+/// has none.
+fn chronicle_json(c: &sim::Chronicle) -> serde_json::Value {
+    let entries = c.entries.iter().map(|e| {
+        serde_json::json!({
+            "tick": e.tick,
+            "event": e.event,
+            "title": e.title,
+            "text": e.text,
+            "hint": e.hint,
+            "importance": e.importance,
+            "causes": e.causes,
+        })
+    });
+    serde_json::json!({
+        "entries": entries.collect::<Vec<_>>(),
+        "fall": c.fall,
+        "years": c.years,
+        "rulers": c.rulers,
+    })
+}
+
+fn print_dynasty(g: &Game, c: &sim::Chronicle, s: &score::Score) {
+    let w = &g.world;
+    println!("Хроника:");
+    for e in &c.entries {
+        let date = e.tick.date(w.time_unit, w.start_year);
+        let hint = e.hint.as_deref().map_or(String::new(), |h| format!(" {h}"));
+        println!("  {date} {}. {}{hint}", e.title, e.text);
+    }
+    println!(
+        "Династия: {} лет, правителей {}, конец {:?}",
+        c.years,
+        c.rulers.len(),
+        c.fall
+    );
+    println!("Счёт: {}", s.total);
+    for (part, points) in &s.parts {
+        println!("  {part}: {points}");
+    }
+    println!("Решающие решения:");
+    for d in &s.decisive {
+        println!("  {} ({})", describe(g, &d.decision), d.weight);
+    }
 }
 
 fn play_script(g: &mut Game, script: &[ScriptStep]) -> Result<(), String> {
@@ -407,5 +488,17 @@ mod tests {
         }
         let e = replay(&mut game(), &wrong, g.world.tick).unwrap_err();
         assert!(e.contains("ждали событие other"), "{e}");
+    }
+
+    #[test]
+    fn the_dynasty_follows_an_ended_reign() {
+        let mut g = game();
+        let rules = score::load(include_str!("../../../data/score.ron"), &g.data).unwrap();
+        assert_eq!(dynasty(&g, &rules), (None, None));
+        g.ended = Some("illness".into());
+        let (c, s) = dynasty(&g, &rules);
+        let c = c.unwrap();
+        assert!(!c.entries.is_empty());
+        assert_eq!(s.unwrap(), score::compute(&c, &g.decisions, &rules));
     }
 }

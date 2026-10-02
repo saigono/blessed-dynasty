@@ -5,8 +5,8 @@ use crate::fx::Fx;
 use crate::neighbour::neighbour_tick;
 use crate::rng::Rng;
 use crate::rules::{
-    ActionTarget, Choice, Ctx, Effect, Event, EventTarget, ProvinceField, ProvinceTarget, Target,
-    add_axis,
+    Action, ActionTarget, Choice, Ctx, Effect, Event, EventTarget, ProvinceField, ProvinceTarget,
+    Target, add_axis,
 };
 use crate::state::{
     ActiveAction, CauseTag, HeirStatus, Holder, MarkKey, NeighbourId, Preset, ProvinceId, World,
@@ -160,6 +160,32 @@ impl Game {
                         .collect(),
                 };
                 (!targets.is_empty()).then(|| (a.id.clone(), targets))
+            })
+            .collect()
+    }
+
+    /// Neighbours tied to the crown by a finished player action with a `bond` whose flags
+    /// (`SetFlag` of its `on_complete`) all still hold: the neighbour, the action, its start.
+    pub fn bonds(&self) -> Vec<(NeighbourId, &Action, Tick)> {
+        let w = &self.world;
+        (self.decisions.iter())
+            .filter_map(|d| {
+                let DecisionKind::ActionStarted {
+                    action_id,
+                    target: Some(Target::Neighbour(n)),
+                } = &d.kind
+                else {
+                    return None;
+                };
+                let a = self.data.actions.iter().find(|a| a.id == *action_id)?;
+                let running = (w.active_actions.iter())
+                    .any(|x| x.id == a.id && x.target.as_deref() == Some(n.0.as_str()));
+                let flags = a.on_complete.iter().all(|e| match e {
+                    Effect::SetFlag(f) => w.flags.contains(f),
+                    _ => true,
+                });
+                let tied = !a.bond.is_empty() && !running && flags && w.neighbours.contains_key(n);
+                tied.then(|| (n.clone(), a, d.tick))
             })
             .collect()
     }
@@ -548,6 +574,8 @@ impl Game {
                 }
             }
         }
+        // Effects may remove heirs; the family tree dates their death.
+        self.world.bury();
     }
 
     /// Rolls the ruler's death risk (`Data.death`). A hit returns its death event, which
@@ -656,6 +684,7 @@ fn heirs_year(d: &Data, w: &mut World, rng: &mut Rng) {
         let risk = by_age(&r.death, h.age);
         risk <= Fx(0) || rng.range(0, 1000 * Fx::SCALE) >= risk.0
     });
+    w.bury();
     let pct = |v: Fx| v.clamp(Fx(0), Fx::from_int(100));
     let law = r.law(w);
     for (i, h) in w.heirs.iter_mut().enumerate() {
@@ -889,6 +918,8 @@ mod tests {
             target,
             on_complete,
             cause_tag: id.into(),
+            description: String::new(),
+            bond: String::new(),
         }
     }
 

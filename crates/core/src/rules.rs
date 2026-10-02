@@ -711,6 +711,13 @@ pub struct Action {
     pub target: ActionTarget,
     pub on_complete: Vec<Effect>,
     pub cause_tag: String,
+    /// What the action does, in plain words, for the UI tooltip.
+    #[serde(default)]
+    pub description: String,
+    /// For a neighbour action: what the target is to the crown once it is done, while the
+    /// flags it sets hold (`Game::bonds`), e.g. «брачный союз». Empty: no bond.
+    #[serde(default)]
+    pub bond: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

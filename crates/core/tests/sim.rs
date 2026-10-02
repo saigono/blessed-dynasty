@@ -835,3 +835,166 @@ fn the_score_of_a_dynasty_is_deterministic() {
     let c2 = sim::run(end_now(&g), &data, g.rng.clone());
     assert_eq!(bd_core::score::compute(&c2, &g.decisions, &rules), s);
 }
+
+/// Stage 13: the year's summary for script A, seed 42: what `World::changes` reports
+/// between the starts of consecutive years, the first ten years with something.
+#[test]
+fn year_changes_of_seed_42_script_a() {
+    use bd_core::state::Change;
+    let data = content();
+    let mut todo = vec!["berg", "lugovo", "gart"];
+    let mut last: Option<bd_core::state::World> = None;
+    let mut log: Vec<(u32, Vec<Change>)> = vec![];
+    reign(game(&data, 42), |g| {
+        if let Some(prev) = &last {
+            let changes = g.world.changes(prev, &g.data);
+            if !changes.is_empty() {
+                log.push((g.world.year(), changes));
+            }
+        }
+        if g.pending_event.is_none()
+            && g.world.active_actions.is_empty()
+            && let Some(p) = todo.pop()
+        {
+            grant(g, p);
+        }
+        last = Some(g.world.clone());
+    });
+    let nobles = |v| Change::Axis(ax("loyalty_nobles"), Fx::from_int(v));
+    let granted = |p: &str| {
+        let weir = Holder::Vassal(VassalId("weir".into()));
+        [
+            Change::Holder(pid(p), Holder::Crown, weir),
+            Change::Done("grant_province".into(), Some(p.into())),
+        ]
+    };
+    let [g1, g2] = granted("gart");
+    let [l1, l2] = granted("lugovo");
+    let [b1, b2] = granted("berg");
+    let want = vec![
+        (1188, vec![nobles(9), g1, g2]),
+        (1189, vec![nobles(9), l1, l2]),
+        (1190, vec![nobles(7), b1, b2]),
+        (1191, vec![nobles(-6)]),
+        (1193, vec![Change::HeirGone("Конрад".into())]),
+        (1196, vec![Change::Born("Агнесса".into())]),
+        (1198, vec![nobles(-7)]),
+        (
+            1200,
+            vec![Change::Axis(ax("loyalty_people"), Fx::from_int(6))],
+        ),
+        (1204, vec![nobles(-5)]),
+        (1205, vec![Change::Born("Матильда".into())]),
+    ];
+    assert_eq!(log[..10], want);
+}
+
+/// Stage 13: the family tree follows births, deaths and coronations into the chronicle.
+#[test]
+fn kin_of_seed_42_script_a() {
+    let (g, end) = script_a(42);
+    let c = sim::run(end, &g.data, g.rng.clone());
+    let k = &c.kin;
+    // The founder: born 32 years before 1187, reigned from then.
+    assert_eq!(
+        (k[0].heir, k[0].name.as_str(), k[0].born),
+        (None, "Ульрих", 1155)
+    );
+    assert_eq!((k[0].crowned, k[0].parent), (Some(1187), None));
+    assert_eq!(k[0].died, Some(1187 + c.rulers[0].end.0));
+    // Конрад, 6 at the start, died in 1193 as the year summary says; Агнесса born 1196.
+    assert_eq!(
+        (k[1].name.as_str(), k[1].born, k[1].died),
+        ("Конрад", 1181, Some(1193))
+    );
+    assert_eq!(
+        (k[2].name.as_str(), k[2].born, k[2].parent),
+        ("Агнесса", 1196, Some(0))
+    );
+    // Every ruler in the chronicle is a crowned kin, in order; children point at a ruler.
+    let crowned: Vec<(&str, u32)> = (k.iter())
+        .filter_map(|x| Some((x.name.as_str(), x.crowned?)))
+        .collect();
+    let rulers: Vec<(&str, u32)> = (c.rulers.iter())
+        .map(|r| (r.name.as_str(), 1187 + r.start.0))
+        .collect();
+    assert_eq!(crowned, rulers);
+    for x in &k[1..] {
+        let p = x.parent.expect("every heir has a parent");
+        assert!(k[p].crowned.is_some() && k[p].born < x.born, "{x:?}");
+    }
+    // The dead are those no longer among the heirs nor on the throne.
+    let last = &c.entries.last().unwrap().snapshot;
+    for x in k.iter().filter(|x| x.died.is_none() && x.crowned.is_none()) {
+        assert!(
+            x.heir.is_some_and(|id| last.heir_index(id).is_some()),
+            "{x:?}"
+        );
+    }
+}
+
+/// Stage 13: who is first in line, as the reign screen shows it.
+#[test]
+fn next_heir_has_the_highest_claim_the_eldest_on_a_tie() {
+    let data = content();
+    let mut g = game(&data, 1);
+    assert_eq!(sim::next_heir(&g.world), Some(0));
+    for name in ["Ада", "Бруно"] {
+        let mut h = data.new_heir.clone();
+        h.name = name.into();
+        g.world.add_heir(h);
+    }
+    let names = |g: &Game| {
+        g.world
+            .heirs
+            .iter()
+            .map(|h| h.name.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(names(&g), ["Конрад", "Ада", "Бруно"]);
+    let claims = |g: &mut Game, c: [i64; 3]| {
+        for (h, c) in g.world.heirs.iter_mut().zip(c) {
+            h.claim = Fx::from_int(c);
+        }
+        sim::next_heir(&g.world).map(|i| g.world.heirs[i].name.clone())
+    };
+    assert_eq!(claims(&mut g, [40, 60, 50]).as_deref(), Some("Ада"));
+    assert_eq!(claims(&mut g, [50, 50, 50]).as_deref(), Some("Конрад"));
+    g.world.heirs.clear();
+    assert_eq!(sim::next_heir(&g.world), None);
+}
+
+/// Stage 13: law names and texts come from rules.ron with the numbers filled in.
+#[test]
+fn law_texts_take_their_numbers_from_the_rules() {
+    let mut data = content();
+    for l in &data.heirs.laws {
+        assert!(!l.name.is_empty() && !l.text().is_empty(), "{}", l.flag);
+        assert!(!l.text().contains('{'), "{}", l.text());
+    }
+    let first = &mut data.heirs.laws[0];
+    assert!(first.text().contains("ниже 70"), "{}", first.text());
+    first.crisis_claim = Fx(65_500);
+    assert!(first.text().contains("ниже 65.5"), "{}", first.text());
+    let g = game(&data, 1);
+    assert_eq!(data.heirs.law(&g.world).unwrap().name, "Первородство");
+}
+
+/// Stage 13: the bond of a finished marriage, while its flag holds.
+#[test]
+fn bonds_name_the_married_neighbour() {
+    let data = content();
+    let mut g = game(&data, 1);
+    let vestrum = bd_core::state::NeighbourId("vestrum".into());
+    assert!(g.bonds().is_empty());
+    g.start_action("marry_neighbour", Some(Target::Neighbour(vestrum.clone())))
+        .unwrap();
+    assert!(g.bonds().is_empty(), "not while it runs");
+    g.wait().unwrap();
+    let bonds: Vec<_> = (g.bonds().into_iter())
+        .map(|(n, a, t)| (n, a.bond.clone(), t))
+        .collect();
+    assert_eq!(bonds, [(vestrum, "брачный союз".to_string(), Tick(0))]);
+    g.world.flags.remove("royal_marriage");
+    assert!(g.bonds().is_empty());
+}

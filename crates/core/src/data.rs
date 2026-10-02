@@ -264,6 +264,28 @@ pub struct Law {
     /// contested anyway: more heirs, more quarrels.
     #[serde(default)]
     pub dispute_per_heir: Fx,
+    /// Display name and a plain-words explanation for the UI. `{eldest}`, `{others}`,
+    /// `{ability_k}`, `{crisis_claim}`, `{dispute_per_heir}` stand for the numbers above.
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+impl Law {
+    /// `description` with the numbers of this law filled in.
+    pub fn text(&self) -> String {
+        let numbers = [
+            ("{eldest}", self.eldest),
+            ("{others}", self.others),
+            ("{ability_k}", self.ability_k),
+            ("{crisis_claim}", self.crisis_claim),
+            ("{dispute_per_heir}", self.dispute_per_heir),
+        ];
+        (numbers.iter()).fold(self.description.clone(), |s, (k, v)| {
+            s.replace(k, &v.to_string())
+        })
+    }
 }
 
 /// The row of the largest `from <= at`; 0 below the first row.
@@ -302,6 +324,10 @@ pub struct AxisDef {
     /// Display name; the UI shows the id when it is empty.
     #[serde(default)]
     pub name: String,
+    /// A change of at least this much shows in the year's summary (`World::changes`);
+    /// 0: never.
+    #[serde(default)]
+    pub notable: Fx,
 }
 
 /// Coefficients of `World::recompute_crown_power`.

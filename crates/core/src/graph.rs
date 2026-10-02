@@ -308,7 +308,7 @@ mod tests {
 
     #[test]
     fn a_flow_into_the_treasury_is_income_as_the_old_flows() {
-        let (mut d, w) = setup(include_str!("../tests/main/rules.ron"));
+        let (mut d, w) = setup(include_str!("../tests/main/data/rules.ron"));
         let old = crate::war::income_parts(&w, &d);
         assert_eq!(d.economy.flows, [(ax("income"), Fx::from_int(1))]);
         d.economy.flows.clear();

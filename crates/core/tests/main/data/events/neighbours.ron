@@ -1,0 +1,107 @@
+// Events started by the neighbour AI (`rules.ron` neighbour_ai), never from the random pool
+// on their own: the AI offers them to the pick. A province event (the raid) also knows its
+// raider, so `{neighbour}` and `EventTarget` neighbour effects work there too.
+[
+    (
+        id: "neighbour_ultimatum",
+        title: "Ультиматум: {neighbour}",
+        text: "{neighbour} шлёт послов: требует дани и грозит мечом, если {ruler} откажет.",
+        when: All([]),
+        weight: 0,
+        once: false,
+        cooldown_years: 0,
+        importance: 3,
+        target: Neighbour,
+        choices: [
+            (
+                text: "Заплатить дань",
+                effects: [Axis("treasury", -40), Axis("prestige", -3), Relation(EventTarget, 10)],
+                cause_tag: "ultimatum_paid",
+                hint: "Купленный мир стоит ровно столько, сколько заплачено.",
+            ),
+            (
+                text: "Выгнать послов",
+                effects: [Axis("prestige", 3), Relation(EventTarget, -15)],
+                cause_tag: "ultimatum_refused",
+                hint: "Выгнанные послы возвращаются с войском.",
+            ),
+        ],
+    ),
+    (
+        id: "neighbour_trade",
+        title: "Чужие купцы",
+        text: "{neighbour} просит для своих купцов права торговать на ярмарках королевства.",
+        when: All([]),
+        weight: 0,
+        once: false,
+        cooldown_years: 0,
+        importance: 1,
+        sign: Good,
+        target: Neighbour,
+        choices: [
+            (
+                text: "Открыть ярмарки",
+                effects: [Axis("treasury", 25), Relation(EventTarget, 5), Axis("loyalty_people", 2)],
+                cause_tag: "trade_opened",
+                hint: "Чужие купцы везут серебро и вести.",
+            ),
+            (
+                text: "Защитить своих купцов",
+                effects: [Relation(EventTarget, -5), Axis("loyalty_nobles", 2)],
+                cause_tag: "trade_refused",
+                hint: "Свои купцы благодарны, сосед обижен.",
+            ),
+        ],
+    ),
+    (
+        id: "neighbour_raid",
+        title: "Набег: {province}",
+        text: "Отряды {neighbour} перешли границу, жгут сёла земли {province} и уводят скот.",
+        when: All([]),
+        weight: 0,
+        once: false,
+        cooldown_years: 0,
+        importance: 3,
+        target: RandomProvince((borders_foreign: true)),
+        choices: [
+            (
+                text: "Выслать войско",
+                effects: [Axis("army", -5), Province(EventTarget, Loyalty, 5), Relation(EventTarget, -5)],
+                cause_tag: "raid_repelled",
+                hint: "Отбитый набег учит соседа осторожности.",
+            ),
+            (
+                text: "Пусть отсидятся за стенами",
+                effects: [Province(EventTarget, Population, -500), Province(EventTarget, Income, -1), Province(EventTarget, Loyalty, -10), CrownPower(EventTarget, -5)],
+                cause_tag: "raid_endured",
+                hint: "Брошенная провинция помнит, кто её не защитил.",
+            ),
+        ],
+    ),
+    (
+        // Leads into the war chain (events/war.ron) through StartWar.
+        id: "neighbour_war_declared",
+        title: "{neighbour} объявляет войну",
+        text: "{neighbour} шлёт глашатаев, и те бросают к трону перчатку. Вражье войско собирается у границы.",
+        when: Not(AtWar),
+        weight: 0,
+        once: false,
+        cooldown_years: 0,
+        importance: 5,
+        target: Neighbour,
+        choices: [
+            (
+                text: "Принять вызов",
+                effects: [StartWar(EventTarget), Axis("prestige", 2)],
+                cause_tag: "war_accepted",
+                hint: "Кто принял вызов, тот и отвечает за исход.",
+            ),
+            (
+                text: "Откупиться",
+                effects: [Tribute(-60), Relation(EventTarget, 20), Axis("prestige", -5)],
+                cause_tag: "war_bought_off",
+                hint: "Откуп кормит того, кто грозит.",
+            ),
+        ],
+    ),
+]

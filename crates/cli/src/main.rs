@@ -1,5 +1,6 @@
 //! Dev runner: one game from a seed and a script or strategy, and its replay from a journal.
 
+use bd_core::data::{AxisDef, Data};
 use bd_core::fx::Fx;
 use bd_core::game::{Decision, DecisionKind, Game, ReignEnd, Step};
 use bd_core::link::replay;
@@ -217,8 +218,8 @@ fn run(cli: Cli) -> Result<(), String> {
             let rows = (seed_start..seed_start + runs)
                 .map(|seed| batch_row(&start, seed, &script, auto.as_ref(), &rules))
                 .collect::<Result<Vec<_>, _>>()?;
-            let hidden = start.data.axes.iter().filter(|a| a.hidden);
-            let hidden: Vec<&str> = hidden.map(|a| a.id.0.as_str()).collect();
+            let hidden = hidden_nodes(&start.data).map(|(_, a)| a.id.0.as_str());
+            let hidden: Vec<&str> = hidden.collect();
             print!("{}", batch_report(&rows, &hidden));
             Ok(())
         }
@@ -289,11 +290,18 @@ struct Row {
     /// Coronations of an heir designated over the rightful one, and of bastards.
     designated: u32,
     bastards: u32,
-    /// Per hidden axis (`AxisDef.hidden`, in data order): its value at the dynasty's years
+    /// Per hidden node (`hidden_nodes`, in data order): its value at the dynasty's years
     /// `NODES_AT` (None: fallen before) and at the fall; its years at a bound and all its
     /// simulated years.
     nodes: Vec<[Option<i64>; 3]>,
     bounds: Vec<(usize, usize)>,
+}
+
+/// The hidden axes with an edge of the influence graph (not, say, the shocks of stability),
+/// with their index in `Data.axes`.
+fn hidden_nodes(d: &Data) -> impl Iterator<Item = (usize, &AxisDef)> + Clone {
+    let edge = |a: &AxisDef| (d.influences.iter()).any(|e| e.from == a.id || e.to == a.id);
+    (d.axes.iter().enumerate()).filter(move |(_, a)| a.hidden && edge(a))
 }
 
 /// Dynasty years `batch` reports the hidden nodes at, besides the fall.
@@ -332,7 +340,7 @@ fn batch_row(
     let contested =
         |e: &&sim::ChronicleEntry| e.snapshot.flags.contains(&g.data.abdication.contested_flag);
     let laws = c.entries.iter().filter(|e| e.title == t.law_changed.0);
-    let hidden = (g.data.axes.iter().enumerate()).filter(|(_, a)| a.hidden);
+    let hidden = hidden_nodes(&g.data);
     let year = |y: u32, i: usize| {
         let n = c.nodes.iter().find(|n| n.year == y);
         n.map(|n| n.axes[i].0 / Fx::SCALE)

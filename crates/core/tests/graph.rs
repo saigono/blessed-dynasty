@@ -29,24 +29,31 @@ fn ron_files(rel: &str) -> Vec<String> {
         .collect()
 }
 
-/// `rules` and `actions` texts, the rest of the content from data/.
-fn content(rules: &str, actions: &str) -> Data {
+/// The content of data/.
+const DATA: &str = "../../data";
+/// main's data/ after stage 17b: no edges, no new nodes, no stability block.
+const MAIN: &str = "tests/main/data";
+
+/// The content of the data directory `dir` with this text for its rules.ron.
+fn content(dir: &str, rules: &str) -> Data {
     let mut data = bd_core::data::load(rules).unwrap();
-    for t in ron_files("../../data/events") {
+    for t in ron_files(&format!("{dir}/events")) {
         data.add_events(&t).unwrap();
     }
-    for t in ron_files("../../data/events/sim") {
+    for t in ron_files(&format!("{dir}/events/sim")) {
         data.add_sim_events(&t).unwrap();
     }
-    data.add_actions(actions).unwrap();
-    data.add_names(&read("../../data/names.ron")).unwrap();
-    data.add_hints(&read("../../data/hints.ron")).unwrap();
+    data.add_actions(&read(&format!("{dir}/actions.ron")))
+        .unwrap();
+    data.add_names(&read(&format!("{dir}/names.ron"))).unwrap();
+    data.add_hints(&read(&format!("{dir}/hints.ron"))).unwrap();
     data
 }
 
-fn preset(data: &Data) -> Preset {
-    let text = read("../../data/presets/default.ron");
-    Preset::load_with_map(&text, &read("../../data/maps/default.ron"), data).unwrap()
+fn preset(dir: &str, data: &Data) -> Preset {
+    let text = read(&format!("{dir}/presets/default.ron"));
+    let map = read(&format!("{dir}/maps/default.ron"));
+    Preset::load_with_map(&text, &map, data).unwrap()
 }
 
 /// FNV-1a, 64 bit.
@@ -58,8 +65,8 @@ fn fnv(bytes: &[u8]) -> u64 {
 
 /// Seeds 0..n, a neutral reign (the middle choice) and its dynasty: the hash of the RON of
 /// every reign's last world and chronicle.
-fn runs_hash(data: &Data, n: u64) -> u64 {
-    let preset = preset(data);
+fn runs_hash(dir: &str, data: &Data, n: u64) -> u64 {
+    let preset = preset(dir, data);
     let mut text = String::new();
     for seed in 0..n {
         let mut g = Game::new(data.clone(), &preset, seed);
@@ -76,27 +83,23 @@ fn runs_hash(data: &Data, n: u64) -> u64 {
     fnv(text.as_bytes())
 }
 
-/// Golden: main's rules.ron and actions.ron (after stage 17b, kept in tests/main/: no edges,
-/// no new nodes, no stability block) play exactly as on main, byte for byte.
+/// Golden: main's data (`MAIN`) plays exactly as on main, byte for byte.
 #[test]
 fn data_without_edges_plays_as_main() {
-    let data = content(
-        &read("tests/main/rules.ron"),
-        &read("tests/main/actions.ron"),
-    );
-    assert_eq!(runs_hash(&data, 50), 15158972918327858678);
+    let data = content(MAIN, &read(&format!("{MAIN}/rules.ron")));
+    assert_eq!(runs_hash(MAIN, &data, 50), 15158972918327858678);
 }
 
 /// data/ with `extra` axes and edges added to rules.ron, nothing else.
 fn with(axes: &str, edges: &str) -> Data {
-    let rules = read("../../data/rules.ron");
+    let rules = read(&format!("{DATA}/rules.ron"));
     let rules = rules.replacen("    axes: [\n", &format!("    axes: [\n{axes}\n"), 1);
     let rules = rules.replacen(
         "    influences: [\n",
         &format!("    influences: [\n{edges}\n"),
         1,
     );
-    content(&rules, &read("../../data/actions.ron"))
+    content(DATA, &rules)
 }
 
 fn ax(s: &str) -> AxisId {
@@ -111,10 +114,7 @@ fn target(d: &Data, w: &World, id: &str) -> Fx {
 /// and at the start every source stands at its rest: every target is the anchor.
 #[test]
 fn the_graph_of_the_design_is_silent_at_the_start() {
-    let d = content(
-        &read("../../data/rules.ron"),
-        &read("../../data/actions.ron"),
-    );
+    let d = content(DATA, &read(&format!("{DATA}/rules.ron")));
     let hidden = (d.axes.iter()).filter(|a| a.hidden && a.reveal.is_some());
     let hidden: Vec<_> = hidden.map(|a| a.id.0.as_str()).collect();
     let nodes = [
@@ -133,7 +133,7 @@ fn the_graph_of_the_design_is_silent_at_the_start() {
     }
     let e7 = d.influences.iter().find(|e| e.id == "e7").unwrap();
     assert_eq!(e7.k, Fx(0));
-    let w = Game::new(d.clone(), &preset(&d), 0).world;
+    let w = Game::new(d.clone(), &preset(DATA, &d), 0).world;
     for a in d.axes.iter().filter(|a| graph::step(&d, a) > Fx(0)) {
         assert_eq!(target(&d, &w, &a.id.0), a.default, "{}", a.id.0);
     }
@@ -148,7 +148,7 @@ fn a_loop_of_gain_over_one_stops_where_its_curve_saturates() {
     let edges = r#"(from: "x", to: "y", k: 1, rest: 50),
         (from: "y", to: "x", curve: [(40, -15), (50, 0), (60, 15)]),"#;
     let d = with(axes, edges);
-    let mut w = Game::new(d.clone(), &preset(&d), 0).world;
+    let mut w = Game::new(d.clone(), &preset(DATA, &d), 0).world;
     w.axes.insert(ax("x"), Fx::from_int(52));
     w.axes.insert(ax("y"), Fx::from_int(52));
     let at = |w: &World| {
@@ -172,7 +172,7 @@ fn a_node_added_by_data_alone_works() {
     let edges = r#"(id: "j1", from: "liberties", to: "justice", k: 0.5, rest: 15),
         (id: "j2", from: "justice", to: "loyalty_people", k: 0.2, rest: 20),"#;
     let d = with(axes, edges);
-    let mut g = Game::new(d.clone(), &preset(&d), 0);
+    let mut g = Game::new(d.clone(), &preset(DATA, &d), 0);
     assert_eq!(target(&d, &g.world, "justice"), Fx::from_int(20)); // silent at rest
     g.world.axes.insert(ax("liberties"), Fx::from_int(55));
     assert_eq!(target(&d, &g.world, "justice"), Fx::from_int(40));

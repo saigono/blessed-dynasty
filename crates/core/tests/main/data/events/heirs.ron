@@ -49,13 +49,13 @@
         choices: [
             (
                 text: "Искать пару при чужеземном дворе",
-                effects: [HeirOp(TargetMarry), Axis("prestige", 10), Axis("loyalty_nobles", -3), Axis("treasury", -20)],
+                effects: [HeirOp(TargetMarry), Axis("prestige", 10), Axis("loyalty_nobles", -3)],
                 cause_tag: "heir_married_foreign",
                 hint: "Чужеземный брак приводит ко двору чужих советников.",
             ),
             (
                 text: "Искать пару среди своих баронов",
-                effects: [HeirOp(TargetMarry), Axis("loyalty_nobles", 5), HeirOp(TargetClaim(5)), Axis("treasury", -20)],
+                effects: [HeirOp(TargetMarry), Axis("loyalty_nobles", 5), HeirOp(TargetClaim(5))],
                 cause_tag: "heir_married_noble",
                 hint: "Род, породнившийся с короной, захочет большего.",
             ),

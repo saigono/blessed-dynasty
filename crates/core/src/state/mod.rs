@@ -251,10 +251,14 @@ impl World {
     /// The own province on the border with `n` with the weakest crown power, smallest id
     /// on a tie: where that neighbour presses.
     pub fn weakest_border(&self, n: &NeighbourId) -> Option<&Province> {
-        (self.provinces.values())
+        let theirs = (self.provinces.values())
+            .filter(|p| matches!(&p.holder, Holder::Foreign(x) if x == n));
+        // Borders are symmetric (Preset::load): our side is among the neighbours of theirs.
+        // Starting there saves most lookups; this runs for every neighbour every year.
+        let near = theirs.flat_map(|p| &p.neighbours);
+        (near.filter_map(|id| self.provinces.get(id)))
             .filter(|p| !matches!(p.holder, Holder::Foreign(_)))
-            .filter(|p| self.foreign_of(p).any(|x| x == n))
-            .min_by_key(|p| p.crown_power)
+            .min_by_key(|p| (p.crown_power, &p.id))
     }
 
     /// Fewest border crossings from `from` to every reachable province (BFS).
@@ -271,6 +275,14 @@ impl World {
             }
         }
         hops
+    }
+
+    /// A copy with empty `marks`, which grow with every decision: what `Game::mark` compares.
+    pub(crate) fn without_marks(&mut self) -> World {
+        let marks = std::mem::take(&mut self.marks);
+        let copy = self.clone();
+        self.marks = marks;
+        copy
     }
 
     /// A frozen copy for the chronicle.
@@ -320,12 +332,26 @@ impl World {
     }
 
     /// Cheapest path cost from the capital over `neighbours` (Dijkstra), in province order;
-    /// None for cut-off provinces. Runs a few times a tick, so it works on indices: string
-    /// keyed lookups were most of its time.
+    /// None for cut-off provinces. Runs every tick, so it works on indices.
     fn path_costs(&self, r: &CrownPowerRules) -> Vec<Option<Fx>> {
         let one = Fx::from_int(1);
         let ps: Vec<&Province> = self.provinces.values().collect();
-        let find = |id: &ProvinceId| ps.binary_search_by(|p| p.id.cmp(id)).ok();
+        // Ids are found by a hash first: comparing strings was most of the time here.
+        let hash = |id: &ProvinceId| {
+            (id.0.bytes()).fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+                (h ^ b as u64).wrapping_mul(0x100_0000_01b3)
+            })
+        };
+        let mut by_hash: Vec<(u64, usize)> = (ps.iter().enumerate())
+            .map(|(i, p)| (hash(&p.id), i))
+            .collect();
+        by_hash.sort_unstable();
+        let find = |id: &ProvinceId| {
+            let h = hash(id);
+            let from = by_hash.partition_point(|(x, _)| *x < h);
+            let same = by_hash[from..].iter().take_while(|(x, _)| *x == h);
+            same.map(|(_, i)| *i).find(|&i| ps[i].id == *id)
+        };
         let steps: Vec<Fx> = (ps.iter())
             .map(|into| match &into.holder {
                 Holder::Foreign(n) => {
@@ -620,7 +646,8 @@ mod tests {
             .get_mut(&NeighbourId("nordmark".into()))
             .unwrap();
         n.relation = Fx::from_int(relation);
-        w.path_costs(&data.crown_power)[&pid("far")]
+        let far = w.provinces.keys().position(|id| *id == pid("far")).unwrap();
+        w.path_costs(&data.crown_power)[far].unwrap()
     }
 
     #[test]

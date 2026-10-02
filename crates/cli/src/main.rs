@@ -656,7 +656,7 @@ mod tests {
         let mut g = game();
         play(&mut g, None).unwrap();
         assert_eq!(g.world.tick, MAX_YEARS.ticks(g.world.time_unit));
-        assert_eq!(g.decisions.len(), 100);
+        assert_eq!(g.decisions.len(), MAX_YEARS.0 as usize);
         assert!(tags(&g).iter().all(|t| *t == "b"));
     }
 

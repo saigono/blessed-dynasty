@@ -200,7 +200,7 @@ fn treachery(enemy: &str) -> (Fx, Vec<Fx>) {
         let others = g.world.neighbours.values().filter(|n| n.id.0 != enemy);
         (prestige, others.map(|n| n.relation).collect::<Vec<_>>())
     };
-    // Prestige starts at its floor of 0; give it room to fall.
+    // Room for prestige to fall whatever the preset starts it at.
     let start = || {
         let mut g = war_only(1);
         let prestige = bd_core::state::AxisId("prestige".into());
@@ -222,6 +222,7 @@ fn war_on_a_friend_costs_prestige_and_trust() {
     // Vestrum is friendly (40), Purpur neutral (0).
     let (prestige, others) = treachery("vestrum");
     assert_eq!(prestige, Fx::from_int(-15));
-    assert_eq!(others, [Fx::from_int(-10); 2]);
+    // Nordmark (hostile) and Purpur both lose 10; Purpur, from 0, then drifts 1 back.
+    assert_eq!(others, [Fx::from_int(-10), Fx::from_int(-9)]);
     assert_eq!(treachery("purpur"), (Fx(0), vec![Fx(0); 2]));
 }

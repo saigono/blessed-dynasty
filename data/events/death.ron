@@ -10,7 +10,7 @@
         weight: 0,
         once: false,
         cooldown_years: 3,
-        importance: 5,
+        importance: 3,
         target: None,
         choices: [
             (

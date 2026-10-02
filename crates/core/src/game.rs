@@ -4,7 +4,9 @@ use crate::data::{Data, by_age};
 use crate::fx::Fx;
 use crate::neighbour::neighbour_tick;
 use crate::rng::Rng;
-use crate::rules::{ActionTarget, Choice, Ctx, Effect, Event, EventTarget, Target, add_axis};
+use crate::rules::{
+    ActionTarget, Choice, Ctx, Effect, Event, EventTarget, ProvinceField, Target, add_axis,
+};
 use crate::state::{
     ActiveAction, CauseTag, HeirStatus, Holder, MarkKey, NeighbourId, Preset, ProvinceId, World,
 };
@@ -135,27 +137,27 @@ impl Game {
         let actions = actions.filter(|a| a.cost <= treasury && a.requires.eval(w));
         actions
             .filter_map(|a| {
-                let targets: Vec<Option<Target>> = match &a.target {
+                // The same action on the same target runs once at a time.
+                let busy = |t: Option<&Target>| {
+                    let same = |x: &ActiveAction| x.target == t.map(target_key);
+                    (w.active_actions.iter()).any(|x| x.id == a.id && same(x))
+                };
+                let free = |t: Target| (!busy(Some(&t))).then_some(t);
+                let targets: Vec<Target> = match &a.target {
                     ActionTarget::Province(f) => (w.provinces.values())
                         .filter(|p| f.matches(p, w) && p.crown_power >= a.min_crown_power)
-                        .map(|p| Some(Target::Province(p.id.clone())))
+                        .filter_map(|p| free(Target::Province(p.id.clone())))
                         .collect(),
                     _ if capital_power < a.min_crown_power => return None,
-                    ActionTarget::None => vec![None],
+                    ActionTarget::None => return (!busy(None)).then(|| (a.id.clone(), vec![])),
                     ActionTarget::Neighbour => (w.neighbours.keys())
-                        .map(|n| Some(Target::Neighbour(n.clone())))
+                        .filter_map(|n| free(Target::Neighbour(n.clone())))
                         .collect(),
-                    ActionTarget::Heir => {
-                        (w.heirs.iter()).map(|h| Some(Target::Heir(h.id))).collect()
-                    }
+                    ActionTarget::Heir => (w.heirs.iter())
+                        .filter_map(|h| free(Target::Heir(h.id)))
+                        .collect(),
                 };
-                // The same action on the same target runs once at a time.
-                let busy = |t: &Option<Target>| {
-                    let key = t.as_ref().map(target_key);
-                    (w.active_actions.iter()).any(|x| x.id == a.id && x.target == key)
-                };
-                let free: Vec<_> = targets.into_iter().filter(|t| !busy(t)).collect();
-                (!free.is_empty()).then(|| (a.id.clone(), free.into_iter().flatten().collect()))
+                (!targets.is_empty()).then(|| (a.id.clone(), targets))
             })
             .collect()
     }
@@ -237,6 +239,8 @@ impl Game {
         let mut offers = Vec::new();
         if (self.world.tick.0).is_multiple_of(self.data.time_unit.ticks_per_year) {
             let ids: Vec<_> = self.world.neighbours.keys().cloned().collect();
+            let relations = |w: &World| w.neighbours.values().map(|n| n.relation).collect::<Vec<_>>();
+            let before = relations(&self.world);
             for id in ids {
                 offers.extend(neighbour_tick(
                     &mut self.world,
@@ -245,8 +249,10 @@ impl Game {
                     id,
                 ));
             }
-            // Relations price the paths through foreign land.
-            self.world.recompute_crown_power(&self.data);
+            // Relations price the paths through foreign land; mostly they stay put.
+            if relations(&self.world) != before {
+                self.world.recompute_crown_power(&self.data);
+            }
         }
         if self.ended.is_some() {
             return self.report_end();
@@ -284,7 +290,7 @@ impl Game {
         let p = self.pending_event.clone().ok_or(GameError::NoEvent)?;
         let event = find_event(&self.data, &p.event_id).expect("pending events exist");
         let choice = event.choices.get(idx).ok_or(GameError::BadChoice)?.clone();
-        let before = record.then(|| self.world.clone());
+        let before = record.then(|| self.world.without_marks());
         self.apply(&choice.effects, p.target.as_ref(), p.neighbour.as_ref());
         self.pending_event = None;
         if let Some(before) = &before {
@@ -300,7 +306,9 @@ impl Game {
             });
         }
         self.world.recompute_loyalty(&self.data);
-        self.world.recompute_crown_power(&self.data);
+        if moves_crown_power(&choice.effects) {
+            self.world.recompute_crown_power(&self.data);
+        }
         Ok(())
     }
 
@@ -400,7 +408,7 @@ impl Game {
                 }
                 _ => false,
             });
-            let before = started.map(|_| self.world.clone());
+            let before = started.map(|_| self.world.without_marks());
             self.apply(&effects, target.as_ref(), None);
             if let (Some(idx), Some(before)) = (started, before) {
                 self.mark(idx, &tag, &before);
@@ -544,7 +552,10 @@ impl Game {
             names
                 .iter()
                 .flatten()
-                .fold(s.to_string(), |s, (k, v)| s.replace(k, v))
+                .fold(s.to_string(), |s, (k, v)| match s.contains(k) {
+                    true => s.replace(k, v),
+                    false => s,
+                })
         };
         let choices = e.choices.iter().map(|c| Choice {
             text: fill(&c.text),
@@ -608,37 +619,63 @@ fn heirs_year(d: &Data, w: &mut World, rng: &mut Rng) {
     }
 }
 
+/// Whether the effects may change an input of `World::recompute_crown_power`: holders,
+/// province loyalty, buildings, crown modifiers, relations. Most choices touch axes only,
+/// and the recompute is a good part of a tick.
+fn moves_crown_power(effects: &[Effect]) -> bool {
+    effects.iter().any(|e| match e {
+        Effect::Chance(c) => moves_crown_power(&c.then) || moves_crown_power(&c.otherwise),
+        Effect::IfFriendly(es) => moves_crown_power(es),
+        Effect::Province(_, field, _) => *field == ProvinceField::Loyalty,
+        Effect::Axis(..)
+        | Effect::SetFlag(_)
+        | Effect::ClearFlag(_)
+        | Effect::SpawnEvent(..)
+        | Effect::RulerHealth(_)
+        | Effect::HeirOp(_)
+        | Effect::RulerDies(_)
+        | Effect::Abdicate
+        | Effect::StartWar(_)
+        | Effect::Clash
+        | Effect::Tribute(_)
+        | Effect::TakeHostage(..)
+        | Effect::EndWar(_)
+        | Effect::SetWarStage(_) => false,
+        _ => true,
+    })
+}
+
 fn cooling(e: &Event, w: &World) -> bool {
     let cooldown = e.cooldown_years.ticks(w.time_unit).0;
-    (w.last_fired.get(&e.id)).is_some_and(|t| w.tick.0 < t.0 + cooldown)
+    // Checked first: the lookup is the costly part of the event pick.
+    cooldown > 0 && (w.last_fired.get(&e.id)).is_some_and(|t| w.tick.0 < t.0 + cooldown)
 }
 
 fn find_event<'a>(data: &'a Data, id: &str) -> Option<&'a Event> {
     data.events.iter().find(|e| e.id == id)
 }
 
-/// `None`: the event needs no target. `Some(empty)`: it cannot fire now.
-fn candidates(target: &EventTarget, w: &World) -> Option<Vec<Target>> {
+/// `None`: the event needs no target. `Some(empty)`: it cannot fire now. Lazy: the pick
+/// asks every event of the pool each tick whether it has a target at all.
+fn candidates<'a>(
+    target: &'a EventTarget,
+    w: &'a World,
+) -> Option<Box<dyn Iterator<Item = Target> + 'a>> {
     match target {
         EventTarget::None => None,
-        EventTarget::RandomProvince(f) => Some(
+        EventTarget::RandomProvince(f) => Some(Box::new(
             (w.provinces.values())
                 .filter(|p| f.matches(p, w))
-                .map(|p| Target::Province(p.id.clone()))
-                .collect(),
-        ),
-        EventTarget::Neighbour => Some(
-            w.neighbours
-                .keys()
-                .map(|n| Target::Neighbour(n.clone()))
-                .collect(),
-        ),
-        EventTarget::Heir(lo, hi) => Some(
+                .map(|p| Target::Province(p.id.clone())),
+        )),
+        EventTarget::Neighbour => Some(Box::new(
+            w.neighbours.keys().map(|n| Target::Neighbour(n.clone())),
+        )),
+        EventTarget::Heir(lo, hi) => Some(Box::new(
             (w.heirs.iter())
                 .filter(|h| (*lo..=*hi).contains(&h.age))
-                .map(|h| Target::Heir(h.id))
-                .collect(),
-        ),
+                .map(|h| Target::Heir(h.id)),
+        )),
     }
 }
 
@@ -655,10 +692,10 @@ fn pick_event(
     offers: Vec<PendingEvent>,
 ) -> Option<PendingEvent> {
     let ready = |e: &Event| e.when.eval(w) && !(e.once && w.last_fired.contains_key(&e.id));
-    let targets = |e: &Event| candidates(&e.target, w).is_none_or(|t| !t.is_empty());
+    let targets = |e: &Event| candidates(&e.target, w).is_none_or(|mut t| t.next().is_some());
     let fire = |e: &Event, rng: &mut Rng| {
-        let pick = |t: Vec<Target>| t[rng.range(0, t.len() as i64) as usize].clone();
-        let target = candidates(&e.target, w).map(pick);
+        let mut pick = |t: Vec<Target>| t[rng.range(0, t.len() as i64) as usize].clone();
+        let target = candidates(&e.target, w).map(|t| pick(t.collect()));
         Some(PendingEvent {
             event_id: e.id.clone(),
             target,
@@ -1286,9 +1323,9 @@ mod tests {
         g.start_action("marry_neighbour", Some(vestrum.clone()))
             .unwrap();
         g.wait().unwrap();
-        // 40 + 30 on completion; then Vestrum, friendly, trades: +1.
+        // 40 + 30 on completion; then Vestrum, friendly, trades: +1, and drifts toward 0: -1.
         let n = &g.world.neighbours[&NeighbourId("vestrum".into())];
-        assert_eq!(n.relation, Fx::from_int(71));
+        assert_eq!(n.relation, Fx::from_int(70));
         assert!(g.world.flags.contains("royal_marriage"));
         assert!(targets(&g, "marry_neighbour").is_empty());
     }

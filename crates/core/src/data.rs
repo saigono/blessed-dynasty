@@ -308,6 +308,8 @@ pub struct NeighbourAi {
     pub friendly_above: Fx,
     /// Expand needs strength >= the weakest border crown power + this.
     pub expand_margin: Fx,
+    /// Every year the relation moves this much toward 0, after the stance's own change.
+    pub drift: Fx,
     pub expand: StanceRules,
     pub defend: StanceRules,
     pub trade: StanceRules,

@@ -12,6 +12,8 @@
         "loyalty_people": 50,
         "bureaucracy": 20,
         "treasury": 150,
+        // Above the axis minimum, so a war on a friend can cost prestige from the start.
+        "prestige": 20,
     },
     capital: (province: "capital", crown_bonus: 20),
     vassals: [
@@ -30,9 +32,9 @@
     ],
     // Nordmark hostile, Purpur neutral, Vestrum friendly (rules.ron neighbour_ai thresholds).
     neighbours: [
-        (id: "nordmark", name: "Нордмарк", relation: -40, strength: 40, stance: Defend),
-        (id: "purpur", name: "Пурпуляндия", relation: 0, strength: 50, stance: Wait),
-        (id: "vestrum", name: "Веструм", relation: 40, strength: 30, stance: Trade),
+        (id: "nordmark", name: "Нордмарк", relation: -40, strength: 60, stance: Defend),
+        (id: "purpur", name: "Пурпуляндия", relation: 0, strength: 70, stance: Wait),
+        (id: "vestrum", name: "Веструм", relation: 40, strength: 45, stance: Trade),
     ],
     // The succession law and the ruler's marriage.
     flags: ["law_primogeniture", "married"],

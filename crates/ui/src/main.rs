@@ -1238,11 +1238,17 @@ fn overreach(g: &Game) -> Option<(String, String)> {
         fines.push(format!("лояльность {these} -{}", round(c.loyalty)));
     }
     let lands = plural(k, ["земля", "земли", "земель"]);
-    let line = format!(
+    let mut line = format!(
         "Сверх предела: {k} {lands} ({}), штраф в год: {}",
         names.join(", "),
         fines.join(", ")
     );
+    let pressure: Vec<String> = (c.pressure.iter())
+        .map(|(a, v)| format!("{} {}", axis_name(d, a).to_lowercase(), round(*v * times)))
+        .collect();
+    if !pressure.is_empty() {
+        line += &format!("; пока земли лишние: {}", pressure.join(", "));
+    }
     let room = c.room(w);
     let terms =
         (c.per_axis.iter()).map(|(a, k)| format!(" + {} × {k}", axis_name(d, a).to_lowercase()));
@@ -1970,7 +1976,10 @@ mod tests {
             .unwrap();
         assert!(line.starts_with("Сверх предела: 2 земли ("), "{line}");
         assert!(
-            line.ends_with("штраф в год: стабильность -2, доход -4, лояльность этих земель -3"),
+            line.ends_with(
+                "штраф в год: доход -4, лояльность этих земель -3; \
+                 пока земли лишние: стабильность -4"
+            ),
             "{line}"
         );
         let hint = texts

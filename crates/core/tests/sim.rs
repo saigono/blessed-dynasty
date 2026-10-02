@@ -118,23 +118,6 @@ fn texts(c: &Chronicle) -> Vec<(&str, &str, Option<&str>)> {
 fn golden_seed_42_script_a() {
     let (g, end) = script_a(42);
     let c = sim::run(end, &g.data, g.rng.clone());
-    if std::env::var("PEEK").is_ok() {
-        eprintln!("{:?}", (c.years, &c.fall, c.entries.len()));
-        eprintln!("{:#?}", &texts(&c)[..3]);
-        for (i, k) in c.kin.iter().enumerate().take(5) {
-            eprintln!(
-                "{i} {} {} {:?} {:?} {:?}",
-                k.name, k.born, k.parent, k.crowned, k.died
-            );
-        }
-        eprintln!(
-            "{:?}",
-            c.rulers
-                .iter()
-                .map(|r| (&r.name, r.start.0, r.end.0))
-                .collect::<Vec<_>>()
-        );
-    }
     // Stage 12: Конрад does not live to reign (heirs.death), Агнесса does.
     // Stage 14: armies cost by the upkeep curve, the dynasty wars with its own actions.
     // Stage 15: gentler heir deaths, Конрад reigns with children born before; less money;

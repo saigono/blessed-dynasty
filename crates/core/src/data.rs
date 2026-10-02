@@ -663,6 +663,10 @@ pub struct CrownCapacity {
     pub penalty: Vec<(AxisId, Fx)>,
     #[serde(default)]
     pub income: Fx,
+    /// Anchor shifts per province over the room while it is over (`graph::anchor`), unlike
+    /// `penalty`, which adds up every year.
+    #[serde(default)]
+    pub pressure: Vec<(AxisId, Fx)>,
 }
 
 impl CrownCapacity {
@@ -674,11 +678,16 @@ impl CrownCapacity {
         (room.0 / Fx::SCALE).max(0)
     }
 
+    /// How many of the crown's provinces are beyond `room`.
+    pub fn excess(&self, w: &World) -> i64 {
+        let crown = w.provinces.values().filter(|p| p.holder == Holder::Crown);
+        (crown.count() as i64 - self.room(w)).max(0)
+    }
+
     /// The crown's provinces beyond `room`: the weakest by crown power, the capital never;
     /// the smallest id first on a tie.
     pub fn over<'a>(&self, w: &'a World) -> Vec<&'a Province> {
-        let crown = w.provinces.values().filter(|p| p.holder == Holder::Crown);
-        let over = (crown.count() as i64 - self.room(w)).max(0) as usize;
+        let over = self.excess(w) as usize;
         let mut weakest: Vec<&Province> = (w.provinces.values())
             .filter(|p| p.holder == Holder::Crown && p.id != w.capital.province)
             .collect();
@@ -930,7 +939,7 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
     let flows = data.economy.flows.iter().map(|(a, _)| a);
     let war = data.war.bonus.iter().map(|(a, _)| a);
     let c = &data.crown_capacity;
-    let capacity = c.per_axis.iter().chain(&c.penalty).map(|(a, _)| a);
+    let capacity = (c.per_axis.iter().chain(&c.penalty).chain(&c.pressure)).map(|(a, _)| a);
     let laws = data
         .heirs
         .laws

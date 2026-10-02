@@ -304,7 +304,8 @@
     // Direct rule has a limit (yearly): the crown holds at most capital crown power *
     // per_power + sum(axis * k of per_axis) provinces itself, the capital included. Beyond
     // that, every year: its weakest provinces (by crown power) over the limit lose `loyalty`,
-    // and each of them costs the `penalty` axes and `income` of the yearly income. The land
+    // and each of them costs the `penalty` axes and `income` of the yearly income and, while
+    // over, lowers the anchors of the `pressure` axes. The land
     // stays with the crown: only the player gives it away (grant_province), or the automaton,
     // whose weight `overreach` makes a grant worth more while the crown is over its limit.
     // Stage 15 (docs/calibration.md): the capital (crown power 90) and bureaucracy 20 give
@@ -314,8 +315,10 @@
         per_power: 0.07,
         per_axis: [("bureaucracy", 0.1)],
         loyalty: 3,
-        penalty: [("stability", -1)],
         income: 2,
+        // While over the room, per province over: the anchor of stability lower (stage 19; the
+        // yearly `penalty` of stage 15 piled up in the shocks and held them at -100).
+        pressure: [("stability", -2)],
     ),
 
     // Effect Grant: the nearest vassal within `max_distance` border crossings gets the

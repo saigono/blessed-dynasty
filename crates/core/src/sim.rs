@@ -706,9 +706,8 @@ fn law_changes<'a>(d: &'a Data, w: &'a World, id: &str, enact: bool) -> Vec<(&'a
         return vec![];
     };
     let one = Fx::from_int(1);
-    let mates = d
-        .laws_in_force(w)
-        .filter(|o| !l.group.is_empty() && o.group == l.group);
+    let mates = (d.laws.list.iter())
+        .filter(|o| !l.group.is_empty() && o.group == l.group && w.flags.contains(&o.id));
     match enact {
         true => std::iter::once((l, one))
             .chain(mates.map(|o| (o, Fx(0) - one)))

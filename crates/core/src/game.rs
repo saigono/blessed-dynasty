@@ -1068,6 +1068,36 @@ mod tests {
         assert_eq!(ids, ["other"]);
     }
 
+    /// Stage 19: land over the crown's room lowers the anchor of stability by `pressure` per
+    /// province over, as long as it is over and no longer; no shock piles up.
+    #[test]
+    fn land_over_the_limit_lowers_the_anchor_of_stability() {
+        let mut g = map_game();
+        g.world.axes.insert(ax("bureaucracy"), Fx::from_int(100));
+        g.data.crown_capacity.per_power = Fx(50); // room for 4 of 6
+        g.data.crown_capacity.per_axis = vec![];
+        let def = g
+            .data
+            .axes
+            .iter()
+            .find(|a| a.id.0 == "stability")
+            .unwrap()
+            .clone();
+        let anchor = |g: &Game| crate::graph::anchor(&g.data, &g.world, &def);
+        let free = def.anchor.unwrap_or(def.default);
+        assert_eq!(g.data.crown_capacity.excess(&g.world), 2);
+        assert_eq!(anchor(&g), free - Fx::from_int(4));
+        let mut within = g.clone();
+        within.data.crown_capacity.per_power = Fx::from_int(1);
+        assert_eq!(anchor(&within), free);
+        for _ in 0..3 {
+            g.wait().unwrap();
+            within.wait().unwrap();
+        }
+        let shocks = |g: &Game| g.world.axes[&ax("shocks")];
+        assert_eq!(shocks(&g), shocks(&within));
+    }
+
     /// Stage 15: land over the crown's room stays with the crown and costs it every year
     /// (the weakest lands' loyalty, stability, income) until the player grants it away.
     #[test]
@@ -1077,11 +1107,16 @@ mod tests {
         g.world.axes.insert(ax("bureaucracy"), Fx::from_int(100)); // three slots
         g.data.crown_capacity.per_power = Fx(50); // capital crown power 90: room for 4 of 6
         g.data.crown_capacity.per_axis = vec![];
+        // Stage 19: the data put the land over the limit on the anchor of stability
+        // (`pressure`, see `land_over_the_limit_lowers_the_anchor_of_stability`); the yearly
+        // penalty is still there for an axis that adds up.
         let c = g.data.crown_capacity.clone();
         assert_eq!(
-            (c.penalty.clone(), c.income),
-            (vec![(ax("stability"), Fx::from_int(-1))], Fx::from_int(2))
+            (c.pressure.clone(), c.income),
+            (vec![(ax("stability"), Fx::from_int(-2))], Fx::from_int(2))
         );
+        g.data.crown_capacity.pressure = vec![];
+        g.data.crown_capacity.penalty = vec![(ax("stability"), Fx::from_int(-1))];
         let over = |g: &Game| -> Vec<ProvinceId> {
             g.data
                 .crown_capacity

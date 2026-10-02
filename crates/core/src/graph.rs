@@ -131,9 +131,14 @@ pub fn scale(d: &Data, w: &World, i: usize) -> Fx {
 }
 
 /// The anchor of `a` now: its own (`default` without one) plus the shifts of the laws in
-/// force (`LawDef.anchors`) and the resistance to those being brought in.
+/// force (`LawDef.anchors`), the resistance to those being brought in and the pressure of the
+/// crown's land over its room (`CrownCapacity.pressure`).
 pub fn anchor(d: &Data, w: &World, a: &AxisDef) -> Fx {
     let mut v = a.anchor.unwrap_or(a.default);
+    let c = &d.crown_capacity;
+    for (_, s) in c.pressure.iter().filter(|(x, _)| *x == a.id) {
+        v = v + *s * Fx::from_int(c.excess(w));
+    }
     for l in &d.laws.list {
         for (_, s) in l.anchors.iter().filter(|(x, _)| *x == a.id) {
             if w.flags.contains(&l.id) {

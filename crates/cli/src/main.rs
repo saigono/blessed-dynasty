@@ -302,6 +302,8 @@ struct Row {
     /// simulated years.
     nodes: Vec<[Option<i64>; 3]>,
     bounds: Vec<(usize, usize)>,
+    /// Years the shocks of stability (`Data.stability`) stood at a bound, of all simulated.
+    shocks: (usize, usize),
 }
 
 /// The hidden axes with an edge of the influence graph (not, say, the shocks of stability),
@@ -361,14 +363,18 @@ fn batch_row(
             ]
         })
         .collect();
-    let bounds = (hidden.map(|(i, a)| {
+    let at_bound = |(i, a): (usize, &AxisDef)| {
         let at = (c.nodes.iter()).filter(|n| n.axes[i] <= a.min || n.axes[i] >= a.max);
         (at.count(), c.nodes.len())
-    }))
-    .collect();
+    };
+    let bounds = hidden.map(at_bound).collect();
+    let shocks = (g.data.axes.iter().enumerate())
+        .find(|(_, a)| g.data.stability.as_ref().is_some_and(|s| s.shocks == a.id))
+        .map_or((0, 0), at_bound);
     Ok(Row {
         nodes,
         bounds,
+        shocks,
         successions: crowned.clone().count() as u32,
         contested: crowned.filter(contested).count() as u32,
         law_changes: laws.count() as u32,
@@ -519,6 +525,11 @@ fn batch_report(rows: &[Row], hidden: &[&str]) -> String {
     let all = all.fold((0, 0), |(a, b), (n, of)| (a + n, b + of));
     if !hidden.is_empty() {
         out += &format!("# узло-лет на краях {}\n", permille(all));
+    }
+    let shocks = rows.iter().map(|r| r.shocks);
+    let shocks = shocks.fold((0, 0), |(a, b), (n, of)| (a + n, b + of));
+    if shocks.1 > 0 {
+        out += &format!("# потрясения на краях {} лет\n", permille(shocks));
     }
     out += "# причины падения:\n";
     let mut falls: BTreeMap<String, usize> = BTreeMap::new();
@@ -962,6 +973,7 @@ mod tests {
             bastards: 2 * (seed == 2) as u32,
             nodes: vec![],
             bounds: vec![],
+            shocks: (0, 0),
         };
         let rows = [
             row(0, 5, 10, FallReason::NoHeir, 0),
@@ -1015,6 +1027,7 @@ mod tests {
         let rows = rows.map(|r| Row {
             nodes: vec![[Some(r.seed as i64 * 10), None, Some(5)]],
             bounds: vec![(r.seed as usize, 100)],
+            shocks: (r.seed as usize, 100),
             ..r
         });
         let out = batch_report(&rows, &["x"]);
@@ -1031,6 +1044,7 @@ mod tests {
             "{out}"
         );
         assert!(out.contains("\n# узло-лет на краях 1.5%\n"), "{out}");
+        assert!(out.contains("\n# потрясения на краях 1.5% лет\n"), "{out}");
     }
 
     #[test]

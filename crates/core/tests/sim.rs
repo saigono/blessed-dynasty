@@ -126,7 +126,7 @@ fn golden_seed_42_script_a() {
     // heirs marry one by one: Конрад outlives his father and reigns 31 years.
     // Stage 17: the rightful heir has his claim at once, so fewer disputes and no usurpation;
     // Вейр takes the land bit by bit, the realm falls apart into appanages.
-    assert_eq!((c.years, &c.fall), (163, &FallReason::NoCrownLand));
+    assert_eq!((c.years, &c.fall), (160, &FallReason::NoCrownLand));
     let hint = |h: &'static str| Some(h);
     let raid = hint("Набег, отбитый при основателе, научил соседа осторожности.");
     assert_eq!(
@@ -138,29 +138,29 @@ fn golden_seed_42_script_a() {
                 hint("Основатель породнил наследника с домом своего барона."),
             ),
             (
-                "Великое бедствие",
-                "В тот год великое наводнение, а за ним мор опустошили землю Оствик.",
-                hint("Основатель кормил край после наводнения."),
-            ),
-            (
                 "Мятеж дома Вейр",
-                "В тот год дом Вейр поднял мятеж в земле Вейр и отказался присягать короне.",
+                "В тот год дом Вейр поднял мятеж в земле Хольм и отказался присягать короне.",
                 raid,
             ),
             (
-                "Потеря земли",
-                "Земля Берг потеряна, ею владеет Вейр.",
-                hint("Земли, пожалованные основателем вассалу, привыкли жить своим умом."),
+                "Великое бедствие",
+                "В тот год великое наводнение, а за ним мор опустошили землю Столица.",
+                hint("Коронные земли, отданные основателем монастырю, к короне не вернулись."),
             ),
             (
-                "Потеря земли",
-                "Земля Гарт потеряна, ею владеет Вейр.",
-                hint("Земли, пожалованные основателем вассалу, привыкли жить своим умом."),
+                "Веструм отверг сватовство",
+                "Сваты вернулись ни с чем: Веструм не отдаёт руки за наш дом. При соседних дворах об этом судачат.",
+                hint("Ярмарки, открытые основателем для чужих купцов, связали две страны."),
             ),
             (
-                "Потеря земли",
-                "Земля Хольм потеряна, ею владеет Вейр.",
-                None,
+                "Мор",
+                "В землю Берг пришёл мор. Деревни пустеют, на дорогах заставы.",
+                hint("Пережитый при основателе мор сплотил страну."),
+            ),
+            (
+                "Мятеж дома Арден",
+                "В тот год дом Арден поднял мятеж в земле Арден и отказался присягать короне.",
+                raid,
             ),
         ]
     );
@@ -343,7 +343,10 @@ fn a_child_reigns_under_regency_and_a_weak_claim_is_contested() {
     let mut data = content();
     quiet(&mut data);
     // A weak claim, not the rightful one's (stage 17).
-    data.heirs.laws.iter_mut().for_each(|l| l.rightful_claim = Fx(0));
+    data.heirs
+        .laws
+        .iter_mut()
+        .for_each(|l| l.rightful_claim = Fx(0));
     yearly(&mut data, "");
     data.sim.max_years = 12;
     let g = heirs(&data, &[(10, 30, HeirStatus::Home)]);
@@ -571,7 +574,10 @@ fn a_grown_king_takes_the_vows_with_a_loyal_church() {
 fn the_dispute_threshold_follows_the_law() {
     let mut data = content();
     quiet(&mut data);
-    data.heirs.laws.iter_mut().for_each(|l| l.rightful_claim = Fx(0));
+    data.heirs
+        .laws
+        .iter_mut()
+        .for_each(|l| l.rightful_claim = Fx(0));
     data.sim.max_years = 1;
     let contested = |law: Option<&str>, claim: i64| {
         let mut g = heirs(&data, &[(30, claim, HeirStatus::Home)]);
@@ -1011,11 +1017,11 @@ fn kin_of_seed_42_script_a() {
     );
     assert_eq!((k[0].crowned, k[0].parent), (Some(1187), None));
     assert_eq!(k[0].died, Some(1187 + c.rulers[0].end.0));
-    // Конрад, 6 at the start, reigned from 1221 to 1247; Генрих, born 1196, died 1257
-    // uncrowned; Ирмгард born 1200.
+    // Конрад, 6 at the start, reigned from 1221; Генрих, born 1196, died uncrowned;
+    // Ирмгард born 1200.
     assert_eq!(
         (k[1].name.as_str(), k[1].born, k[1].crowned, k[1].died),
-        ("Конрад", 1181, Some(1221), Some(1247))
+        ("Конрад", 1181, Some(1221), Some(1255))
     );
     assert_eq!(
         (k[2].name.as_str(), k[2].born, k[2].parent, k[2].crowned),
@@ -1023,7 +1029,7 @@ fn kin_of_seed_42_script_a() {
     );
     assert_eq!(
         (k[3].name.as_str(), k[3].born, k[3].parent, k[3].died),
-        ("Ирмгард", 1200, Some(0), Some(1271))
+        ("Ирмгард", 1200, Some(0), Some(1280))
     );
     // Гизела, born to Конрад in 1201 before his coronation.
     assert_eq!(

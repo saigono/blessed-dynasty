@@ -403,7 +403,10 @@ fn crowned(data: &Data, sex: Sex, claim: i64, axes: &[(&str, i64)]) -> sim::Chro
 fn plain(f: impl FnOnce(&mut bd_core::data::CoronationRules)) -> Data {
     let mut data = data();
     data.sim.traits.clear();
-    data.heirs.laws.iter_mut().for_each(|l| l.rightful_claim = Fx(0));
+    data.heirs
+        .laws
+        .iter_mut()
+        .for_each(|l| l.rightful_claim = Fx(0));
     data.coronation = Default::default();
     f(&mut data.coronation);
     data
@@ -759,7 +762,11 @@ fn the_rightful_heir_has_his_claim_at_once() {
     let mut data = data();
     data.heirs.birth = vec![];
     data.heirs.death = vec![];
-    let mut g = game(&data, "law_primogeniture", &[(M, 10, true, 50), (M, 8, true, 50)]);
+    let mut g = game(
+        &data,
+        "law_primogeniture",
+        &[(M, 10, true, 50), (M, 8, true, 50)],
+    );
     g.data.events.clear();
     let claims = |g: &Game| g.world.heirs.iter().map(|h| h.claim).collect::<Vec<_>>();
     g.wait().unwrap();
@@ -784,8 +791,110 @@ fn male_primogeniture_crowns_a_daughter_only_without_sons_contested() {
     assert!(daughter.text.contains("p0"), "{}", daughter.text);
     assert!(contested(&daughter));
     // The same daughter under absolute primogeniture: no dispute, more legitimacy and nobles.
-    let queen = crown_under(&data, "law_primogeniture", &[(F, 20, true, 50), (M, 40, false, 50)]);
+    let queen = crown_under(
+        &data,
+        "law_primogeniture",
+        &[(F, 20, true, 50), (M, 40, false, 50)],
+    );
     assert!(!contested(&queen));
     assert!(at(&daughter, "legitimacy") < at(&queen, "legitimacy"));
     assert!(at(&daughter, "loyalty_nobles") < at(&queen, "loyalty_nobles"));
+}
+
+/// Names `heir` (an index) by the action `designate_heir`, done at once.
+fn designate(g: &mut Game, heir: usize) {
+    g.world
+        .axes
+        .insert(AxisId("treasury".into()), Fx::from_int(500));
+    let id = g.world.heirs[heir].id;
+    g.start_action("designate_heir", Some(Target::Heir(id)))
+        .unwrap();
+    g.data.events.clear();
+    g.wait().unwrap();
+}
+
+/// The dynasty after `g`'s reign ends now, one year.
+fn next_reign(g: &Game) -> sim::Chronicle {
+    let mut data = g.data.clone();
+    (data.heirs.birth, data.sim.max_years) = (vec![], g.world.tick.0 + 1);
+    data.sim.traits.clear();
+    let end = ReignEnd {
+        cause: "illness".into(),
+        tick: g.world.tick,
+        world: g.world.clone(),
+    };
+    sim::run(end, &data, Rng::from_seed(1))
+}
+
+/// Acceptance: the designated heir comes to the throne instead of the rightful one, who keeps
+/// his claim; a hostage named gives way to the law until he is back.
+#[test]
+fn the_designated_heir_succeeds_over_the_rightful_one() {
+    let mut data = data();
+    data.heirs.death = vec![];
+    let mut g = game(
+        &data,
+        "law_primogeniture",
+        &[(M, 20, true, 50), (M, 18, true, 50)],
+    );
+    designate(&mut g, 1);
+    assert_eq!(g.world.designated, Some(g.world.heirs[1].id));
+    assert_eq!(sim::successor(&g.world, &g.data), Some(1));
+    assert_eq!(sim::rightful(&g.world, &g.data), Some(0));
+    assert_eq!(g.world.heirs[0].claim, Fx::from_int(90));
+    let c = next_reign(&g);
+    assert_eq!(
+        (c.rulers[1].name.as_str(), c.rulers[1].designated),
+        ("p1", true)
+    );
+    let w = &c.entries[0].snapshot;
+    assert_eq!(w.designated, None);
+    assert_eq!(w.heirs[0].name, "p0");
+    // A hostage named: the law decides while he is away.
+    g.world.heirs[1].status = HeirStatus::Hostage(court("vestrum"));
+    assert_eq!(sim::successor(&g.world, &g.data), Some(0));
+}
+
+/// Acceptance: naming an heir over the law costs `designate_penalty` at once and makes his
+/// coronation contested by `designate_dispute`; naming the rightful heir costs nothing.
+#[test]
+fn designating_over_the_law_costs_and_raises_the_dispute() {
+    let mut data = data();
+    data.heirs.death = vec![];
+    data.heirs.designate_dispute = Fx::from_int(100);
+    let people = [(M, 20, true, 50), (M, 18, true, 50)];
+    let named = |heir: usize| {
+        let mut g = game(&data, "law_primogeniture", &people);
+        g.world.heirs[1].claim = Fx::from_int(80);
+        designate(&mut g, heir);
+        g
+    };
+    let (over, lawful) = (named(1), named(0));
+    for (a, v) in [
+        ("legitimacy", -10),
+        ("loyalty_nobles", -5),
+        ("loyalty_church", -5),
+    ] {
+        assert_eq!(axis(&over, a) - axis(&lawful, a), Fx::from_int(v), "{a}");
+    }
+    assert!(contested(&next_reign(&over).entries[0]));
+    assert!(!contested(&next_reign(&lawful).entries[0]));
+    let mut data = data.clone();
+    data.heirs.designate_dispute = Fx(0);
+    let mut g = game(&data, "law_primogeniture", &people);
+    g.world.heirs[1].claim = Fx::from_int(80);
+    designate(&mut g, 1);
+    assert!(!contested(&next_reign(&g).entries[0]));
+}
+
+/// The dispute's «Назначить младшего» names him for real (stage 16 question 1).
+#[test]
+fn the_heir_dispute_designates_the_younger() {
+    let mut data = data();
+    data.add_events(&read("events/heirs.ron")).unwrap();
+    let e = data.events.iter().find(|e| e.id == "heir_dispute").unwrap();
+    let younger = &e.choices[1].effects;
+    assert!(younger.contains(&bd_core::rules::Effect::HeirOp(
+        bd_core::rules::HeirOp::Designate(1)
+    )));
 }

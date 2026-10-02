@@ -296,6 +296,12 @@ pub struct HeirRules {
     /// Chance in percent that a child is a son.
     #[serde(default = "half")]
     pub male_percent: Fx,
+    /// Naming an heir other than the rightful one (`HeirOp::Designate`) shifts these axes
+    /// once, and his coronation is contested with `designate_dispute` percent more.
+    #[serde(default)]
+    pub designate_penalty: Vec<(AxisId, Fx)>,
+    #[serde(default)]
+    pub designate_dispute: Fx,
 }
 
 fn half() -> Fx {
@@ -801,6 +807,7 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
         .chain(&data.coronation.contested)
         .chain(&data.coronation.legitimacy_from_claim)
         .chain(&data.marriage.axes)
+        .chain(&data.heirs.designate_penalty)
         .map(|(a, _)| a);
     for a in [
         &data.action_slots.axis,
@@ -939,7 +946,7 @@ mod tests {
         data.add_events(NEIGHBOUR_EVENTS).unwrap();
         data.add_actions(ACTIONS).unwrap();
         assert_eq!(data.events.len(), 38);
-        assert_eq!(data.actions.len(), 18);
+        assert_eq!(data.actions.len(), 19);
         // Ids must be unique across files.
         assert!(matches!(
             data.add_events(EVENTS),

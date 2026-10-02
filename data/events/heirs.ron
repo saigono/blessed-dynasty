@@ -139,19 +139,15 @@
         target: None,
         choices: [
             (
+                // Designate costs heirs.designate_penalty when the law names the other.
                 text: "Назначить старшего",
-                effects: [HeirOp(Claim(0, 20)), HeirOp(Claim(1, -15)), Axis("loyalty_nobles", 3)],
+                effects: [HeirOp(Designate(0)), HeirOp(Claim(0, 20)), HeirOp(Claim(1, -15)), Axis("loyalty_nobles", 3)],
                 cause_tag: "dispute_elder",
                 hint: "Обойдённый не забывает обиды.",
             ),
             (
                 text: "Назначить младшего",
-                effects: [
-                    HeirOp(Claim(1, 25)),
-                    HeirOp(Claim(0, -20)),
-                    Axis("legitimacy", -5),
-                    Axis("loyalty_nobles", -5),
-                ],
+                effects: [HeirOp(Designate(1)), HeirOp(Claim(1, 25))],
                 cause_tag: "dispute_younger",
                 hint: "Нарушенный обычай отзывается смутой.",
             ),

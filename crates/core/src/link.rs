@@ -279,7 +279,8 @@ mod tests {
             .map(|s| (s, play(s, 80)))
             .find(|(_, g)| g.ended.is_none())
             .unwrap();
-        assert_eq!(g.decisions.len(), 80);
+        // An action and a choice in the last tick may make it 81.
+        assert!((80..=81).contains(&g.decisions.len()));
         // Every kind of step and target is in the journal.
         let shape = |d: &Decision| match &d.kind {
             DecisionKind::ActionStarted { target, .. } => match target {

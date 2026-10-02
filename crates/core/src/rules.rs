@@ -299,6 +299,10 @@ pub enum HeirOp {
     TargetRemove,
     /// The heir of the event or action is married from now on (`Heir.married`).
     TargetMarry,
+    /// The ruler names this heir to succeed him (`World.designated`); one not rightful
+    /// (`sim::rightful`) costs `heirs.designate_penalty`. Naming the named again is nothing.
+    Designate(u32),
+    TargetDesignate,
 }
 
 /// What an effect may touch besides the world.
@@ -389,6 +393,7 @@ impl Effect {
                     HeirOp::TargetAbility(d) => HeirOp::Ability(t, d),
                     HeirOp::TargetClaim(d) => HeirOp::Claim(t, d),
                     HeirOp::TargetRemove => HeirOp::Remove(t),
+                    HeirOp::TargetDesignate => HeirOp::Designate(t),
                     op => op,
                 };
                 match &op {
@@ -416,11 +421,26 @@ impl Effect {
                             h.claim = pct(h.claim + *d);
                         }
                     }
+                    HeirOp::Designate(i) => {
+                        let Some(id) = w.heirs.get(heir(i)).map(|h| h.id) else {
+                            return;
+                        };
+                        if w.designated == Some(id) {
+                            return;
+                        }
+                        w.designated = Some(id);
+                        if crate::sim::rightful(w, ctx.data) != Some(heir(i)) {
+                            for (a, v) in &ctx.data.heirs.designate_penalty {
+                                add_axis(w, ctx.data, a, *v);
+                            }
+                        }
+                    }
                     HeirOp::Remove(_) => {}
                     HeirOp::TargetStatus(_)
                     | HeirOp::TargetAbility(_)
                     | HeirOp::TargetClaim(_)
-                    | HeirOp::TargetRemove => {
+                    | HeirOp::TargetRemove
+                    | HeirOp::TargetDesignate => {
                         unreachable!("resolved above")
                     }
                 }

@@ -72,6 +72,9 @@ pub struct RulerRecord {
     pub end: Tick,
     /// The cause of the reign end; None when the dynasty fell under him or lives on.
     pub cause: Option<String>,
+    /// Crowned as the designated heir over the rightful one (`World.designated`).
+    #[serde(default)]
+    pub designated: bool,
 }
 
 /// Plays the dynasty from the end of the founder's reign. Simulation events
@@ -249,9 +252,12 @@ pub fn succession(w: &World, data: &Data, rng: &mut Rng) -> Option<Ruler> {
     })
 }
 
-/// Who succeeds now: `rightful`. None: nobody may.
+/// Who succeeds now: the designated heir (`World.designated`) while he lives and is no
+/// hostage, else `rightful`. None: nobody may.
 pub fn successor(w: &World, data: &Data) -> Option<usize> {
-    rightful(w, data)
+    let named = w.designated.and_then(|id| w.heir_index(id));
+    let home = named.filter(|i| !matches!(w.heirs[*i].status, HeirStatus::Hostage(_)));
+    home.or_else(|| rightful(w, data))
 }
 
 /// Who the rule of the law in force puts first (`SuccessionRule`); `next_heir` without
@@ -296,6 +302,7 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     let i = successor(w, d).expect("succession found one");
     let lawful = rightful(w, d) == Some(i);
     let mut heir = w.heirs.remove(i);
+    w.designated = None;
     if let Some(l) = d.heirs.law(w).filter(|_| lawful) {
         heir.claim = heir.claim.max(l.rightful_claim);
     }
@@ -328,7 +335,9 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
         let rivals = l.dispute_per_heir * Fx::from_int(w.heirs.len() as i64);
         let quarrel = rivals > Fx(0) && rng.range(0, Fx::from_int(100).0) < rivals.0;
         let queen = heir.sex == Sex::Female && l.female_heir.is_some();
-        if heir.claim < l.crisis_claim || quarrel || queen {
+        // Named over the rightful heir, who keeps his claim: a rival.
+        let named = !lawful && rng.range(0, Fx::from_int(100).0) < d.heirs.designate_dispute.0;
+        if heir.claim < l.crisis_claim || quarrel || queen || named {
             w.flags.insert(d.abdication.contested_flag.clone());
         }
     }
@@ -353,7 +362,10 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     if let Some(cheer) = cheer {
         told.1 = format!("{} {cheer}", told.1);
     }
-    c.rulers.push(record(&ruler));
+    c.rulers.push(RulerRecord {
+        designated: !lawful,
+        ..record(&ruler)
+    });
     w.ruler = ruler;
     (g.ended, g.reported) = (None, false);
     let causes = causes(&g.world, [MarkKey::Heir(heir.id)].into());
@@ -385,7 +397,9 @@ fn coronation(w: &mut World, d: &Data, claim: Fx, ruler: &Ruler) -> Option<Strin
     }
     let contested = w.flags.contains(&d.abdication.contested_flag);
     let law = d.heirs.law(w);
-    let queen = law.and_then(|l| l.female_heir.as_ref()).filter(|_| ruler.sex == Sex::Female);
+    let queen = law
+        .and_then(|l| l.female_heir.as_ref())
+        .filter(|_| ruler.sex == Sex::Female);
     let law = law.map_or(&[][..], |l| &l.coronation);
     let shifts = c.contested.iter().filter(|_| contested).chain(law);
     for (a, v) in shifts.chain(queen.into_iter().flatten()) {
@@ -472,6 +486,7 @@ fn record(r: &Ruler) -> RulerRecord {
         start: r.reign_start,
         end: r.reign_start,
         cause: None,
+        designated: false,
     }
 }
 
@@ -774,6 +789,16 @@ impl AutoChooser {
                     ("heir_ability", *d)
                 }
                 Effect::HeirOp(HeirOp::Claim(_, d) | HeirOp::TargetClaim(d)) => ("heir_claim", *d),
+                Effect::HeirOp(HeirOp::Designate(i)) => {
+                    // Only the penalty of naming one not rightful weighs.
+                    let named = w.heirs.get(*i as usize).map(|h| h.id);
+                    let rightful = rightful(w, data).map(|r| w.heirs[r].id);
+                    if named.is_some() && named != rightful && named != w.designated {
+                        let p = &data.heirs.designate_penalty;
+                        sum = p.iter().fold(sum, |s, (a, v)| s + self.weight(&a.0) * *v);
+                    }
+                    continue;
+                }
                 Effect::Chance(c) => {
                     let hit = c.percent(w) / Fx::from_int(100);
                     sum = sum + self.worth(&c.then, w, data, nb) * hit;
@@ -792,6 +817,7 @@ impl AutoChooser {
                     continue;
                 }
                 Effect::HeirOp(HeirOp::SetStatus(..) | HeirOp::TargetStatus(_))
+                | Effect::HeirOp(HeirOp::TargetDesignate)
                 | Effect::SpawnEvent(..)
                 | Effect::Clash
                 | Effect::EndWar(_)

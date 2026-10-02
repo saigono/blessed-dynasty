@@ -191,6 +191,10 @@ pub struct World {
     /// spouse (an heir dead, a ruler's reign over) or a war with that court.
     #[serde(default)]
     pub unions: BTreeMap<NeighbourId, Union>,
+    /// The heir the ruler named to succeed him (`Heir.id`, `HeirOp::Designate`), over the
+    /// rule of the law; cleared at a coronation.
+    #[serde(default)]
+    pub designated: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -280,6 +284,7 @@ impl World {
             kin: Vec::new(),
             deserted: 0,
             unions: BTreeMap::new(),
+            designated: None,
         };
         let r = &world.ruler;
         let founder = Kin {

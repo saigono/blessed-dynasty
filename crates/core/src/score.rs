@@ -47,7 +47,8 @@ pub struct Score {
 pub struct DecisiveDecision {
     pub decision_idx: usize,
     pub decision: Decision,
-    /// The weights of its marks over all entries, plus under `Good` events, minus otherwise.
+    /// The weights of its marks over all entries: plus under `Good` events and provinces
+    /// gained, minus under other events and provinces lost, none under a new ruler.
     pub weight: Fx,
 }
 
@@ -120,14 +121,27 @@ pub fn compute(c: &Chronicle, decisions: &[Decision], rules: &ScoreRules) -> Sco
 
     // decision -> (all its weight, signed weight)
     let mut by_decision: BTreeMap<usize, (Fx, Fx)> = BTreeMap::new();
+    // The realm before the tick of the entry, and (tick, realm) of the entry before.
+    let (mut earlier, mut last) = (None, None);
     for e in &c.entries {
+        let now = realm(&e.snapshot);
+        if let Some((tick, r)) = last
+            && tick < e.tick
+        {
+            earlier = Some(r);
+        }
+        last = Some((e.tick, now));
+        // An entry without an event is a province gained or lost, or a new ruler (neutral).
+        let sign = match (&e.event, earlier) {
+            (Some(_), _) if good(e) => 1,
+            (Some(_), _) => -1,
+            (None, Some(r)) => (now - r).signum(),
+            (None, None) => 0,
+        };
         for t in &e.causes {
             let (all, signed) = by_decision.entry(t.decision_idx).or_default();
             *all = *all + t.weight;
-            *signed = match good(e) {
-                true => *signed + t.weight,
-                false => *signed - t.weight,
-            };
+            *signed = *signed + Fx(t.weight.0 * sign);
         }
     }
     let mut decisive: Vec<_> = by_decision.into_iter().collect();
@@ -295,7 +309,7 @@ mod tests {
         let entries = vec![
             marked("good", vec![tag(1, 2000), tag(0, 500), tag(4, 100)]),
             marked("bad", vec![tag(0, 500), tag(2, 300), tag(3, 300)]),
-            // A new ruler or a province: no event, so not `Good`.
+            // A new ruler: no event and the same realm, neutral.
             ChronicleEntry {
                 causes: vec![tag(2, 100)],
                 ..entry(2, &w)
@@ -319,8 +333,42 @@ mod tests {
             .map(|d| (d.decision_idx, d.weight))
             .collect();
         // By all their weight: 1 (2.0), 0 (1.0, half good, half bad), 2 (0.4); 3 (0.3) is out.
-        assert_eq!(got, [(1, Fx(2000)), (0, Fx(0)), (2, Fx(-400))]);
+        assert_eq!(got, [(1, Fx(2000)), (0, Fx(0)), (2, Fx(-300))]);
         assert_eq!(s.decisive[0].decision, decisions[1]);
+    }
+
+    #[test]
+    fn entries_without_an_event_are_signed_by_the_realm() {
+        let tagged = |year: u32, provinces: usize, idx: usize| ChronicleEntry {
+            causes: vec![CauseTag {
+                decision_idx: idx,
+                cause_tag: String::new(),
+                weight: Fx::from_int(1),
+            }],
+            ..entry(year, &world(provinces, 0))
+        };
+        let entries = vec![
+            tagged(0, 10, 0), // the first entry: nothing earlier, neutral
+            tagged(5, 11, 1), // a province gained
+            tagged(6, 9, 2),  // two lost in one tick: both against the realm of year 5
+            tagged(6, 9, 3),
+            tagged(7, 9, 4), // a new ruler
+        ];
+        let decisions: Vec<Decision> = (0..5)
+            .map(|i| Decision {
+                tick: Tick(i),
+                kind: DecisionKind::Abdicate,
+                cause_tag: String::new(),
+            })
+            .collect();
+        let c = chronicle(10, FallReason::NoHeir, entries);
+        let s = compute(&c, &decisions, &rules());
+        let got: Vec<(usize, Fx)> = s
+            .decisive
+            .iter()
+            .map(|d| (d.decision_idx, d.weight))
+            .collect();
+        assert_eq!(got, [(0, Fx(0)), (1, Fx(1000)), (2, Fx(-1000))]);
     }
 
     #[test]

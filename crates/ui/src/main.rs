@@ -107,6 +107,8 @@ impl App {
                 .insert(0, "dejavu".into());
         }
         ctx.set_fonts(fonts);
+        // The web build would follow the system theme; the palette is light only.
+        ctx.set_theme(egui::Theme::Light);
         ctx.set_visuals(egui::Visuals {
             panel_fill: BG,
             window_fill: BG,
@@ -474,28 +476,26 @@ fn side(ui: &mut Ui, g: &Game) {
         ui.vertical(|ui| {
             ui.strong(&w.ruler.name);
             let health = round(w.ruler.health);
-            bar(
-                ui,
-                "Здоровье",
-                w.ruler.health,
-                Fx(0),
-                Fx::from_int(100),
-                &health,
-            );
+            Grid::new("health").show(ui, |ui| {
+                bar(
+                    ui,
+                    "Здоровье",
+                    w.ruler.health,
+                    Fx(0),
+                    Fx::from_int(100),
+                    &health,
+                )
+            });
             ui.small(format!("{} {}", w.ruler.age, years(w.ruler.age)));
         });
     });
     heading(ui, "Состояние");
-    for a in &d.axes {
-        bar(
-            ui,
-            axis_name(&a.id),
-            w.axes[&a.id],
-            a.min,
-            a.max,
-            &round(w.axes[&a.id]),
-        );
-    }
+    Grid::new("axes").show(ui, |ui| {
+        for a in &d.axes {
+            let v = w.axes[&a.id];
+            bar(ui, axis_name(&a.id), v, a.min, a.max, &round(v));
+        }
+    });
     heading(ui, "Наследники");
     if w.heirs.is_empty() {
         ui.label("нет");
@@ -522,18 +522,14 @@ fn side(ui: &mut Ui, g: &Game) {
         }
     });
     heading(ui, "Соседи");
-    for n in w.neighbours.values() {
-        let sign = if n.relation > Fx(0) { "+" } else { "" };
-        let value = format!("{sign}{}", round(n.relation));
-        bar(
-            ui,
-            &n.name,
-            n.relation,
-            Fx::from_int(-100),
-            Fx::from_int(100),
-            &value,
-        );
-    }
+    Grid::new("neighbours").show(ui, |ui| {
+        for n in w.neighbours.values() {
+            let sign = if n.relation > Fx(0) { "+" } else { "" };
+            let value = format!("{sign}{}", round(n.relation));
+            let (lo, hi) = (Fx::from_int(-100), Fx::from_int(100));
+            bar(ui, &n.name, n.relation, lo, hi, &value);
+        }
+    });
 }
 
 fn heading(ui: &mut Ui, text: &str) {
@@ -551,7 +547,7 @@ fn key_rtl(ui: &mut Ui, k: &str, v: &str) {
     ui.label(RichText::new(k).color(FG2));
 }
 
-/// A labelled bar; the colour goes from bad to good with the share of the range.
+/// A grid row with a labelled bar; the colour goes from bad to good with the share of the range.
 fn bar(ui: &mut Ui, label: &str, v: Fx, min: Fx, max: Fx, value: &str) {
     let share = ((v - min).0 as f32 / (max - min).0.max(1) as f32).clamp(0.0, 1.0);
     let color = match share {
@@ -559,17 +555,11 @@ fn bar(ui: &mut Ui, label: &str, v: Fx, min: Fx, max: Fx, value: &str) {
         s if s < 0.55 => WARN,
         _ => GOOD,
     };
-    ui.horizontal(|ui| {
-        let label = egui::Label::new(RichText::new(label).small()).truncate();
-        ui.add_sized([96.0, 14.0], label);
-        ui.add(
-            ProgressBar::new(share)
-                .fill(color)
-                .desired_width(110.0)
-                .desired_height(6.0),
-        );
-        ui.small(value);
-    });
+    ui.small(label);
+    let bar = ProgressBar::new(share).fill(color).desired_width(110.0);
+    ui.add(bar.desired_height(6.0));
+    ui.small(value);
+    ui.end_row();
 }
 
 fn axis_name(id: &AxisId) -> &str {
@@ -662,12 +652,13 @@ fn main() {
         .dyn_into::<eframe::web_sys::HtmlCanvasElement>()
         .expect("a canvas");
     wasm_bindgen_futures::spawn_local(async {
-        let start = eframe::WebRunner::new().start(
-            canvas,
-            eframe::WebOptions::default(),
-            Box::new(|cc| Ok(Box::new(App::new(&cc.egui_ctx)))),
-        );
-        start.await.expect("eframe starts");
+        let app: eframe::AppCreator = Box::new(|cc| Ok(Box::new(App::new(&cc.egui_ctx))));
+        let options = eframe::WebOptions::default();
+        let runner = eframe::WebRunner::new();
+        runner
+            .start(canvas, options, app)
+            .await
+            .expect("eframe starts");
     });
 }
 
@@ -925,6 +916,8 @@ mod tests {
     }
 
     /// Slow: builds the release wasm. `cargo test -p ui -- --ignored`.
+    /// Counts what the browser loads: custom sections (names, wasm-bindgen's own) are
+    /// stripped by wasm-bindgen in `trunk build --release`.
     #[test]
     #[ignore]
     fn wasm_release_fits_8_mb() {
@@ -948,8 +941,27 @@ mod tests {
             .unwrap();
         assert!(status.success());
         let wasm = format!("{dir}/wasm32-unknown-unknown/release/ui.wasm");
-        let size = std::fs::metadata(wasm).unwrap().len();
-        eprintln!("ui.wasm: {size} bytes");
+        let bytes = std::fs::read(wasm).unwrap();
+        // Sections after the 8-byte header: id, LEB128 length, payload; id 0 is custom.
+        let (mut i, mut size) = (8, 0);
+        while i < bytes.len() {
+            let id = bytes[i];
+            let (mut len, mut shift) = (0usize, 0);
+            loop {
+                i += 1;
+                len |= ((bytes[i] & 0x7f) as usize) << shift;
+                shift += 7;
+                if bytes[i] < 0x80 {
+                    break;
+                }
+            }
+            i += 1 + len;
+            size += if id == 0 { 0 } else { len };
+        }
+        eprintln!(
+            "ui.wasm: {} bytes, {size} without custom sections",
+            bytes.len()
+        );
         assert!(size <= 8 * 1024 * 1024, "{size} bytes");
     }
 }

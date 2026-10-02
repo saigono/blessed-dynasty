@@ -5,7 +5,8 @@ edition.workspace = true
 
 [dependencies]
 core = { path = "../core" }
-eframe = "0.36"
+# glow: wgpu finds no adapter on GL-only machines, and the wasm is smaller.
+eframe = { version = "0.36", default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland", "x11"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4"

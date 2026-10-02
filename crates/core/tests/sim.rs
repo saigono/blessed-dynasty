@@ -133,7 +133,7 @@ fn golden_seed_42_script_a() {
 
 /// 1000 dynasties, each after a neutral reign of its own seed.
 #[test]
-#[ignore = "about a minute in the test profile; stage 6 acceptance, run with --ignored"]
+#[ignore = "takes about two minutes in the test profile; stage 6 acceptance, run with --ignored"]
 fn thousand_dynasties_end() {
     dynasties(1000);
 }

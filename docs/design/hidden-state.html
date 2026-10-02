@@ -1,0 +1,753 @@
+<title>Скрытый механизм королевства</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alegreya:wght@500;700&family=Alegreya+Sans:ital,wght@0,400;0,500;0,700;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column of ~66ch inside a wider sheet; tables, the graph and cards may use the full sheet width. */
+:root {
+  --bg: #f1f2ee;      /* stone vellum */
+  --panel: #e4e5df;   /* ledger panel, hidden nodes */
+  --ink: #221f1b;     /* iron-gall ink */
+  --muted: #625d55;
+  --line: #cbc7be;
+  --accent: #2c4b7a;  /* lapis: section numbers, links */
+  --plus: #2c6a5b;    /* verdigris: raises */
+  --minus: #a03a29;   /* madder rubric: lowers */
+  --f-display: "Alegreya", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --f-body: "Alegreya Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15171a; --panel: #202328; --ink: #e8e5de; --muted: #a39e95; --line: #3a3e44;
+    --accent: #94b4e9; --plus: #6cc3ac; --minus: #ee8b78;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15171a; --panel: #202328; --ink: #e8e5de; --muted: #a39e95; --line: #3a3e44;
+  --accent: #94b4e9; --plus: #6cc3ac; --minus: #ee8b78;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 1.0625rem/1.6 var(--f-body);
+  margin: 0;
+}
+.sheet {
+  max-width: 1060px;
+  margin: 0 auto;
+  padding-inline: 20px;
+  padding-block: 44px 96px;
+}
+@media (max-width: 480px) { .sheet { padding-inline: 16px; padding-block: 28px 64px; } }
+
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; line-height: 1.15; margin: 0; }
+h1 { font-weight: 700; font-size: clamp(2rem, 5vw, 2.9rem); letter-spacing: -0.01em; }
+h2 { font-weight: 700; font-size: clamp(1.45rem, 3.2vw, 1.8rem); display: flex; gap: 0.6em; align-items: baseline; }
+h2 .no { color: var(--accent); font-variant-numeric: tabular-nums; min-width: 1.6em; }
+h3 { font-family: var(--f-body); font-weight: 700; font-size: 1.08rem; letter-spacing: 0.01em; }
+p, ul, ol, dl { margin: 0; }
+.prose { display: grid; gap: 0.85rem; max-width: 66ch; }
+.prose ul, .prose ol { padding-left: 1.2em; display: grid; gap: 0.4rem; }
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+code, .id { font-family: var(--f-mono); font-size: 0.84em; letter-spacing: 0; }
+strong { font-weight: 700; }
+.muted { color: var(--muted); }
+.eyebrow {
+  font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); font-weight: 500;
+}
+.calib { font-size: 0.8rem; color: var(--muted); font-style: italic; }
+
+header.top { display: grid; gap: 1rem; padding-bottom: 2rem; border-bottom: 1px solid var(--line); }
+.lede { font-size: 1.2rem; line-height: 1.5; max-width: 60ch; }
+.meta { display: flex; flex-wrap: wrap; gap: 0.4rem 1.4rem; font-size: 0.88rem; color: var(--muted); }
+
+nav.toc { padding-block: 1.6rem; border-bottom: 1px solid var(--line); }
+nav.toc ol {
+  list-style: none; padding: 0; margin: 0;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr)); gap: 0.3rem 1.6rem;
+  counter-reset: toc;
+}
+nav.toc li { counter-increment: toc; display: flex; gap: 0.6em; }
+nav.toc li::before { content: counter(toc); color: var(--accent); font-variant-numeric: tabular-nums; min-width: 1.4em; font-family: var(--f-display); font-weight: 700; }
+nav.toc a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--line); }
+nav.toc a:hover { border-bottom-color: var(--accent); }
+
+section { display: grid; gap: 1.1rem; padding-block: 2.6rem 0.4rem; }
+section > * { min-width: 0; }
+
+.scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+table { border-collapse: collapse; width: 100%; font-size: 0.93rem; line-height: 1.45; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; vertical-align: top; padding: 0.55rem 0.7rem; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: 0; }
+thead th { font-weight: 700; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); background: var(--panel); white-space: nowrap; }
+td.n, th.n { text-align: right; white-space: nowrap; }
+.t-wide { min-width: 860px; }
+.t-mid { min-width: 680px; }
+.t-sub { font-weight: 700; background: var(--panel); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); }
+
+.kind { display: inline-block; font-size: 0.76rem; font-weight: 500; padding: 0.05rem 0.45rem; border-radius: 3px; border: 1px solid var(--line); white-space: nowrap; }
+.kind.hid { border-style: dashed; background: var(--panel); }
+.kind.der { border-color: var(--accent); color: var(--accent); }
+.sg-p { color: var(--plus); font-weight: 700; }
+.sg-m { color: var(--minus); font-weight: 700; }
+.tag { display: inline-block; font-size: 0.74rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; padding: 0.1rem 0.5rem; border-radius: 3px; }
+.tag.av { color: var(--minus); border: 1px solid var(--minus); }
+.tag.st { color: var(--plus); border: 1px solid var(--plus); }
+
+figure { margin: 0; display: grid; gap: 0.7rem; }
+figcaption { font-size: 0.9rem; color: var(--muted); max-width: 72ch; }
+.graph { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+.graph svg { display: block; width: 100%; min-width: 660px; height: auto; }
+.graph .e { stroke-width: 1.5; fill: none; }
+.graph .e-loop { stroke-width: 2.6; }
+.graph .e-p { stroke: var(--plus); }
+.graph .e-m { stroke: var(--minus); }
+.graph .e-flow { stroke-dasharray: 6 4; }
+.graph .mk-p { fill: var(--plus); }
+.graph .mk-m { fill: var(--minus); }
+.graph .n { stroke: var(--ink); stroke-width: 1.6; }
+.graph .n-vis { fill: var(--bg); }
+.graph .n-hid { fill: var(--panel); stroke-dasharray: 4 3; }
+.graph .nt { fill: var(--ink); font: 500 13px var(--f-body); }
+.graph .lbg { fill: var(--bg); stroke: none; }
+.graph .lb { font: 500 11px var(--f-mono); }
+.graph .lb-p { fill: var(--plus); }
+.graph .lb-m { fill: var(--minus); }
+.graph .z { stroke-width: 1; stroke-dasharray: 3 3; }
+.graph .z-av { fill: color-mix(in srgb, var(--minus) 9%, transparent); stroke: var(--minus); }
+.graph .z-st { fill: color-mix(in srgb, var(--plus) 10%, transparent); stroke: var(--plus); }
+.graph .zt { font: 700 12px var(--f-body); letter-spacing: 0.06em; }
+.graph .zt-av { fill: var(--minus); }
+.graph .zt-st { fill: var(--plus); }
+.graph .sbox { fill: var(--panel); stroke: var(--line); }
+.graph .st-h { fill: var(--ink); font: 700 13px var(--f-body); }
+.graph .st-t { fill: var(--ink); font: 400 12px var(--f-mono); }
+.graph .st-s { fill: var(--muted); font: 400 11px var(--f-body); }
+.graph .lg { fill: var(--ink); font: 400 12px var(--f-body); }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr)); gap: 1rem; }
+.card { border: 1px solid var(--line); border-radius: 6px; padding: 1rem 1.1rem 1.1rem; display: grid; gap: 0.7rem; align-content: start; }
+.card-h { display: flex; flex-wrap: wrap; gap: 0.5rem 0.8rem; align-items: baseline; }
+.card-h h3 { font-family: var(--f-display); font-size: 1.25rem; }
+.chain { font-family: var(--f-mono); font-size: 0.82rem; line-height: 1.55; background: var(--panel); padding: 0.5rem 0.7rem; border-radius: 4px; overflow-wrap: anywhere; }
+dl.kv { display: grid; grid-template-columns: 7.2rem 1fr; gap: 0.35rem 0.9rem; font-size: 0.94rem; }
+dl.kv dt { color: var(--muted); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.06em; padding-top: 0.15rem; }
+dl.kv dd { margin: 0; min-width: 0; }
+@media (max-width: 480px) { dl.kv { grid-template-columns: 1fr; gap: 0.1rem; } dl.kv dd { margin-bottom: 0.4rem; } }
+
+ol.years { list-style: none; padding: 0; display: grid; gap: 0; border-left: 2px solid var(--line); margin-left: 0.3rem; }
+ol.years li { display: grid; grid-template-columns: 5.6rem 1fr; gap: 0.8rem; padding: 0.35rem 0 0.35rem 0.9rem; font-size: 0.95rem; }
+ol.years .y { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--accent); white-space: nowrap; }
+ol.years li.bad .y { color: var(--minus); }
+ol.years li.good .y { color: var(--plus); }
+@media (max-width: 480px) { ol.years li { grid-template-columns: 1fr; gap: 0; } }
+
+.mock { border: 1px solid var(--line); border-radius: 6px; background: var(--panel); padding: 0.4rem 0; font-size: 0.93rem; max-width: 46rem; }
+.mock-row { display: grid; grid-template-columns: 8.5rem 3rem 1fr; gap: 0.3rem 0.8rem; padding: 0.5rem 0.9rem; border-bottom: 1px solid var(--line); align-items: baseline; }
+.mock-row:last-child { border-bottom: 0; }
+.mock-row .nm { font-weight: 700; }
+.mock-row .v { font-variant-numeric: tabular-nums; text-align: right; }
+.mock-row .why { color: var(--muted); }
+.mock-row .why b { color: var(--ink); font-weight: 500; }
+.mock-row.hidden .nm { font-weight: 500; font-style: italic; }
+@media (max-width: 480px) { .mock-row { grid-template-columns: 1fr auto; } .mock-row .why { grid-column: 1 / -1; } }
+
+.stage { border-top: 2px solid var(--ink); padding-top: 0.9rem; display: grid; gap: 0.6rem; max-width: 72ch; }
+.stage h3 { font-family: var(--f-display); font-size: 1.25rem; }
+.stage h4 { margin: 0; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 700; }
+.stage ul { padding-left: 1.2em; display: grid; gap: 0.3rem; margin: 0; }
+.stages { display: grid; gap: 2rem; }
+
+.qa { display: grid; gap: 1.1rem; max-width: 72ch; padding: 0; list-style: none; counter-reset: q; }
+.qa li { counter-increment: q; display: grid; grid-template-columns: 2rem 1fr; gap: 0.2rem 0.6rem; }
+.qa li::before { content: counter(q); grid-row: span 2; font-family: var(--f-display); font-weight: 700; color: var(--accent); font-size: 1.2rem; line-height: 1.3; }
+.qa .rec { color: var(--muted); }
+.qa .rec b { color: var(--plus); font-weight: 700; }
+
+footer { margin-top: 3rem; padding-top: 1.2rem; border-top: 1px solid var(--line); font-size: 0.85rem; color: var(--muted); }
+</style>
+
+<div class="sheet">
+
+<header class="top">
+  <div class="eyebrow">Blessed Dynasty · предложение к дизайну · после этапа 16</div>
+  <h1>Скрытый механизм королевства</h1>
+  <p class="lede">Основатель должен задавать не значения осей, а точку, к которой королевство возвращается. Законы правят граф влияний между явными и скрытыми узлами. Граф переживает правителя и через несколько поколений приводит либо к лавине, либо к долгой стабильности.</p>
+  <div class="meta">
+    <span>2 октября 2026</span>
+    <span>Опора: <code>data/rules.ron</code>, <code>docs/calibration.md</code>, Геймтест.md, этап 16</span>
+    <span>Все числа стартовые, для калибровки прогоном <code>batch</code></span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Разделы">
+  <ol>
+    <li><a href="#problem">Проблема и цель</a></li>
+    <li><a href="#nodes">Узлы</a></li>
+    <li><a href="#graph">Граф влияний</a></li>
+    <li><a href="#loops">Петли</a></li>
+    <li><a href="#laws">Законы-институты</a></li>
+    <li><a href="#scenarios">Три сценария</a></li>
+    <li><a href="#transparency">Прозрачность для игрока</a></li>
+    <li><a href="#code">Как это ложится в код</a></li>
+    <li><a href="#risks">Риски и калибровка</a></li>
+    <li><a href="#plan">План этапов</a></li>
+    <li><a href="#questions">Открытые вопросы</a></li>
+  </ol>
+</nav>
+
+<!-- 1 -->
+<section id="problem">
+  <h2><span class="no">1</span>Проблема и цель</h2>
+  <div class="prose">
+    <p>Сейчас почти любое решение даёт разовый сдвиг оси, а механика сама стирает этот сдвиг. Это видно и в данных, и в прогонах:</p>
+    <ul>
+      <li><code>drift.step: 1</code>. Фракционные оси каждый год сползают на 1 к <code>default</code>, поэтому +10 знати от события исчезают за 10 лет. Этап 16 добавит при каждом воцарении ещё <code>coronation.reset</code> 0.3.</li>
+      <li>Метки решений гаснут с <code>sim.decay</code> 0.97 в год. Намёк пропадает из хроники, когда вес падает ниже <code>hint_weight</code> 0.3, то есть через 40 лет после решения (0.97<sup>40</sup> ≈ 0.30). Династия при этом живёт 100–300 лет.</li>
+      <li>В calibration.md, в разделе «Что не удалось»: <code>crown_all</code> и <code>builder</code> почти не отличаются от <code>neutral</code>, потому что «основатель правит около 35 лет из 200–300, дальше у всех один автомат». Медианы счёта этапа 15: 15853, 14913 и 14198.</li>
+      <li>У стабильности нет своей динамики. Её двигают 20 вариантов событий напрямую, на величину от −10 до +3. По комментарию в <code>sim.ron</code> в симуляции она держится в пределах 30..70.</li>
+      <li>В Геймтест.md владелец пишет: «В целом скучновато играть», «Непонятно, какой текущий закон наследований», «Совсем непонятно что даёт дорога».</li>
+    </ul>
+    <p><strong>Цель.</strong> Решение основателя должно сдвигать точку равновесия, а не текущее значение. Законы и институты держат скрытые узлы у новых якорей. Узлы двигают друг друга, и через поколения из этого вырастает либо порядок, либо обвал, который игрок мог предвидеть.</p>
+    <p><strong>Проверяемо так:</strong> разные наборы законов основателя через 150 лет дают разные равновесия скрытых узлов. Счёт и причины падения расходятся не меньше чем на 15%, как в критерии 8b. Причину падения через 100 лет хроника прослеживает по графу до указа основателя.</p>
+  </div>
+</section>
+
+<!-- 2 -->
+<section id="nodes">
+  <h2><span class="no">2</span>Узлы</h2>
+  <div class="prose">
+    <p>У каждого узла есть значение, <em>якорь</em> и <em>шаг</em>. Якорь задают <code>default</code> и законы. Цель узла равна якорю плюс сумме вкладов входящих рёбер. Каждый год узел идёт к цели не дальше своего шага. Медленные узлы за правление основателя почти не двигаются, зато их вектор виден сразу.</p>
+  </div>
+
+  <h3>Существующие оси</h3>
+  <div class="scroll">
+  <table class="t-wide">
+    <thead><tr><th>id</th><th>Имя</th><th>Вид</th><th>Диапазон</th><th>Что меняется</th></tr></thead>
+    <tbody>
+      <tr><td class="id">stability</td><td>Стабильность</td><td><span class="kind der">производная</span></td><td class="n">0..100</td><td>Считается каждый год: 50 + 0.6·(лояльность − 50) + 0.4·(легитимность − 50) − ересь + потрясения. Ересь задаётся кривой по единоверию: 0 при 60 и выше, 5 при 45, 12 при 30, 20 при 15. Закон веры умножает ересь. Потрясения — отдельный запас: события пишут туда, и он гаснет на 3 в год, как <code>crown_modifiers</code>.</td></tr>
+      <tr><td class="id">loyalty</td><td>Лояльность</td><td><span class="kind der">производная</span></td><td class="n">0..100</td><td>Без изменений: средневзвешенное фракций (знать ×2).</td></tr>
+      <tr><td class="id">loyalty_nobles<br>loyalty_church<br>loyalty_people</td><td>Знать<br>Церковь<br>Народ</td><td><span class="kind">явный, к цели</span></td><td class="n">0..100</td><td>Шаг 1 в год, как сейчас, но к цели графа: <code>default</code>, плюс сдвиги законов, плюс рёбра e5, e16, e6 и e12. События по-прежнему толкают их напрямую, и толчок гаснет уже к новой цели.</td></tr>
+      <tr><td class="id">legitimacy</td><td>Легитимность</td><td><span class="kind">явный, запас</span></td><td class="n">0..100</td><td>Остаётся личной: претензия при воцарении (этап 16) и события. В граф входит только как вход стабильности. См. вопрос 2.</td></tr>
+      <tr><td class="id">bureaucracy</td><td>Бюрократия</td><td><span class="kind">явный, запас</span></td><td class="n">0..100</td><td>Действия и события, плюс поток от грамотности (e18). Даёт слоты и предел владений, а теперь ещё открывает скрытые узлы (раздел 7).</td></tr>
+      <tr><td class="id">treasury</td><td>Казна</td><td><span class="kind">явный, запас</span></td><td class="n">−1000..10000</td><td>Потоки: доход (как сейчас) и торговля (e13).</td></tr>
+      <tr><td class="id">income, army, prestige</td><td>Доход, армия, престиж</td><td><span class="kind">явный, запас</span></td><td class="n"></td><td>Без изменений.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Новые скрытые узлы</h3>
+  <div class="scroll">
+  <table class="t-wide">
+    <thead><tr><th>id</th><th>Имя</th><th class="n">Старт</th><th class="n">Шаг / год<br>(за 30 лет)</th><th>Что означает</th><th>Что двигает</th></tr></thead>
+    <tbody>
+      <tr><td class="id">serfdom</td><td>Закрепощение</td><td class="n">30</td><td class="n">0.4 (12)</td><td>Барщина и прикрепление к земле. 0 — вольные крестьяне, 100 — полная крепость.</td><td>e4 от знати; законы «Крепостное право» и «Вольные крестьяне»; «Знать требует»; исход «Мужицкой войны».</td></tr>
+      <tr><td class="id">strata</td><td>Расслоение</td><td class="n">40</td><td class="n">0.4 (12)</td><td>Гнёт сословий: разрыв между господином и тяглецом.</td><td>e1, e3; «Десятина», «Свод законов»; неурожаи и войны.</td></tr>
+      <tr><td class="id">mobility</td><td>Подвижность сословий</td><td class="n">40</td><td class="n">0.5 (15)</td><td>Можно ли выбиться в цех, в клир, в писцы.</td><td>e2, e8, e17.</td></tr>
+      <tr><td class="id">liberties</td><td>Городские вольности</td><td class="n">15</td><td class="n">0.6 (18)</td><td>Самоуправление городов, цеховой и городской суд, правовая культура.</td><td>e7; закон «Городские вольности»; «Гильдии просят хартию».</td></tr>
+      <tr><td class="id">trade</td><td>Торговля</td><td class="n">30</td><td class="n">1.5 (45)</td><td>Подвоз, ярмарки, купцы.</td><td>e9, e11; «Ярмарочное право», «Терпимость»; войны и разбойники.</td></tr>
+      <tr><td class="id">grain</td><td>Хлебные запасы</td><td class="n">50</td><td class="n">5 (весь)</td><td>Запасы в амбарах. Ниже 30 — голод.</td><td>e10; «Королевские житницы»; неурожай, засуха, наводнение.</td></tr>
+      <tr><td class="id">literacy</td><td>Грамотность</td><td class="n">10</td><td class="n">0.25 (7.5)</td><td>Доля читающих вне клира.</td><td>e15; «Монастырские школы», «Городские вольности».</td></tr>
+      <tr><td class="id">faith</td><td>Единоверие</td><td class="n">65</td><td class="n">0.5 (15)</td><td>Единство веры. Ниже 60 растёт ересь, ниже 40 начинается раскол.</td><td>e14; «Единоверие», «Терпимость», «Десятина»; «Ересь», «Секта растёт».</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="calib">Старт, шаги и пороги стартовые, калибруются прогоном. Правосудие отдельным узлом не стал: его роль делят «Свод законов» и «Городские вольности» (вопрос 7).</p>
+</section>
+
+<!-- 3 -->
+<section id="graph">
+  <h2><span class="no">3</span>Граф влияний</h2>
+  <div class="prose">
+    <p>Ребро задаёт, откуда и куда идёт влияние, силу <em>k</em>, точку покоя источника, необязательную кривую и задержку. Вклад ребра в цель равен <em>k</em>·(источник − покой), а если кривая задана, вклад берётся по ней. При задержке τ источник читается сглаженным за τ лет. Ребро-<em>поток</em> устроено иначе: оно каждый год прибавляет к запасу, как сейчас <code>economy.flows</code>.</p>
+    <p>Петля усиливает отклонение примерно в 1/(1 − g) раз, где g — произведение <em>k</em> по петле. При g ≥ 1 узлы уходят до насыщения кривой. Поэтому петля-лавина — это петля, которой закон поднял g к единице.</p>
+  </div>
+  <figure>
+    <div class="graph"><svg viewBox="0 0 860 600" width="860" height="600" role="img" aria-label="Граф влияний: 13 узлов, 18 рёбер. Три петли-лавины: знать и закрепощение, расслоение и подвижность, грамотность и единоверие. Два стабилизатора: хлеб и торговля, вольный город.">
+<defs>
+<marker id="ap" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path class="mk-p" d="M0,0 L10,5 L0,10 z"/></marker>
+<marker id="am" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path class="mk-m" d="M0,0 L10,5 L0,10 z"/></marker>
+</defs>
+<rect class="z z-av" x="26" y="147" width="128" height="210" rx="14"/>
+<text class="zt zt-av" x="34" y="141">П2</text>
+<rect class="z z-av" x="196" y="147" width="128" height="210" rx="14"/>
+<text class="zt zt-av" x="204" y="141">П1</text>
+<rect class="z z-av" x="366" y="147" width="298" height="70" rx="14"/>
+<text class="zt zt-av" x="374" y="141">П3</text>
+<rect class="z z-st" x="536" y="287" width="128" height="210" rx="14"/>
+<text class="zt zt-st" x="544" y="281">С1</text>
+<text class="zt zt-st" x="288" y="292">С2</text>
+<line class="e e-p" x1="144.0" y1="322.0" x2="206.0" y2="322.0" marker-end="url(#ap)"/>
+<line class="e e-m e-loop" x1="268.0" y1="299.3" x2="268.0" y2="204.7" marker-end="url(#am)"/>
+<line class="e e-m e-loop" x1="252.0" y1="204.7" x2="252.0" y2="299.3" marker-end="url(#am)"/>
+<line class="e e-p e-loop" x1="82.0" y1="204.7" x2="82.0" y2="299.3" marker-end="url(#ap)"/>
+<line class="e e-p e-loop" x1="98.0" y1="299.3" x2="98.0" y2="204.7" marker-end="url(#ap)"/>
+<line class="e e-m" x1="284.8" y1="342.4" x2="405.2" y2="441.6" marker-end="url(#am)"/>
+<line class="e e-p e-loop" x1="314.0" y1="322.0" x2="376.0" y2="322.0" marker-end="url(#ap)"/>
+<line class="e e-p e-loop" x1="405.2" y1="301.6" x2="284.8" y2="202.4" marker-end="url(#ap)"/>
+<line class="e e-p" x1="484.0" y1="322.0" x2="546.0" y2="322.0" marker-end="url(#ap)"/>
+<line class="e e-p e-loop" x1="592.0" y1="344.7" x2="592.0" y2="439.3" marker-end="url(#ap)"/>
+<line class="e e-m e-loop" x1="608.0" y1="439.3" x2="608.0" y2="344.7" marker-end="url(#am)"/>
+<line class="e e-p" x1="546.0" y1="462.0" x2="484.0" y2="462.0" marker-end="url(#ap)"/>
+<line class="e e-p e-flow" x1="654.0" y1="322.0" x2="716.0" y2="322.0" marker-end="url(#ap)"/>
+<line class="e e-m e-loop" x1="480.6" y1="190.0" x2="549.4" y2="190.0" marker-end="url(#am)"/>
+<line class="e e-m e-loop" x1="549.4" y1="174.0" x2="480.6" y2="174.0" marker-end="url(#am)"/>
+<line class="e e-p" x1="654.0" y1="182.0" x2="716.0" y2="182.0" marker-end="url(#ap)"/>
+<line class="e e-p" x1="376.0" y1="182.0" x2="314.0" y2="182.0" marker-end="url(#ap)"/>
+<line class="e e-p e-flow" x1="430.0" y1="159.0" x2="430.0" y2="75.0" marker-end="url(#ap)"/>
+<ellipse class="n n-vis" cx="430" cy="52" rx="54" ry="23"/>
+<text class="nt" x="430" y="56.5" text-anchor="middle">Бюрократия</text>
+<ellipse class="n n-vis" cx="90" cy="182" rx="54" ry="23"/>
+<text class="nt" x="90" y="186.5" text-anchor="middle">Знать</text>
+<ellipse class="n n-hid" cx="260" cy="182" rx="54" ry="23"/>
+<text class="nt" x="260" y="186.5" text-anchor="middle">Подвижность</text>
+<ellipse class="n n-hid" cx="430" cy="182" rx="54" ry="23"/>
+<text class="nt" x="430" y="186.5" text-anchor="middle">Грамотность</text>
+<ellipse class="n n-hid" cx="600" cy="182" rx="54" ry="23"/>
+<text class="nt" x="600" y="186.5" text-anchor="middle">Единоверие</text>
+<ellipse class="n n-vis" cx="770" cy="182" rx="54" ry="23"/>
+<text class="nt" x="770" y="186.5" text-anchor="middle">Церковь</text>
+<ellipse class="n n-hid" cx="90" cy="322" rx="54" ry="23"/>
+<text class="nt" x="90" y="326.5" text-anchor="middle">Закрепощение</text>
+<ellipse class="n n-hid" cx="260" cy="322" rx="54" ry="23"/>
+<text class="nt" x="260" y="326.5" text-anchor="middle">Расслоение</text>
+<ellipse class="n n-hid" cx="430" cy="322" rx="54" ry="23"/>
+<text class="nt" x="430" y="326.5" text-anchor="middle">Вольности</text>
+<ellipse class="n n-hid" cx="600" cy="322" rx="54" ry="23"/>
+<text class="nt" x="600" y="326.5" text-anchor="middle">Торговля</text>
+<ellipse class="n n-vis" cx="770" cy="322" rx="54" ry="23"/>
+<text class="nt" x="770" y="326.5" text-anchor="middle">Казна</text>
+<ellipse class="n n-hid" cx="600" cy="462" rx="54" ry="23"/>
+<text class="nt" x="600" y="466.5" text-anchor="middle">Хлеб</text>
+<ellipse class="n n-vis" cx="430" cy="462" rx="54" ry="23"/>
+<text class="nt" x="430" y="466.5" text-anchor="middle">Народ</text>
+<rect class="lbg" x="159.2" y="302.0" width="31.6" height="16" rx="3"/><text class="lb lb-p" x="175.0" y="314.0" text-anchor="middle">+0.5</text>
+<rect class="lbg" x="280.0" y="244.0" width="38.0" height="16" rx="3"/><text class="lb lb-m" x="299.0" y="256.0" text-anchor="middle">−0.75</text>
+<rect class="lbg" x="208.4" y="244.0" width="31.6" height="16" rx="3"/><text class="lb lb-m" x="224.2" y="256.0" text-anchor="middle">−0.8</text>
+<rect class="lbg" x="38.4" y="244.0" width="31.6" height="16" rx="3"/><text class="lb lb-p" x="54.2" y="256.0" text-anchor="middle">+0.8</text>
+<rect class="lbg" x="110.0" y="244.0" width="31.6" height="16" rx="3"/><text class="lb lb-p" x="125.8" y="256.0" text-anchor="middle">+0.4</text>
+<rect class="lbg" x="316.3" y="399.6" width="31.6" height="16" rx="3"/><text class="lb lb-m" x="332.1" y="411.6" text-anchor="middle">−0.6</text>
+<rect class="lbg" x="326.0" y="302.0" width="38.0" height="16" rx="3"/><text class="lb lb-p" x="345.0" y="314.0" text-anchor="middle">+0.4*</text>
+<rect class="lbg" x="342.1" y="228.4" width="31.6" height="16" rx="3"/><text class="lb lb-p" x="357.9" y="240.4" text-anchor="middle">+0.5</text>
+<rect class="lbg" x="499.2" y="302.0" width="31.6" height="16" rx="3"/><text class="lb lb-p" x="515.0" y="314.0" text-anchor="middle">+0.6</text>
+<rect class="lbg" x="548.4" y="384.0" width="31.6" height="16" rx="3"/><text class="lb lb-p" x="564.2" y="396.0" text-anchor="middle">+0.4</text>
+<rect class="lbg" x="620.0" y="384.0" width="31.6" height="16" rx="3"/><text class="lb lb-m" x="635.8" y="396.0" text-anchor="middle">−0.3</text>
+<rect class="lbg" x="499.2" y="466.0" width="31.6" height="16" rx="3"/><text class="lb lb-p" x="515.0" y="478.0" text-anchor="middle">+0.5</text>
+<rect class="lbg" x="662.8" y="302.0" width="44.4" height="16" rx="3"/><text class="lb lb-p" x="685.0" y="314.0" text-anchor="middle">+0.1/г</text>
+<rect class="lbg" x="499.2" y="202.0" width="31.6" height="16" rx="3"/><text class="lb lb-m" x="515.0" y="214.0" text-anchor="middle">−0.8</text>
+<rect class="lbg" x="499.2" y="146.0" width="31.6" height="16" rx="3"/><text class="lb lb-m" x="515.0" y="158.0" text-anchor="middle">−1.5</text>
+<rect class="lbg" x="669.2" y="162.0" width="31.6" height="16" rx="3"/><text class="lb lb-p" x="685.0" y="174.0" text-anchor="middle">+0.4</text>
+<rect class="lbg" x="329.2" y="186.0" width="31.6" height="16" rx="3"/><text class="lb lb-p" x="345.0" y="198.0" text-anchor="middle">+0.4</text>
+<rect class="lbg" x="434.0" y="109.0" width="50.8" height="16" rx="3"/><text class="lb lb-p" x="459.4" y="121.0" text-anchor="middle">+0.02/г</text>
+<rect class="sbox" x="20" y="400" width="284" height="104" rx="8"/>
+<text class="st-h" x="34" y="424">Стабильность — производная</text>
+<text class="st-t" x="34" y="446">50 + 0.6·(лояльность − 50)</text>
+<text class="st-t" x="34" y="464">+ 0.4·(легитимность − 50)</text>
+<text class="st-t" x="34" y="482">− ересь(единоверие) + потрясения</text>
+<text class="st-s" x="34" y="498">лояльность = Знать×2, Церковь, Народ</text>
+<rect class="sbox" x="676" y="400" width="184" height="190" rx="8"/>
+<line class="e e-p" x1="690" y1="422" x2="724" y2="422" marker-end="url(#ap)"/><text class="lg" x="734" y="426">+ сдвигает вверх</text>
+<line class="e e-m" x1="690" y1="446" x2="724" y2="446" marker-end="url(#am)"/><text class="lg" x="734" y="450">− сдвигает вниз</text>
+<line class="e e-p e-flow" x1="690" y1="470" x2="724" y2="470" marker-end="url(#ap)"/><text class="lg" x="734" y="474">поток в год</text>
+<ellipse class="n n-vis" cx="707" cy="498" rx="17" ry="9"/><text class="lg" x="734" y="502">явный узел</text>
+<ellipse class="n n-hid" cx="707" cy="522" rx="17" ry="9"/><text class="lg" x="734" y="526">скрытый узел</text>
+<rect class="z z-av" x="690" y="538" width="34" height="16" rx="5"/><text class="lg" x="734" y="550">петля-лавина</text>
+<rect class="z z-st" x="690" y="562" width="34" height="16" rx="5"/><text class="lg" x="734" y="574">стабилизатор</text>
+</svg></div>
+    <figcaption>13 узлов и 18 рёбер. Сплошной овал — явный узел, пунктирный с заливкой — скрытый. Зелёным показано ребро, которое тянет цель вверх, красным — вниз, рядом подписан знак и сила. Жирные рёбра принадлежат петлям. Звёздочка у e7 значит, что ребро работает только при законе «Городские вольности». Лояльность и стабильность производные и вынесены в рамку.</figcaption>
+  </figure>
+
+  <h3>Рёбра</h3>
+  <div class="scroll">
+  <table class="t-wide">
+    <thead><tr><th>#</th><th>Откуда</th><th>Куда</th><th>Знак</th><th class="n">k</th><th class="n">Покой</th><th class="n">Задержка</th><th>Петля</th><th>Комментарий</th></tr></thead>
+    <tbody>
+      <tr><td>e1</td><td>Закрепощение</td><td>Расслоение</td><td class="sg-p">+</td><td class="n">0.5</td><td class="n">30</td><td class="n">10</td><td></td><td>Барщина копит землю и хлеб у господ.</td></tr>
+      <tr><td>e2</td><td>Расслоение</td><td>Подвижность</td><td class="sg-m">−</td><td class="n">0.75</td><td class="n">40</td><td class="n">5</td><td>П1</td><td>Бедному не выбиться.</td></tr>
+      <tr><td>e3</td><td>Подвижность</td><td>Расслоение</td><td class="sg-m">−</td><td class="n">0.8</td><td class="n">40</td><td class="n">10</td><td>П1, С2</td><td>Выбившиеся размывают сословные стены.</td></tr>
+      <tr><td>e4</td><td>Знать</td><td>Закрепощение</td><td class="sg-p">+</td><td class="n">0.8</td><td class="n">50</td><td class="n">5</td><td>П2</td><td>Довольная знать продавливает барщину. Кривая: ниже 50 вклад 0.</td></tr>
+      <tr><td>e5</td><td>Закрепощение</td><td>Знать</td><td class="sg-p">+</td><td class="n">0.4</td><td class="n">30</td><td class="n">0</td><td>П2</td><td>Барщина кормит господ.</td></tr>
+      <tr><td>e6</td><td>Расслоение</td><td>Народ</td><td class="sg-m">−</td><td class="n">0.6</td><td class="n">40</td><td class="n">0</td><td></td><td>Кривая: −1.0 выше 60, плоско выше 85.</td></tr>
+      <tr><td>e7</td><td>Расслоение</td><td>Вольности</td><td class="sg-p">+</td><td class="n">0.4</td><td class="n">50</td><td class="n">10</td><td>С2</td><td>Беглые уходят в вольные города. Только при законе «Городские вольности».</td></tr>
+      <tr><td>e8</td><td>Вольности</td><td>Подвижность</td><td class="sg-p">+</td><td class="n">0.5</td><td class="n">15</td><td class="n">10</td><td>С2</td><td>Городской воздух делает свободным.</td></tr>
+      <tr><td>e9</td><td>Вольности</td><td>Торговля</td><td class="sg-p">+</td><td class="n">0.6</td><td class="n">15</td><td class="n">5</td><td></td><td>Хартия, суд и мыто по закону.</td></tr>
+      <tr><td>e10</td><td>Торговля</td><td>Хлеб</td><td class="sg-p">+</td><td class="n">0.4</td><td class="n">30</td><td class="n">0</td><td>С1</td><td>Подвоз.</td></tr>
+      <tr><td>e11</td><td>Хлеб</td><td>Торговля</td><td class="sg-m">−</td><td class="n">0.3</td><td class="n">50</td><td class="n">0</td><td>С1</td><td>Дороговизна зовёт купцов.</td></tr>
+      <tr><td>e12</td><td>Хлеб</td><td>Народ</td><td class="sg-p">+</td><td class="n">0.5</td><td class="n">50</td><td class="n">0</td><td></td><td>Кривая: ниже 30 вдвое круче. Голод бьёт сильнее, чем радует сытость.</td></tr>
+      <tr><td>e13</td><td>Торговля</td><td>Казна</td><td class="sg-p">+</td><td class="n">0.1 / год</td><td class="n">30</td><td class="n">0</td><td></td><td>Поток: при торговле 50 даёт +2 в год. Мало, чтобы не сломать деньги этапа 15.</td></tr>
+      <tr><td>e14</td><td>Грамотность</td><td>Единоверие</td><td class="sg-m">−</td><td class="n">0.8</td><td class="n">10</td><td class="n">15</td><td>П3</td><td>Читающий спорит с проповедником.</td></tr>
+      <tr><td>e15</td><td>Единоверие</td><td>Грамотность</td><td class="sg-m">−</td><td class="n">1.5</td><td class="n">60</td><td class="n">5</td><td>П3</td><td>Секты учат читать Писание. Кривая: работает в полосе 35..60, вне её плоско.</td></tr>
+      <tr><td>e16</td><td>Единоверие</td><td>Церковь</td><td class="sg-p">+</td><td class="n">0.4</td><td class="n">65</td><td class="n">0</td><td></td><td>Клир винит корону в ереси.</td></tr>
+      <tr><td>e17</td><td>Грамотность</td><td>Подвижность</td><td class="sg-p">+</td><td class="n">0.4</td><td class="n">10</td><td class="n">15</td><td></td><td>Сын пахаря идёт в писцы.</td></tr>
+      <tr><td>e18</td><td>Грамотность</td><td>Бюрократия</td><td class="sg-p">+</td><td class="n">0.02 / год</td><td class="n">10</td><td class="n">0</td><td></td><td>Поток: при грамотности 30 даёт +0.4 в год. Так школы открывают скрытые узлы.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="calib">На старте каждый источник стоит в точке покоя, поэтому граф молчит, а равновесие совпадает с нынешними <code>default</code>.</p>
+</section>
+
+<!-- 4 -->
+<section id="loops">
+  <h2><span class="no">4</span>Петли</h2>
+  <div class="prose">
+    <p>В графе три лавины и два стабилизатора. Поколение здесь равно 30 годам, это медиана правления. Каждая лавина упирается в насыщение кривой, поэтому узлы не уходят в 0 и 100. Кроме того, у каждой лавины есть тормоз, который включают закон или катастрофа.</p>
+  </div>
+  <div class="cards">
+    <article class="card">
+      <div class="card-h"><h3>П1 · Гнёт</h3><span class="tag av">лавина</span></div>
+      <div class="chain">Расслоение ↑ → Подвижность ↓ → Расслоение ↑</div>
+      <dl class="kv">
+        <dt>g</dt><dd>0.6 без законов, усиление ×2.5. «Крепостное право» поднимает e2 в 1.4 раза, и g = 0.84, усиление ×6. «Свод законов» ослабляет e2 в 0.7 раза, и g = 0.42.</dd>
+        <dt>Запуск</dt><dd>Закрепощение выше 30 через e1, «Десятина» (якорь расслоения +5), неурожаи.</dd>
+        <dt>Тормоз</dt><dd>Кривые e2 и e6 плоские выше 85. Стабилизатор С2 при «Городских вольностях». «Мужицкая война» сбрасывает расслоение на 15 и закрепощение на 10.</dd>
+        <dt>Проявится</dt><dd>Через 2–3 поколения, на 60–90-м году.</dd>
+        <dt>Симптомы</dt><dd>«Беглые крестьяне» (новое, расслоение выше 55), «Мятежный староста» (<code>prov_rebel_elder</code> получает условие), «Пустеют сёла» (новое, подвижность ниже 25). Катастрофа — «Мужицкая война» (<code>peasant_war</code>), чей вес растёт с расслоением.</dd>
+      </dl>
+    </article>
+    <article class="card">
+      <div class="card-h"><h3>П2 · Барщина</h3><span class="tag av">лавина</span></div>
+      <div class="chain">Знать ↑ → Закрепощение ↑ → Знать ↑</div>
+      <dl class="kv">
+        <dt>g</dt><dd>0.32, считается только при знати выше 50. «Крепостное право» удваивает e4, и g = 0.64. «Разделение» из этапа 16 добавляет ×1.25, и g = 0.8.</dd>
+        <dt>Запуск</dt><dd>Задабривать знать: вольности баронам, раздача уделов, выборный закон.</dd>
+        <dt>Тормоз</dt><dd>При знати ниже 50 петля выключена. «Вольные крестьяне» обнуляют e4. Закрепощение насыщается на 90.</dd>
+        <dt>Проявится</dt><dd>За 1–2 поколения. Опасна тем, что выглядит успехом: знать довольна, стабильность растёт. Сама по себе П2 не катастрофа, она кормит П1.</dd>
+        <dt>Симптомы</dt><dd>«Знать требует» просит сыска беглых, «Указ о сыске» (новое). Знать выше 70 и растёт.</dd>
+      </dl>
+    </article>
+    <article class="card">
+      <div class="card-h"><h3>П3 · Ересь книжников</h3><span class="tag av">лавина</span></div>
+      <div class="chain">Грамотность ↑ → Единоверие ↓ → (ниже 60) Грамотность ↑</div>
+      <dl class="kv">
+        <dt>g</dt><dd>0 при единоверии выше 60. В полосе 35..60 g = 0.8 × 1.5 = 1.2, то есть узел опрокидывается. Здесь два устойчивых состояния, а порог лежит около 60. «Монастырские школы» умножают e14 на 0.3, и g = 0.36.</dd>
+        <dt>Запуск</dt><dd>«Городские вольности» без школ (якорь грамотности +15), события «Ересь», мор.</dd>
+        <dt>Тормоз</dt><dd>Кривая e15 плоская ниже 35. «Терпимость» делит штраф ереси к стабильности на 3. «Единоверие» отодвигает порог, но умножает штраф на 1.5.</dd>
+        <dt>Проявится</dt><dd>Через 3–5 поколений: грамотность растёт на 0.25 в год.</dd>
+        <dt>Симптомы</dt><dd>«Ересь» и «Секта растёт» (<code>fac_heresy</code>, <code>fac_heresy_spreads</code>; их переносят в симуляцию с условием по единоверию), падает лояльность церкви. Катастрофа — «Раскол» (новое, единоверие ниже 40): потрясение −20, церковь −15, при «Единоверии» отпадает земля.</dd>
+      </dl>
+    </article>
+    <article class="card">
+      <div class="card-h"><h3>С1 · Хлеб и цена</h3><span class="tag st">стабилизатор</span></div>
+      <div class="chain">Хлеб ↓ → Торговля ↑ → Хлеб ↑</div>
+      <dl class="kv">
+        <dt>g</dt><dd>−0.12. Быстрая петля, работает за годы.</dd>
+        <dt>Держит</dt><dd>Неурожай не превращается в голод, если торговля жива.</dd>
+        <dt>Ломается</dt><dd>При низкой торговле (вольности 0, война, разбой) удар по хлебу целиком доходит до народа через e12.</dd>
+        <dt>Симптомы сбоя</dt><dd>«Дороговизна хлеба» (новое, хлеб ниже 35). Затем «Великий голод» (<code>great_famine</code>): сейчас его условие <code>All([])</code>, станет вес по хлебу.</dd>
+      </dl>
+    </article>
+    <article class="card">
+      <div class="card-h"><h3>С2 · Вольный город</h3><span class="tag st">стабилизатор</span></div>
+      <div class="chain">Расслоение ↑ → Вольности ↑ → Подвижность ↑ → Расслоение ↓</div>
+      <dl class="kv">
+        <dt>g</dt><dd>−0.16 (0.4 × 0.5 × −0.8). Есть только при законе «Городские вольности».</dd>
+        <dt>Держит</dt><dd>Гасит П1: гнёт выдавливает людей в города, а не в бунт.</dd>
+        <dt>Цена</dt><dd>Вольности поднимают якорь грамотности и тем запускают П3. Вольный город лечит гнёт и через два века готовит раскол, если нет школ.</dd>
+        <dt>Проявится</dt><dd>Через 2 поколения.</dd>
+      </dl>
+    </article>
+  </div>
+</section>
+
+<!-- 5 -->
+<section id="laws">
+  <h2><span class="no">5</span>Законы-институты</h2>
+  <div class="prose">
+    <p>Закон — постоянная правка графа: он сдвигает якоря узлов и умножает силы рёбер. Закон живёт, пока его не отменят, и переживает правителя. В этом и состоит рычаг основателя. Вводится закон действием «Ввести закон», тем же, что делает этап 16 для наследования: цена, срок в годах и сопротивление на время ввода (якорь недовольной фракции −10). Отмена стоит половину цены. Законы собраны в группы, внутри группы действует один закон: «Крестьяне» (крепость, обычай, вольные), «Вера» (единоверие, обычай, терпимость), «Наследование» (этап 16). Остальные законы независимы.</p>
+  </div>
+  <div class="scroll">
+  <table class="t-wide">
+    <thead><tr><th>Закон</th><th>Правка графа</th><th>За правление</th><th>Через 2–4 поколения</th><th>Против</th><th class="n">Цена, лет</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Крепостное право</strong><br><span class="muted">Крестьяне</span></td><td>Якорь закрепощения 30 → 70; e4 ×2; e2 ×1.4; якорь знати +8</td><td>Знать довольна, доход +3, ополчение +10 армии</td><td>П2 и П1 разгоняются, народ падает к 25–30, начинаются мужицкие войны</td><td>Народ</td><td class="n">60, 3</td></tr>
+      <tr><td><strong>Вольные крестьяне</strong><br><span class="muted">Крестьяне</span></td><td>Якорь закрепощения → 10; e4 ×0; якорь знати −8; якорь торговли +5</td><td>Знать ниже 45, вассалы бунтуют чаще (бонус <code>vassal_revolt</code> при знати ниже 40)</td><td>Расслоение 30–35, подвижность растёт, П1 и П2 мертвы</td><td>Знать</td><td class="n">90, 4</td></tr>
+      <tr><td><strong>Единоверие</strong><br><span class="muted">Вера</span></td><td>Якорь единоверия +10; штраф ереси ×1.5; якорь церкви +5</td><td>Церковь довольна, ереси нет</td><td>Порог П3 отодвинут. Если он всё же пройден, раскол тяжелее и уносит землю</td><td>Народ, если ересь уже есть</td><td class="n">45, 2</td></tr>
+      <tr><td><strong>Терпимость</strong><br><span class="muted">Вера</span></td><td>Штраф ереси ×0.3; якорь церкви −10; якорь торговли +5</td><td>Церковь недовольна, чаще «Церковь требует» и уход в монастырь</td><td>Ересь растёт, но стабильность держится. Раскола нет, церковь хронически холодна</td><td>Церковь</td><td class="n">45, 2</td></tr>
+      <tr><td><strong>Десятина</strong></td><td>Якорь церкви +10; якорь единоверия +5; якорь расслоения +5</td><td>Церковь довольна, доход −2</td><td>Медленно подпитывает П1</td><td>Народ</td><td class="n">30, 1</td></tr>
+      <tr><td><strong>Монастырские школы</strong></td><td>Якорь грамотности +20; e14 ×0.3; −6 в год</td><td>Дорого, видимой отдачи нет</td><td>Грамотность 30 даёт бюрократию +0.4 в год (e18) и подвижность (e17); П3 спит</td><td>Никто, держит цена</td><td class="n">60, 3</td></tr>
+      <tr><td><strong>Городские вольности</strong></td><td>Якорь вольностей 15 → 50; включает e7; якорь грамотности +15; якорь знати −5</td><td>Торговля и казна растут за 10–20 лет</td><td>Тормоз П1 через С2. Без школ запускает П3</td><td>Знать</td><td class="n">60, 2</td></tr>
+      <tr><td><strong>Свод законов</strong></td><td>Нужна бюрократия 40. e2 ×0.7; e6 ×0.7; легитимность +5; якорь знати −3</td><td>Дорого и долго, знать ворчит: она теряет вотчинный суд</td><td>Гнёт не душит подвижность и не бьёт по народу, g у П1 падает до 0.42</td><td>Знать</td><td class="n">120, 4</td></tr>
+      <tr><td><strong>Королевские житницы</strong></td><td>Якорь хлеба 50 → 65; якорь торговли −5; −4 в год</td><td>Дорого, при хорошем урожае незаметно</td><td>«Великий голод» редок, народ +7 к цели</td><td>Купцы: торговля ниже</td><td class="n">90, 3</td></tr>
+      <tr><td><strong>Ярмарочное право</strong></td><td>Якорь торговли +15; якорь вольностей +5; якорь расслоения +5</td><td>Казна +2..3 в год (e13)</td><td>Купцы богатеют, расслоение выше. Это слабый запал П1</td><td>Знать: теряет мыто</td><td class="n">45, 2</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Законы наследования тоже институты</h3>
+  <div class="prose">
+    <p>Этап 16 делает смену закона наследования действием игрока. В этом предложении у закона наследования те же необязательные поля, что у любого закона: якоря и множители рёбер. Так порядок престолонаследия влияет и на общество, а не только на претензии.</p>
+  </div>
+  <div class="scroll">
+  <table class="t-mid">
+    <thead><tr><th>Закон этапа 16</th><th>Правка графа</th><th>Смысл</th></tr></thead>
+    <tbody>
+      <tr><td>Абсолютное и мужское первородство, салический закон</td><td>Нет</td><td>Эталон. Их профиль риска уже задан наследованием.</td></tr>
+      <tr><td>Лествичное право</td><td>Якорь знати +3</td><td>Взрослый государь угоден баронам.</td></tr>
+      <tr><td>Выборный закон</td><td>Якорь знати +5; e4 ×1.2</td><td>Совет баронов тянет к барщине.</td></tr>
+      <tr><td>Разделение</td><td>Якорь знати +8; e4 ×1.25; e1 ×1.2</td><td>Больше господ, значит больше барщины. Вместе с крепостным правом g у П2 доходит до 0.8.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="calib">Цены и сроки по образцу нынешних (закон наследования 45 и 2 года). Сопротивление −10 к якорю фракции на время ввода стартовое.</p>
+</section>
+
+<!-- 6 -->
+<section id="scenarios">
+  <h2><span class="no">6</span>Три сценария</h2>
+  <div class="prose"><p>Годы считаются от воцарения основателя. Значения — оценка по графу без событий. Каждый сценарий потом станет golden-тестом: seed и скрипт решений.</p></div>
+  <div class="cards">
+    <article class="card">
+      <div class="card-h"><h3>Лавина: ересь книжников</h3><span class="tag av">раскол</span></div>
+      <p><strong>Основатель:</strong> «Городские вольности» на 5-м году ради денег, «Единоверие» на 12-м, чтобы порадовать церковь. Школ нет.</p>
+      <ol class="years">
+        <li><span class="y">0–30</span><span>Вольности 15 → 30, торговля 30 → 39, казна +1 в год (e13). Грамотность 10 → 17. Единоверие 65 → 72, церковь довольна.</span></li>
+        <li><span class="y">30–80</span><span>Грамотность доходит до якоря 25. Цель единоверия 75 − 0.8·15 = 63, запас до порога 3 очка. С 70-го года идут «Ересь» и «Секта растёт».</span></li>
+        <li class="bad"><span class="y">≈ 85</span><span>Ересь или мор сталкивают единоверие ниже 60. П3 опрокидывается: цель грамотности растёт, единоверие сползает на 0.5 в год.</span></li>
+        <li class="bad"><span class="y">120–160</span><span>Единоверие 45 → 38. Ересь стоит 12..15 стабильности (×1.5 от «Единоверия»), церковь опускается к 30.</span></li>
+        <li class="bad"><span class="y">≈ 160</span><span>«Раскол». Земля уходит под еретического лорда, слабый наследник получает «Смуту», династия падает от узурпации.</span></li>
+      </ol>
+      <p><strong>Хроника:</strong> «Раскол ← единоверие ← грамотность ← Хартия городских вольностей, 5-й год основателя».</p>
+    </article>
+    <article class="card">
+      <div class="card-h"><h3>Долгая стабильность</h3><span class="tag st">порядок</span></div>
+      <p><strong>Основатель:</strong> копит бюрократию до 40 (объезды, отказ «Подтвердить вольности»), на 16-м году вводит «Свод законов», на 20-м «Королевские житницы», на 25-м «Монастырские школы». Крестьяне остаются по обычаю.</p>
+      <ol class="years">
+        <li><span class="y">0–30</span><span>Знать 45–48 и иногда бунтует. На школы и житницы уходит 10 в год, а это почти половина свободного дохода (≈ 24 в год у <code>neutral</code>, этап 15). Войн мало.</span></li>
+        <li class="good"><span class="y">30–110</span><span>Грамотность 10 → 30. Подвижность 40 → 48, расслоение 40 → 35. Поток e18 даёт бюрократию +0.4 в год, а с ней предел владений +2 и открытые узлы.</span></li>
+        <li class="good"><span class="y">110–250</span><span>Цель народа около 60: хлеб 65 даёт +7, расслоение +2. Стабильность 56–62, при легитимности выше 70 случаются «Мирные годы» и «Золотой век». П3 спит: g = 0.36.</span></li>
+      </ol>
+      <p><strong>Исход:</strong> династия доживает до 300 лет или падает от случая наследования (NoHeir, Смута), а не от общества. По территории счёт ниже, чем у <code>warmonger</code>: это цена.</p>
+    </article>
+    <article class="card">
+      <div class="card-h"><h3>Ловушка: золотой век барщины</h3><span class="tag av">мужицкая война</span></div>
+      <p><strong>Основатель:</strong> «Крепостное право» на 3-м году, «Десятина» на 8-м, щедр к баронам (знать 70). Воюет на доход и ополчение.</p>
+      <ol class="years">
+        <li class="good"><span class="y">0–40</span><span>Знать 70+, церковь 60+, доход +3, армия +10. Лояльность высокая, стабильность около 60. Выглядит как лучшая партия.</span></li>
+        <li><span class="y">40–80</span><span>П2: цель закрепощения 70 + 1.6·(знать − 50) упирается в 90. Закрепощение 42 → 58. Расслоение 47 → 58, подвижность 40 → 30. «Беглые крестьяне», «Мятежный староста», знать просит «Указ о сыске».</span></li>
+        <li class="bad"><span class="y">80–130</span><span>Расслоение 65–75, цель народа 25–30. «Мужицкая война» раз в 15 лет (откат события): потрясение −10, армия −20 каждый раз.</span></li>
+        <li class="bad"><span class="y">≈ 135</span><span>Третья война совпадает с регентством, приходит «Смута», династия падает от узурпации. Если мужики победят раньше, расслоение −15 и закрепощение −10: династия выживет ослабленной.</span></li>
+      </ol>
+      <p><strong>Почему ловушка:</strong> первые 40 лет по всем видимым осям лучше, чем у «Долгой стабильности». Выдают её только тренды закрепощения и прогноз народа.</p>
+    </article>
+  </div>
+</section>
+
+<!-- 7 -->
+<section id="transparency">
+  <h2><span class="no">7</span>Прозрачность для игрока</h2>
+  <div class="prose">
+    <p>Игрок должен видеть вектор, а не только значение. Для этого пять средств, от простого к редкому.</p>
+    <ol>
+      <li><strong>Тренд у видимой оси.</strong> Стрелка из пяти ступеней по изменению за 5 лет и цель, к которой ось идёт.</li>
+      <li><strong>«Что давит».</strong> Два самых крупных вклада в цель, со знаком. Вклад закрытого узла подписан «неясная причина» с подсказкой, какая бюрократия его откроет.</li>
+      <li><strong>Прогноз «через поколение».</strong> Граф прокручивается на 30 лет вперёд без событий. Это чистая функция над копией мира, детерминированная и дешёвая: 13 узлов × 30 шагов.</li>
+      <li><strong>Симптомы.</strong> События-предвестники с пометкой «Знамение» в итогах года и в хронике. Каждое ссылается на узел, который его вызвал.</li>
+      <li><strong>Цепочка в хронике.</strong> Запись катастрофы называет 2–3 узла и решение в начале цепочки, например: «Мужики поднялись: расслоение (с крепостного указа 1214 года) задушило подвижность».</li>
+    </ol>
+  </div>
+
+  <h3>Панель осей, пример</h3>
+  <div class="mock" role="img" aria-label="Пример панели осей с трендом, целью и тем, что давит">
+    <div class="mock-row"><span class="nm">Народ</span><span class="v">46</span><span class="why">↘ к 38 · давят <b>Расслоение −7</b>, <b>Хлеб −2</b> · через поколение ≈ 35</span></div>
+    <div class="mock-row"><span class="nm">Знать</span><span class="v">71</span><span class="why">↗ к 78 · давит <b>Закрепощение +12</b>, <b>Крепостное право +8</b> · через поколение ≈ 80</span></div>
+    <div class="mock-row"><span class="nm">Стабильность</span><span class="v">58</span><span class="why">→ · держат <b>Лояльность +8</b>, <b>Легитимность +2</b> · через поколение ≈ 52</span></div>
+    <div class="mock-row hidden"><span class="nm">Закрепощение</span><span class="v">выс.</span><span class="why">↗ · держит <b>Крепостное право</b> (якорь 70), тянет <b>Знать</b></span></div>
+    <div class="mock-row hidden"><span class="nm">Расслоение</span><span class="v">?</span><span class="why">неясная причина в деревне · откроет бюрократия 70</span></div>
+  </div>
+
+  <h3>Бюрократия открывает узлы</h3>
+  <div class="scroll">
+  <table class="t-mid">
+    <thead><tr><th class="n">Бюрократия</th><th>Открывается</th><th>Откуда знает корона</th></tr></thead>
+    <tbody>
+      <tr><td class="n">0</td><td>Тренды, цели и «что давит» у всех явных осей; прогноз явных осей</td><td>Двор</td></tr>
+      <tr><td class="n">20 (старт)</td><td>Хлеб, Торговля</td><td>Амбарные и мытные книги</td></tr>
+      <tr><td class="n">40</td><td>Закрепощение, Вольности</td><td>Писцовые книги, городские грамоты</td></tr>
+      <tr><td class="n">55</td><td>Единоверие, Грамотность</td><td>Донесения епископов</td></tr>
+      <tr><td class="n">70</td><td>Расслоение, Подвижность</td><td>Подворная перепись</td></tr>
+      <tr><td class="n">85</td><td>Числа вместо слов, прогноз на 60 лет</td><td>Канцелярия</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="calib">Открытый узел показывается словом из пяти ступеней (ничтожно, низко, средне, высоко, предельно) и стрелкой. Пороги в <code>rules.ron</code>, поле <code>reveal</code> у оси.</p>
+</section>
+
+<!-- 8 -->
+<section id="code">
+  <h2><span class="no">8</span>Как это ложится в код</h2>
+  <div class="prose"><p>Новых сущностей почти нет: большую часть дают уже существующие механизмы, их нужно обобщить. Ниже описано словами, кода нет.</p></div>
+  <div class="scroll">
+  <table class="t-wide">
+    <thead><tr><th>Сейчас</th><th>Станет</th></tr></thead>
+    <tbody>
+      <tr><td><code>economy.flows: [("income", 1)]</code></td><td>Влияния вида «поток» в запас: доход → казна (1), торговля → казна (e13), грамотность → бюрократия (e18). <code>economy.treasury</code> остаётся. На старых данных golden-тест даёт тот же результат.</td></tr>
+      <tr><td><code>drift.step</code> тянет фракции к <code>default</code> (<code>Game::passive</code>)</td><td>У оси появляются свой шаг и якорь. Фракции по умолчанию берут <code>drift.step</code>, запасы получают 0. Цель — якорь плюс сдвиги законов плюс сумма рёбер. Без рёбер и законов цель равна <code>default</code>, то есть поведение прежнее.</td></tr>
+      <tr><td><code>loyalty_axis</code>: производная из фракций</td><td>Вторая производная ось — <code>stability</code>: веса входов, кривая ереси, запас потрясений с угасанием. <code>Axis("stability", x)</code> в эффектах пишет в потрясения.</td></tr>
+      <tr><td><code>data::curve</code> (мятеж вассала, содержание армии)</td><td>Кривая ребра и кривая ереси. Кода не прибавляется.</td></tr>
+      <tr><td><code>World.marks</code> по <code>MarkKey::Axis</code>, угасание <code>sim.decay</code></td><td>Скрытые узлы — это оси, поэтому метки на них работают сразу. Новое: раз в год метки источника перетекают в цель по ребру с весом доли вклада, но только если вклад больше 1, и не больше 4 меток на ключ. Метка закона не гаснет, пока закон действует.</td></tr>
+      <tr><td><code>ChronicleEntry.causes</code></td><td>Добавляется поле цепочки узлов (serde default): 2–3 шага назад от узла в условии события по самым крупным вкладам.</td></tr>
+      <tr><td><code>heirs.laws</code> и действие этапа 16</td><td>Общий раздел законов с группой, ценой, сроком, сопротивлением, сдвигами якорей и множителями рёбер. Законы наследования получают те же необязательные поля.</td></tr>
+      <tr><td><code>AxisBelow</code>, <code>weight_bonus</code></td><td>На скрытых осях работают как есть. Симптомы пишутся данными, а новый предикат не нужен.</td></tr>
+      <tr><td><code>sim.auto.base</code> по id осей</td><td>Скрытым узлам вес 0, автомат близорук (ниже).</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Что в RON</h3>
+  <div class="prose">
+    <ul>
+      <li><strong><code>axes</code></strong>: у оси появляются необязательные поля: пометка hidden, шаг к цели, порог открытия по бюрократии.</li>
+      <li><strong><code>influences</code></strong>: список рёбер. У каждого ребра: откуда, куда, k, точка покоя, необязательная кривая из точек «значение источника → вклад», задержка в годах и вид (цель или поток). Порядок в файле совпадает с порядком счёта, и это детерминизм без <code>HashMap</code>.</li>
+      <li><strong><code>stability</code></strong>: входы с весами, кривая ереси, угасание потрясений в год.</li>
+      <li><strong><code>laws</code></strong>: id, группа, имя, описание, цена, срок, требования, сопротивление, сдвиги якорей, множители рёбер, разовые эффекты по завершении.</li>
+    </ul>
+    <p>Граф считается один раз в год, после <code>passive</code>: сначала сглаживаются задержки, потом цели и шаги, потом потоки. Всё в <code>Fx</code>.</p>
+  </div>
+
+  <h3>События двигают причины, а не стабильность</h3>
+  <div class="scroll">
+  <table class="t-wide">
+    <thead><tr><th>Событие</th><th>Сейчас</th><th>Станет</th></tr></thead>
+    <tbody>
+      <tr><td>«Неурожай» <code>prov_crop_failure</code></td><td>Казна, народ</td><td>Хлеб −15. Народ падает сам через e12, если С1 не вытянет.</td></tr>
+      <tr><td>«Гильдии просят хартию» <code>cap_guild_charter</code></td><td>Доход столицы +2, народ +4, знать −3</td><td>Добавляется вольности +5. Это вход к закону «Городские вольности».</td></tr>
+      <tr><td>«Церковь требует» <code>fac_church_demands</code></td><td>«Платить десятину»: доход −2, церковь +10</td><td>Вариант вводит закон «Десятина» без цены.</td></tr>
+      <tr><td>«Знать требует» <code>fac_nobles_demand</code></td><td>«Подтвердить вольности»: знать +10, бюрократия −5</td><td>Добавляется закрепощение +4.</td></tr>
+      <tr><td>«Ересь» <code>fac_heresy</code></td><td>«Предать огню»: церковь +8, народ −8, стабильность −3</td><td>Единоверие +5, потрясение −3. «Не мешать»: единоверие −4. Событие идёт и в симуляцию, с условием по единоверию.</td></tr>
+      <tr><td>«Великий голод» <code>great_famine</code></td><td>Условие <code>All([])</code></td><td><code>weight_bonus</code> при хлебе ниже 30 и ниже 20. «Открыть амбары»: хлеб +20.</td></tr>
+      <tr><td>«Мужицкая война» <code>peasant_war</code></td><td>Народ ниже 45</td><td>Добавляется бонус при расслоении выше 60 и 70. Победа мужиков: расслоение −15, закрепощение −10.</td></tr>
+      <tr><td>«Смута», войны, <code>crown_capacity.penalty</code></td><td>Стабильность напрямую</td><td>Пишут в потрясения. <code>data_lint</code> предупреждает о новой прямой записи в стабильность.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Автомат <code>AutoChooser</code></h3>
+  <div class="prose">
+    <p><strong>Рекомендация: долгих последствий автомат не видит.</strong> Если потомки начнут исправлять ошибки основателя, наследие снова сотрётся, только руками автомата. Скрытым узлам вес 0, прогноз автомат не считает. Исключение одно: черта «осторожный» получает малый вес на прогноз стабильности через 30 лет. Это дёшево, потому что прогноз и так нужен UI.</p>
+    <p>Законы автомат меняет редко. Вес складывается из немедленных эффектов и давления фракции: при знати выше 70 и закрепощении выше 50 автомат склонен ввести «Крепостное право». Так П2 доигрывает себя и без игрока. В <code>strategies.ron</code> появляются наборы законов основателя для <code>batch</code>: <code>serf_lord</code>, <code>free_towns</code>, <code>scholar</code>.</p>
+  </div>
+</section>
+
+<!-- 9 -->
+<section id="risks">
+  <h2><span class="no">9</span>Риски и калибровка</h2>
+  <div class="prose">
+    <ul>
+      <li><strong>Взрыв.</strong> Если g ≥ 1 везде, все узлы упрутся в края. Каждая усиливающая петля проходит через насыщающую кривую, а <code>data_lint</code> считает g по объявленным петлям из данных и падает, если g ≥ 1.5 вне полосы кривой.</li>
+      <li><strong>Один аттрактор.</strong> Если шаги велики, а k малы, все династии сойдутся к одному равновесию, и наследие снова исчезнет. Лечится малыми шагами медленных узлов и проверяется критерием 1.</li>
+      <li><strong>Непрозрачность.</strong> Лавина без симптомов выглядит как случайность. Проверяется критерием 3 и вопросом плейтеста «понял причину падения».</li>
+      <li><strong>Скорость.</strong> 18 рёбер × 300 лет × 1000 династий — это 5.4 млн умножений <code>Fx</code>, миллисекунды. Дорого перетекание меток (клоны <code>BTreeMap</code>), поэтому есть порог вклада и не больше 4 меток на ключ. Сейчас <code>neutral</code> на 1000 партий идёт 6.4 с.</li>
+      <li><strong>Размер wasm.</strong> До этапа 16 release весил 7.997 МБ при пределе 8 МиБ. Граф не тянет зависимостей: в ядре около 400 строк, в данных несколько КБ. Риск в UI панели и прогноза, поэтому граф рисуется списками, а не схемой.</li>
+      <li><strong>Деньги этапа 15.</strong> Поток e13 и законы с годовой ценой сдвигают казну. Медиана казны <code>neutral</code> к концу династии должна остаться ≤ 2000.</li>
+    </ul>
+  </div>
+  <h3>Критерии успеха прогоном <code>batch</code></h3>
+  <div class="scroll">
+  <table class="t-wide">
+    <thead><tr><th>#</th><th>Критерий</th><th>Требование</th><th>Как мерить</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Разные равновесия</td><td>Медианы минимум двух скрытых узлов на 150-м году различаются на 15 и больше, межквартильные размахи не пересекаются</td><td>4 набора законов основателя × 1000 династий <code>neutral</code>; новые столбцы CSV по узлам на годах 100 и 150 и при падении</td></tr>
+      <tr><td>2</td><td>Основатель важен</td><td>Медианы счёта наборов отличаются от <code>neutral</code> на 15% и больше; доминирующие причины падения различаются хотя бы у двух наборов</td><td>Те же прогоны</td></tr>
+      <tr><td>3</td><td>Лавины видны заранее</td><td>Не меньше 80% «Мужицких войн» и «Расколов» имели симптом своей петли за 20 и больше лет до катастрофы</td><td>Столбец «лет от первого симптома» в <code>batch</code></td></tr>
+      <tr><td>4</td><td>Нет лучшего закона</td><td>Каждый закон хуже базы хотя бы по одной строке: медиана лет, счёт, доля Usurped, казна</td><td>Каждый закон отдельно × 1000 династий; таблица профилей в calibration.md, как у законов наследования этапа 16</td></tr>
+      <tr><td>5</td><td>Нет взрыва</td><td>Не больше 5% узло-лет на краях 0 или 100; ни одна медиана не на краю</td><td><code>batch</code> на всех стратегиях</td></tr>
+      <tr><td>6</td><td>Старое держится</td><td>Критерии 8b и этапа 15 выполнены; <code>neutral</code> на 1000 партий не медленнее чем на 15%</td><td>Ignored-тесты <code>calibration_criteria_hold</code> и <code>batch_of_a_thousand_is_fast</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<!-- 10 -->
+<section id="plan">
+  <h2><span class="no">10</span>План этапов</h2>
+  <div class="prose"><p>Формат <code>tasks/</code>. Сначала данные и симуляция без UI, потом законы, потом симптомы с цепочкой, в конце UI. Нумерация продолжает этап 17 (законность наследника).</p></div>
+  <div class="stages">
+    <article class="stage">
+      <h3>Этап 18. Граф влияний</h3>
+      <h4>Сделать</h4>
+      <ul>
+        <li>Поля оси (hidden, шаг, порог открытия) с serde default. 8 скрытых узлов в <code>rules.ron</code>.</li>
+        <li>Раздел <code>influences</code>: цель и поток, k, покой, кривая, задержка. <code>economy.flows</code> переходит в потоки.</li>
+        <li>Шаг к цели вместо шага к <code>default</code>. Стабильность становится производной с потрясениями.</li>
+        <li>18 рёбер из раздела 3. Прямые записи в стабильность в событиях переводятся в потрясения.</li>
+        <li><code>batch</code>: столбцы узлов на 100-м и 150-м году и при падении. <code>trace --node</code>: вклады по годам.</li>
+      </ul>
+      <h4>Не делать</h4>
+      <ul><li>Законы, симптомы, UI.</li></ul>
+      <h4>Приёмка</h4>
+      <ul>
+        <li>Тесты: ребро-цель сдвигает цель на k·(источник − покой); кривая ребра; задержка; поток; шаг не превышается; производная стабильность; угасание потрясений.</li>
+        <li>Golden: без рёбер и законов прогон совпадает с main байт в байт.</li>
+        <li>Тест петли: при g ≥ 1 узел уходит к насыщению кривой и не дальше.</li>
+        <li>Критерии 5 и 6.</li>
+      </ul>
+    </article>
+    <article class="stage">
+      <h3>Этап 19. Законы-институты</h3>
+      <h4>Сделать</h4>
+      <ul>
+        <li>Раздел <code>laws</code> с группами. Действия «Ввести закон» и «Отменить закон» обобщают смену закона из этапа 16.</li>
+        <li>10 законов из раздела 5. Законы наследования получают правки графа.</li>
+        <li>Метка закона не гаснет, пока он действует.</li>
+        <li>Веса автомата для законов, давление фракций. Стратегии с наборами законов.</li>
+      </ul>
+      <h4>Приёмка</h4>
+      <ul>
+        <li>Тесты: сдвиг якоря; множитель ребра; один закон на группу; сопротивление на время ввода; цена и срок; метка закона живёт, пока стоит флаг.</li>
+        <li>Таблица профилей законов в calibration.md. Критерии 1, 2 и 4.</li>
+      </ul>
+    </article>
+    <article class="stage">
+      <h3>Этап 20. Симптомы и цепочка в хронике</h3>
+      <h4>Сделать</h4>
+      <ul>
+        <li>Новые события: «Беглые крестьяне», «Пустеют сёла», «Указ о сыске», «Дороговизна хлеба», «Раскол». Перенастройка <code>peasant_war</code>, <code>great_famine</code>, <code>prov_rebel_elder</code>; <code>fac_heresy</code> идёт и в симуляцию.</li>
+        <li>Метки перетекают по рёбрам. В записи хроники появляется поле цепочки, а в <code>hints.ron</code> — тексты цепочек.</li>
+        <li>Три сценария раздела 6 как golden-тесты: seed и скрипт.</li>
+      </ul>
+      <h4>Приёмка</h4>
+      <ul>
+        <li>Тесты: метка проходит ребро выше порога и не проходит ниже; цепочка из 3 узлов в сценарии «Ловушка» ведёт к указу основателя.</li>
+        <li>Критерий 3. Каждое новое событие срабатывает в 1000 династий (<code>every_sim_event_fires_in_a_thousand_dynasties</code>).</li>
+      </ul>
+    </article>
+    <article class="stage">
+      <h3>Этап 21. Прозрачность в UI</h3>
+      <h4>Сделать</h4>
+      <ul>
+        <li>Чистая функция прогноза в ядре: мир плюс N лет без событий дают значения узлов.</li>
+        <li>Панель осей: стрелка, цель, «что давит», прогноз через поколение. Узлы открываются по бюрократии.</li>
+        <li>Панель законов: что закон держит и что усиливает, словами. Метка «Знамение» у симптомов, цепочка в хронике.</li>
+      </ul>
+      <h4>Приёмка</h4>
+      <ul>
+        <li>Тесты: прогноз детерминирован и не меняет мир; пороги открытия; «что давит» выдаёт два крупнейших вклада со знаком.</li>
+        <li>Ввод закона и чтение цепочки проходятся мышью в браузере без ошибок в консоли. Размер wasm замерен до и после.</li>
+      </ul>
+    </article>
+  </div>
+</section>
+
+<!-- 11 -->
+<section id="questions">
+  <h2><span class="no">11</span>Открытые вопросы владельцу</h2>
+  <ol class="qa">
+    <li><span><strong>Стабильность полностью производная или запас, который тянется к производной цели?</strong></span><span class="rec"><b>Рекомендация:</b> производная плюс угасающие потрясения, по образцу <code>crown_modifiers</code>. Запас с целью снова откроет дорогу прямым правкам из событий.</span></li>
+    <li><span><strong>Входит ли легитимность в граф?</strong></span><span class="rec"><b>Рекомендация:</b> нет. Она остаётся личной (претензия, воцарение этапа 16) и только входит в стабильность с весом 0.4.</span></li>
+    <li><span><strong>Видит ли автомат долгие последствия?</strong></span><span class="rec"><b>Рекомендация:</b> нет. Исключение — черта «осторожный» с малым весом на прогноз стабильности через 30 лет.</span></li>
+    <li><span><strong>Могут ли потомки отменять законы основателя?</strong></span><span class="rec"><b>Рекомендация:</b> да, но редко: только под давлением фракции выше 70 или ниже 30 и за полную цену. Отмена попадает в хронику («Отменён крепостной указ»).</span></li>
+    <li><span><strong>Как законы входят в счёт?</strong></span><span class="rec"><b>Рекомендация:</b> в <code>legacy</code> идёт любой закон, который к падению действовал 100 лет и дольше. Прямого веса за скрытые узлы нет: их ценность видна в годах и территории.</span></li>
+    <li><span><strong>Показывать открытые узлы числом или словом?</strong></span><span class="rec"><b>Рекомендация:</b> словом из пяти ступеней и стрелкой. Числа — с бюрократии 85 и в <code>trace</code>.</span></li>
+    <li><span><strong>Нужен ли правосудию свой узел?</strong></span><span class="rec"><b>Рекомендация:</b> пока нет. Правосудие держат «Свод законов» и «Городские вольности». Если на плейтесте спросят «где суд», можно добавить девятый узел.</span></li>
+    <li><span><strong>Сколько законов может ввести один правитель?</strong></span><span class="rec"><b>Рекомендация:</b> отдельного лимита нет, хватает слотов действий от бюрократии и срока ввода 2–4 года. За 30 лет это 3–5 законов, если хватит денег.</span></li>
+  </ol>
+</section>
+
+<footer>Blessed Dynasty · предложение «скрытый механизм» · числа стартовые, проверяются прогоном <code>batch</code> на seed 0..999</footer>
+</div>

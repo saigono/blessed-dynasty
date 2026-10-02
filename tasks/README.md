@@ -27,6 +27,10 @@
 | 16 | 16-succession-laws.md | 15 |
 | 17 | 17-heirs-legitimacy.md | 16 |
 | 17b | 17b-disputes-criterion.md | 17 |
+| 18 | 18-influence-graph.md | 17b |
+| 19 | 19-institutions.md | 18 |
+| 20 | 20-symptoms-chain.md | 19 |
+| 21 | 21-transparency-ui.md | 20 |
 
 После этапа 2 параллельно можно вести 3, 5, 8a, 9, 10a. На соло-разработке реально две-три ветки за раз.
 

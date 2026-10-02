@@ -166,6 +166,37 @@ pub struct World {
     /// Weights decay yearly by `Data.sim.decay`.
     #[serde(default)]
     pub marks: BTreeMap<MarkKey, Vec<CauseTag>>,
+    /// The dynasty for the family tree: the founder, then every heir in order of appearance.
+    #[serde(default)]
+    pub kin: Vec<Kin>,
+}
+
+/// A member of the dynasty. Years are calendar years.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Kin {
+    /// `Heir.id`; None for the founder.
+    pub heir: Option<u32>,
+    pub name: String,
+    pub born: u32,
+    pub died: Option<u32>,
+    /// Index in `World.kin` of the ruler whose child this is.
+    pub parent: Option<usize>,
+    /// The year of the coronation, for rulers.
+    pub crowned: Option<u32>,
+}
+
+/// What changed between two worlds, see `World::changes`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Change {
+    /// An axis moved by at least its `AxisDef.notable`.
+    Axis(AxisId, Fx),
+    Born(String),
+    /// An heir left the list: died, or was crowned in the simulation.
+    HeirGone(String),
+    /// A province changed hands: from, to.
+    Holder(ProvinceId, Holder, Holder),
+    /// An action finished: its id and target key.
+    Done(String, Option<String>),
 }
 
 /// A part of the world a decision can touch.
@@ -217,7 +248,18 @@ impl World {
             next_heir_id: 0,
             line_from: 0,
             marks: BTreeMap::new(),
+            kin: Vec::new(),
         };
+        let r = &world.ruler;
+        let founder = Kin {
+            heir: None,
+            name: r.name.clone(),
+            born: world.start_year.saturating_sub(r.age),
+            died: None,
+            parent: None,
+            crowned: Some(world.year()),
+        };
+        world.kin.push(founder);
         for h in std::mem::take(&mut world.heirs) {
             world.add_heir(h);
         }
@@ -241,8 +283,62 @@ impl World {
     pub fn add_heir(&mut self, mut heir: Heir) {
         heir.id = self.next_heir_id;
         self.next_heir_id += 1;
+        self.kin.push(Kin {
+            heir: Some(heir.id),
+            name: heir.name.clone(),
+            born: self.year().saturating_sub(heir.age),
+            died: None,
+            parent: self.kin.iter().rposition(|k| k.crowned.is_some()),
+            crowned: None,
+        });
         let at = self.heirs.iter().position(|h| h.id < self.line_from);
         self.heirs.insert(at.unwrap_or(self.heirs.len()), heir);
+    }
+
+    /// The calendar year now.
+    pub fn year(&self) -> u32 {
+        self.start_year + self.tick.year(self.time_unit)
+    }
+
+    /// Marks dead every heir of `kin` who is neither in `heirs` nor crowned.
+    pub(crate) fn bury(&mut self) {
+        let year = self.year();
+        for k in &mut self.kin {
+            let gone = |id| !self.heirs.iter().any(|h| h.id == id);
+            if k.died.is_none() && k.crowned.is_none() && k.heir.is_some_and(gone) {
+                k.died = Some(year);
+            }
+        }
+    }
+
+    /// What changed since `before`: notable axis moves, births, heirs gone, provinces that
+    /// changed hands, finished actions; in that order.
+    pub fn changes(&self, before: &World, data: &Data) -> Vec<Change> {
+        let axes = (data.axes.iter()).filter_map(|a| {
+            let delta = self.axes[&a.id] - before.axes[&a.id];
+            (a.notable > Fx(0) && Fx(delta.0.abs()) >= a.notable)
+                .then(|| Change::Axis(a.id.clone(), delta))
+        });
+        let new = |a: &[Heir], b: &[Heir]| {
+            let ids: BTreeSet<u32> = b.iter().map(|h| h.id).collect();
+            (a.iter().filter(|h| !ids.contains(&h.id)))
+                .map(|h| h.name.clone())
+                .collect::<Vec<_>>()
+        };
+        let born = new(&self.heirs, &before.heirs)
+            .into_iter()
+            .map(Change::Born);
+        let gone = new(&before.heirs, &self.heirs)
+            .into_iter()
+            .map(Change::HeirGone);
+        let holders = (self.provinces.values()).filter_map(|p| {
+            let was = &before.provinces.get(&p.id)?.holder;
+            (*was != p.holder).then(|| Change::Holder(p.id.clone(), was.clone(), p.holder.clone()))
+        });
+        let done = (before.active_actions.iter())
+            .filter(|a| !self.active_actions.contains(a))
+            .map(|a| Change::Done(a.id.clone(), a.target.clone()));
+        (axes.chain(born).chain(gone).chain(holders).chain(done)).collect()
     }
 
     /// Index in `heirs` of the heir with this id.

@@ -6,7 +6,7 @@ use crate::fx::Fx;
 use crate::game::{ActionId, Game, PendingEvent, ReignEnd, Step};
 use crate::rng::Rng;
 use crate::rules::{Choice, Effect, Event, HeirOp, NewHolder, Predicate, ProvinceField, Target};
-use crate::state::{CauseTag, HeirStatus, Holder, MarkKey, ProvinceId, Ruler, World};
+use crate::state::{CauseTag, HeirStatus, Holder, Kin, MarkKey, ProvinceId, Ruler, World};
 use crate::time::Tick;
 use crate::war::WarStage;
 use serde::{Deserialize, Serialize};
@@ -21,6 +21,9 @@ pub struct Chronicle {
     pub years: u32,
     /// The founder first.
     pub rulers: Vec<RulerRecord>,
+    /// The family tree at the end, `World.kin`.
+    #[serde(default)]
+    pub kin: Vec<Kin>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -79,9 +82,12 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
             cause: Some(reign_end.cause),
             ..founder
         }],
+        kin: Vec::new(),
     };
+    let mut world = reign_end.world;
+    died(&mut world, &data, c.rulers[0].cause.as_deref());
     let mut g = Game {
-        world: reign_end.world,
+        world,
         rng,
         data,
         decisions: Vec::new(),
@@ -176,6 +182,7 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
                     }
                 }
                 Step::ReignEnded(end) => {
+                    died(&mut g.world, &g.data, Some(&end.cause));
                     let last = c.rulers.last_mut().expect("a ruler reigned");
                     (last.end, last.cause) = (end.tick, Some(end.cause));
                     break;
@@ -186,6 +193,7 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
     };
     let w = &g.world;
     c.years = w.tick.year(w.time_unit);
+    c.kin = w.kin.clone();
     let last = c.rulers.last_mut().expect("a ruler reigned");
     if last.cause.is_none() {
         last.end = w.tick;
@@ -224,7 +232,8 @@ pub fn succession(w: &World, data: &Data, rng: &mut Rng) -> Option<Ruler> {
     })
 }
 
-fn next_heir(w: &World) -> Option<usize> {
+/// Who succeeds now: the index in `heirs` of the highest claim, the eldest on a tie.
+pub fn next_heir(w: &World) -> Option<usize> {
     // max_by_key keeps the last of equals; going backwards, that is the eldest.
     (0..w.heirs.len()).rev().max_by_key(|&i| w.heirs[i].claim)
 }
@@ -239,6 +248,10 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     };
     let (d, w, rng) = (&g.data, &mut g.world, &mut g.rng);
     let heir = w.heirs.remove(next_heir(w).expect("succession found one"));
+    let year = w.year();
+    if let Some(k) = w.kin.iter_mut().find(|k| k.heir == Some(heir.id)) {
+        (k.name, k.crowned) = (ruler.name.clone(), Some(year));
+    }
     // His brothers and sisters become the collateral line, behind his children to come.
     w.line_from = w.next_heir_id;
     if let Some(l) = d.heirs.law(w) {
@@ -264,6 +277,15 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     let causes = causes(&g.world, [MarkKey::Heir(heir.id)].into());
     c.entries.push(entry(g, told, g.data.sim.notable, causes));
     true
+}
+
+/// The reigning ruler's death in the family tree, unless the reign ended by abdication.
+fn died(w: &mut World, d: &Data, cause: Option<&str>) {
+    let year = w.year();
+    let ruler = w.kin.iter_mut().rfind(|k| k.crowned.is_some());
+    if let Some(k) = ruler.filter(|_| cause.is_some_and(|c| c != d.abdication.event)) {
+        k.died = Some(year);
+    }
 }
 
 fn record(r: &Ruler) -> RulerRecord {

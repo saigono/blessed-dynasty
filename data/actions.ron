@@ -4,6 +4,7 @@
     // target. Claims follow the law year by year (rules.ron `heirs.laws`).
     (
         id: "change_succession_law_primogeniture",
+        description: "Ввести первородство: трон наследует старший ребёнок. Церковь одобряет, знать ворчит.",
         name: "Закон: престол старшему",
         duration_years: 2,
         cost: 30,
@@ -15,6 +16,7 @@
     ),
     (
         id: "change_succession_law_elective",
+        description: "Наследника будет избирать совет из самых способных. Знати нравится, легитимность падает.",
         name: "Закон: наследника избирает совет",
         duration_years: 2,
         cost: 30,
@@ -26,6 +28,7 @@
     ),
     (
         id: "change_succession_law_none",
+        description: "Отменить твёрдый закон: наследника назначит государь. Наследники станут соперниками, стабильность падает.",
         name: "Закон: наследник по воле государя",
         duration_years: 2,
         cost: 30,
@@ -37,6 +40,7 @@
     ),
     (
         id: "build_fort",
+        description: "Крепость укрепляет власть короны в провинции и помогает в войне, если стоит на границе с врагом. Гарнизон съедает часть дохода.",
         name: "Построить крепость",
         duration_years: 4,
         cost: 80,
@@ -48,6 +52,7 @@
     ),
     (
         id: "build_road",
+        description: "Дорога связывает провинцию со столицей: власть короны там крепнет, торговля приносит чуть больше дохода.",
         name: "Проложить дорогу",
         duration_years: 2,
         cost: 40,
@@ -59,6 +64,7 @@
     ),
     (
         id: "build_market",
+        description: "Рынок даёт провинции доход и радует народ.",
         name: "Открыть рынок",
         duration_years: 3,
         cost: 60,
@@ -75,6 +81,7 @@
     (
         // The crown power drop comes from the vassal base in the crown power formula.
         id: "grant_province",
+        description: "Отдать провинцию ближайшему вассалу или новому дому. Знать довольна, но власть короны там слабеет, а окрепший вассал однажды может восстать.",
         name: "Пожаловать провинцию",
         duration_years: 1,
         cost: 0,
@@ -86,6 +93,7 @@
     ),
     (
         id: "revoke_province",
+        description: "Вернуть провинцию вассала короне. Знать и сама провинция будут недовольны.",
         name: "Отобрать провинцию",
         duration_years: 1,
         cost: 20,
@@ -101,6 +109,8 @@
     ),
     (
         id: "marry_neighbour",
+        description: "Брак правящего дома с соседним двором: отношения с ним сразу растут. Друг (отношения выше 30) торгует, не нападает, через его земли легче дотянуться власти короны. Брак заключают один раз.",
+        bond: "брачный союз",
         name: "Заключить брачный союз",
         duration_years: 1,
         cost: 50,
@@ -112,6 +122,7 @@
     ),
     (
         id: "royal_progress",
+        description: "Объехать владения: государя видят, легитимность и знать немного растут.",
         name: "Объехать владения",
         duration_years: 1,
         cost: 20,
@@ -124,6 +135,7 @@
     (
         // Starts the war chain of events/war.ron at once; one war at a time.
         id: "declare_war",
+        description: "Начать войну с соседом: дальше цепочка событий войны. Война с другом ославит вас предателем.",
         name: "Объявить войну",
         duration_years: 0,
         cost: 20,

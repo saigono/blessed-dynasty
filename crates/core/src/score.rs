@@ -253,6 +253,7 @@ mod tests {
             fall,
             years,
             rulers: Vec::new(),
+            kin: Vec::new(),
         }
     }
 

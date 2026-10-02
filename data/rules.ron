@@ -3,18 +3,18 @@
     time_unit: (ticks_per_year: 1),
 
     // State axes: the world starts with `default`, a preset may override it. `name` is shown
-    // in the UI.
+    // in the UI; a change of at least `notable` in a year goes to the year's summary (0: never).
     axes: [
-        (id: "treasury", min: -1000, max: 10000, default: 100, name: "Казна"),
-        (id: "income", min: -100, max: 1000, default: 10, name: "Доход"),
-        (id: "army", min: 0, max: 1000, default: 50, name: "Армия"),
-        (id: "legitimacy", min: 0, max: 100, default: 50, name: "Легитимность"),
-        (id: "stability", min: 0, max: 100, default: 50, name: "Стабильность"),
-        (id: "bureaucracy", min: 0, max: 100, default: 20, name: "Бюрократия"),
-        (id: "loyalty_nobles", min: 0, max: 100, default: 50, name: "Знать"),
-        (id: "loyalty_church", min: 0, max: 100, default: 50, name: "Церковь"),
-        (id: "loyalty_people", min: 0, max: 100, default: 50, name: "Народ"),
-        (id: "prestige", min: 0, max: 1000, default: 0, name: "Престиж"),
+        (id: "treasury", min: -1000, max: 10000, default: 100, name: "Казна", notable: 100),
+        (id: "income", min: -100, max: 1000, default: 10, name: "Доход", notable: 2),
+        (id: "army", min: 0, max: 1000, default: 50, name: "Армия", notable: 10),
+        (id: "legitimacy", min: 0, max: 100, default: 50, name: "Легитимность", notable: 5),
+        (id: "stability", min: 0, max: 100, default: 50, name: "Стабильность", notable: 5),
+        (id: "bureaucracy", min: 0, max: 100, default: 20, name: "Бюрократия", notable: 5),
+        (id: "loyalty_nobles", min: 0, max: 100, default: 50, name: "Знать", notable: 5),
+        (id: "loyalty_church", min: 0, max: 100, default: 50, name: "Церковь", notable: 5),
+        (id: "loyalty_people", min: 0, max: 100, default: 50, name: "Народ", notable: 5),
+        (id: "prestige", min: 0, max: 1000, default: 0, name: "Престиж", notable: 5),
         // Derived from the faction axes, never written directly; the default is ignored.
         (id: "loyalty", min: 0, max: 100, default: 50, name: "Лояльность"),
     ],
@@ -169,13 +169,20 @@
         claim_step: 2,
         // A new ruler's claim below the law's crisis_claim contests the succession.
         laws: [
-            (flag: "law_primogeniture", eldest: 75, others: 35, ability_k: 0, crisis_claim: 70),
-            (flag: "law_elective", eldest: 0, others: 0, ability_k: 0.9, crisis_claim: 65),
+            // `name` and `description` are for the UI; {eldest}, {others}, {ability_k},
+            // {crisis_claim}, {dispute_per_heir} stand for the numbers of the law.
+            (flag: "law_primogeniture", eldest: 75, others: 35, ability_k: 0, crisis_claim: 70,
+                name: "Первородство",
+                description: "Трон получает старший ребёнок правителя, сын или дочь. Если он умрёт, первым становится следующий по старшинству. Претензия старшего год за годом растёт к {eldest}, остальных держится у {others}. Если у наследника претензия ниже {crisis_claim}, престол оспорят."),
+            (flag: "law_elective", eldest: 0, others: 0, ability_k: 0.9, crisis_claim: 65,
+                name: "Выбор совета",
+                description: "Совет избирает самого способного из наследников: претензия каждого растёт к его способностям × {ability_k}, старшинство не важно. Если у избранного претензия ниже {crisis_claim}, престол оспорят."),
             // Without a law all claims meet at 50: rivals quarrel instead, dispute_per_heir
             // percent per heir left after the coronation.
-            (flag: "law_none", eldest: 50, others: 50, ability_k: 0, crisis_claim: 45, dispute_per_heir: 15),
-        ],
-        birth: [(0, 0), (16, 25), (35, 20), (45, 15), (55, 10), (65, 5)],
+            (flag: "law_none", eldest: 50, others: 50, ability_k: 0, crisis_claim: 45, dispute_per_heir: 15,
+                name: "Воля государя",
+                description: "Твёрдого закона нет: претензии всех наследников сходятся к {others}, трон получает старший ребёнок. Зато каждый оставшийся наследник — соперник: по {dispute_per_heir}% на каждого, что престол оспорят."),
+        ],        birth: [(0, 0), (16, 25), (35, 20), (45, 15), (55, 10), (65, 5)],
         married_flag: "married",
         unmarried: 0.2,
         death: [(0, 120), (1, 40), (5, 15), (16, 10), (30, 15), (40, 20), (50, 30), (55, 60), (60, 90), (65, 130), (70, 180), (80, 300)],

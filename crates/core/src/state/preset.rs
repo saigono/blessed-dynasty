@@ -21,6 +21,9 @@ pub struct Preset {
     /// `law_none`), `married`.
     #[serde(default)]
     pub flags: BTreeSet<String>,
+    /// The backstory shown before the first move.
+    #[serde(default)]
+    pub intro: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]

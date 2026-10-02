@@ -10,6 +10,7 @@
         (id: "income", min: -100, max: 1000, default: 5, name: "Доход", notable: 2),
         (id: "army", min: 0, max: 1000, default: 50, name: "Армия", notable: 10),
         (id: "legitimacy", min: 0, max: 100, default: 50, name: "Легитимность", notable: 5),
+        // Derived (`stability` below): the default is its anchor.
         (id: "stability", min: 0, max: 100, default: 50, name: "Стабильность", notable: 5),
         (id: "bureaucracy", min: 0, max: 100, default: 20, name: "Бюрократия", notable: 5),
         (id: "loyalty_nobles", min: 0, max: 100, default: 50, name: "Знать", notable: 5),
@@ -18,7 +19,14 @@
         (id: "prestige", min: 0, max: 1000, default: 0, name: "Престиж", notable: 5),
         // Derived from the faction axes, never written directly; the default is ignored.
         (id: "loyalty", min: 0, max: 100, default: 50, name: "Лояльность"),
+        // What events do to stability: fades by `step` a year toward 0.
+        (id: "shocks", min: -100, max: 100, default: 0, name: "Потрясения", hidden: true, step: 3),
     ],
+
+    // Stability is derived: its anchor (the axis default) plus the Target edges into it plus
+    // `shocks`, clamped. Axis("stability", x) in effects and rules goes to `shocks`; a
+    // preset's stability is where it starts, the gap a shock.
+    stability: (axis: "stability", shocks: "shocks"),
 
     // Each faction's loyalty is its axis. `loyalty_axis` = weighted mean, rounded toward zero.
     factions: [
@@ -61,6 +69,9 @@
     // toward it by its `step` a year). Flow: to the stock `to` every year.
     influences: [
         (id: "income", from: "income", to: "treasury", k: 1, kind: Flow),
+        // Stability: 50 + 0.6 * (loyalty - 50) + 0.4 * (legitimacy - 50) - heresy + shocks.
+        (id: "st_loyalty", from: "loyalty", to: "stability", k: 0.6, rest: 50),
+        (id: "st_legitimacy", from: "legitimacy", to: "stability", k: 0.4, rest: 50),
     ],
 
     // Per year: faction axes move by `step` toward their default, province loyalty toward

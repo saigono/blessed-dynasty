@@ -434,9 +434,9 @@ fn the_coronation_moves_the_factions_toward_their_defaults() {
         (at(&e, "loyalty_nobles"), at(&e, "loyalty_church")),
         (78, 29)
     );
-    // Not a faction: stability stays.
-    let e = crowned(&data, M, 80, &[("stability", 90)]);
-    assert_eq!(at(&e, "stability"), 90);
+    // Not a faction: bureaucracy stays.
+    let e = crowned(&data, M, 80, &[("bureaucracy", 90)]);
+    assert_eq!(at(&e, "bureaucracy"), 90);
     // The loyalty axis follows its factions: (78 * 2 + 50 + 50) / 4.
     let factions = [
         ("loyalty_nobles", 90),

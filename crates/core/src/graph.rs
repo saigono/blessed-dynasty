@@ -65,10 +65,31 @@ impl Influence {
     }
 }
 
+/// Stability as a derived node (`rules.ron` `stability`): its anchor plus the `Target` edges
+/// into it plus `shocks`, clamped, never a step. `Axis(axis, x)` in effects goes to
+/// `shocks`, a plain axis that fades by its own step toward 0.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Stability {
+    pub axis: AxisId,
+    pub shocks: AxisId,
+}
+
+/// Recomputes the derived stability, if the data has one.
+pub fn recompute_stability(d: &Data, w: &mut World) {
+    let Some(s) = &d.stability else {
+        return;
+    };
+    let a = d.axes.iter().find(|a| a.id == s.axis);
+    let a = a.expect("checked on load");
+    let edges = parts(d, w, &a.id, InfluenceKind::Target);
+    let v = edges.fold(a.anchor.unwrap_or(a.default), |s, (_, c)| s + c) + w.axes[&s.shocks];
+    w.axes.insert(a.id.clone(), v.clamp(a.min, a.max));
+}
+
 /// Yearly step of `a` toward its target: `AxisDef.step`, else `drift.step` for a faction
 /// axis, else 0. Derived axes never step.
 pub fn step(d: &Data, a: &AxisDef) -> Fx {
-    if d.is_derived(&a.id) {
+    if d.is_derived(&a.id) || d.stability.as_ref().is_some_and(|s| s.axis == a.id) {
         return Fx(0);
     }
     let faction = d.factions.iter().any(|f| f.axis == a.id);
@@ -291,5 +312,61 @@ mod tests {
         assert_ne!(crate::war::income_parts(&w, &d), old);
         d.influences = vec![edge(r#"(from: "income", to: "treasury", k: 1, kind: Flow)"#)];
         assert_eq!(crate::war::income_parts(&w, &d), old);
+    }
+
+    fn set(w: &mut World, d: &Data, axes: &[(&str, i64)]) {
+        for (a, v) in axes {
+            w.axes.insert(ax(a), Fx::from_int(*v));
+        }
+        w.recompute_loyalty(d);
+    }
+
+    #[test]
+    fn stability_is_derived_by_the_formula() {
+        let (d, mut w) = setup(RULES);
+        // Loyalty (40 * 2 + 60 + 50) / 4 = 47.5, legitimacy 45: 50 - 1.5 - 2 = 46.5; the
+        // preset's 55 is where it starts, the gap of 8.5 a shock.
+        assert_eq!(w.axes[&ax("shocks")], Fx(8_500));
+        assert_eq!(w.axes[&ax("stability")], Fx::from_int(55));
+        let factions = [("loyalty_nobles", 80), ("loyalty_church", 60), ("loyalty_people", 40)];
+        set(&mut w, &d, &factions);
+        set(&mut w, &d, &[("legitimacy", 20), ("shocks", -4)]);
+        // 50 + 0.6 * (65 - 50) + 0.4 * (20 - 50) - 4.
+        assert_eq!(w.axes[&ax("stability")], Fx::from_int(43));
+        set(&mut w, &d, &[("shocks", -100)]);
+        assert_eq!(w.axes[&ax("stability")], Fx(0)); // clamped
+    }
+
+    #[test]
+    fn writes_to_stability_are_shocks_and_shocks_fade() {
+        let (d, mut w) = setup(RULES);
+        let still = [("loyalty_nobles", 50), ("loyalty_church", 50), ("shocks", 0)];
+        set(&mut w, &d, &still); // nothing else moves
+        let base = w.axes[&ax("stability")];
+        add_axis(&mut w, &d, &ax("stability"), Fx::from_int(-10));
+        assert_eq!(w.axes[&ax("shocks")], Fx::from_int(-10));
+        assert_eq!(w.axes[&ax("stability")], base - Fx::from_int(10));
+        let mut seen = vec![];
+        for _ in 0..4 {
+            tick(&d, &mut w);
+            w.recompute_loyalty(&d);
+            seen.push((w.axes[&ax("stability")] - base).0 / Fx::SCALE);
+        }
+        assert_eq!(seen, [-7, -4, -1, 0]); // shock_decay: the shocks axis steps 3 a year
+        // Never a step of its own: stability has none.
+        let a = d.axes.iter().find(|a| a.id.0 == "stability").unwrap();
+        assert_eq!(step(&d, a), Fx(0));
+    }
+
+    #[test]
+    fn stability_needs_two_plain_axes() {
+        let with = |s: &str| {
+            let block = r#"stability: (axis: "stability", shocks: "shocks")"#;
+            crate::data::load(&RULES.replacen(block, s, 1))
+        };
+        assert!(with(r#"stability: (axis: "stability", shocks: "army")"#).is_ok());
+        assert!(with(r#"stability: (axis: "stability", shocks: "stability")"#).is_err());
+        assert!(with(r#"stability: (axis: "loyalty", shocks: "shocks")"#).is_err());
+        assert!(with(r#"stability: (axis: "stability", shocks: "nothing")"#).is_err());
     }
 }

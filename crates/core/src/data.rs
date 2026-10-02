@@ -1,5 +1,5 @@
 use crate::fx::Fx;
-use crate::graph::Influence;
+use crate::graph::{Influence, Stability};
 use crate::rng::Rng;
 use crate::rules::{Action, ActionTarget, Event, Predicate};
 use crate::sim::FallReason;
@@ -25,6 +25,9 @@ pub struct Data {
     /// The influence graph's edges, counted in this order (`graph::tick`).
     #[serde(default)]
     pub influences: Vec<Influence>,
+    /// Stability derived from the graph; None: a plain axis, written directly.
+    #[serde(default)]
+    pub stability: Option<Stability>,
     /// Weight of "nothing happens" in the random event pick.
     pub quiet_weight: u32,
     /// Province loyalty below this shows as unrest. Display only.
@@ -857,6 +860,14 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
             return Err(invalid(&e.id, "influences: unknown or derived axis".into()));
         }
     }
+    if let Some(s) = &data.stability {
+        let plain = |a| is_axis(a) && !data.is_derived(a);
+        if !plain(&s.axis) || !plain(&s.shocks) || s.axis == s.shocks {
+            return Err(DataError::Invalid(
+                "stability: needs two plain axes".into(),
+            ));
+        }
+    }
     let w = &data.war;
     if w.treasury_full <= Fx(0) || w.roll.0 > w.roll.1 {
         return Err(DataError::Invalid(
@@ -909,7 +920,7 @@ mod tests {
     fn rules_ron_loads() {
         let data = load(RULES).unwrap();
         assert_eq!(data.time_unit, TimeUnit { ticks_per_year: 1 });
-        assert_eq!(data.axes.len(), 11);
+        assert_eq!(data.axes.len(), 12);
         assert!(data.is_derived(&AxisId("loyalty".into())));
         assert!(!data.is_derived(&AxisId("loyalty_nobles".into())));
     }

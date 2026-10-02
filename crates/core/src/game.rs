@@ -1067,6 +1067,7 @@ mod tests {
     #[test]
     fn land_over_the_limit_costs_every_year_until_granted() {
         let mut g = map_game();
+        g.data.stability = None; // a plain axis: the penalty stays, no shock fades
         g.world.axes.insert(ax("bureaucracy"), Fx::from_int(100)); // three slots
         g.data.crown_capacity.per_power = Fx(50); // capital crown power 90: room for 4 of 6
         g.data.crown_capacity.per_axis = vec![];
@@ -1127,6 +1128,7 @@ mod tests {
     #[test]
     fn within_the_limit_there_is_no_penalty() {
         let mut g = map_game();
+        g.data.stability = None; // a plain axis: the penalty stays, no shock fades
         assert_eq!(g.data.crown_capacity.room(&g.world), 8);
         assert!(g.data.crown_capacity.over(&g.world).is_empty());
         let mut big = g.clone();

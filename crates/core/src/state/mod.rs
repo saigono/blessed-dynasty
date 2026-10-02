@@ -334,6 +334,13 @@ impl World {
             n.per_province = n.strength / Fx::from_int(held.count().max(1) as i64);
         }
         world.recompute_loyalty(data);
+        // A preset's stability is where the derived one starts: the gap is a fading shock.
+        if let Some(s) = &data.stability
+            && let Some(v) = preset.axes.get(&s.axis)
+        {
+            let gap = *v - world.axes[&s.axis];
+            crate::rules::add_axis(&mut world, data, &s.axis, gap);
+        }
         world.recompute_crown_power(data);
         // Unreachable provinces are not expected (the map is connected); they get u32::MAX.
         let hops = world.hops(&world.capital.province);
@@ -503,7 +510,8 @@ impl World {
         self.clone()
     }
 
-    /// Sets `loyalty_axis` to the weighted mean of the faction axes, rounded toward zero.
+    /// Sets `loyalty_axis` to the weighted mean of the faction axes, rounded toward zero;
+    /// then the derived stability, which reads it.
     pub fn recompute_loyalty(&mut self, data: &Data) {
         let total: i64 = data.factions.iter().map(|f| f.weight as i64).sum();
         let sum: i64 = data
@@ -512,6 +520,7 @@ impl World {
             .map(|f| self.axes[&f.axis].0 * f.weight as i64)
             .sum();
         self.axes.insert(data.loyalty_axis.clone(), Fx(sum / total));
+        crate::graph::recompute_stability(data, self);
     }
 
     /// Recomputes `crown_power` of every province from scratch; formula in `rules.ron`.

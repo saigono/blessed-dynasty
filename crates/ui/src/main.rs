@@ -843,6 +843,13 @@ mod tests {
         assert_eq!(c, want);
         assert_eq!(s, score::compute(&c, &g.decisions, &h.app.score_rules));
 
+        // A click on the list selects the entry.
+        let e = &c.entries[1];
+        let date = e
+            .tick
+            .date(h.game().world.time_unit, h.game().world.start_year);
+        h.click_label(&format!("{date}  {}", e.title));
+        assert!(matches!(h.app.screen, Screen::Chronicle) && h.app.entry == 1);
         let last = c.entries.len() - 1;
         h.app.apply(Cmd::Entry(last));
         h.click_label("К итогу ▸");

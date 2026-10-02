@@ -56,6 +56,7 @@ pub fn chronicle(
         })
     });
     egui::Panel::left("years").exact_size(230.0).show(ui, |ui| {
+        ui.visuals_mut().selection.bg_fill = BG2;
         egui::ScrollArea::vertical().show(ui, |ui| {
             for (i, (e, &(r, crowns))) in c.entries.iter().zip(&reigns).enumerate() {
                 let date = e.tick.date(w.time_unit, w.start_year);
@@ -94,6 +95,7 @@ pub fn chronicle(
             snapshot_table(ui, e, d);
         });
     egui::CentralPanel::default().show(ui, |ui| {
+        ui.set_max_width(680.0);
         let (r, crowns) = reigns[selected];
         let ruler = &c.rulers[r];
         let tpy = w.time_unit.ticks_per_year;
@@ -131,7 +133,12 @@ pub fn chronicle(
         }
         if let Some(h) = &e.hint {
             ui.add_space(6.0);
-            let resp = ui.indent("hint", |ui| ui.label(RichText::new(h).italics().color(FG2)));
+            let margin = egui::Margin {
+                left: 10,
+                ..Default::default()
+            };
+            let frame = egui::Frame::new().inner_margin(margin);
+            let resp = frame.show(ui, |ui| ui.label(RichText::new(h).italics().color(FG2)));
             let rect = resp.response.rect;
             ui.painter()
                 .vline(rect.left(), rect.y_range(), (2.0, RUBRIC));

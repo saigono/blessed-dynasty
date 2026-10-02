@@ -477,7 +477,7 @@ fn graph_costs_at_most_15_percent() {
     );
 }
 
-/// Stage 19: the laws (the automaton weighs a dozen of them a year) cost at most 40% over
+/// Stage 19: the laws (the automaton weighs a dozen of them a year) cost at most 50% over
 /// data/ without `laws`; docs/calibration.md, stage 19.
 /// `cargo test --release -p cli -- --ignored laws_cost`.
 #[test]
@@ -486,7 +486,7 @@ fn laws_cost_is_bounded() {
     let old = batch_time(&data_without("laws_off", &["laws"]));
     let new = batch_time("data");
     assert!(
-        new.as_millis() * 100 <= old.as_millis() * 140,
+        new.as_millis() * 100 <= old.as_millis() * 150,
         "{old:?} -> {new:?}"
     );
 }

@@ -2,6 +2,7 @@
 
 use bd_core::fx::Fx;
 use bd_core::game::{Decision, DecisionKind, Game, ReignEnd, Step};
+use bd_core::link::replay;
 use bd_core::rules::Target;
 use bd_core::score::{self, ScoreRules};
 use bd_core::sim::{self, AutoChooser, FallReason};
@@ -516,43 +517,6 @@ fn play(g: &mut Game, auto: Option<&AutoChooser>) -> Result<(), String> {
             }
             Step::ReignEnded(_) => break,
         }
-    }
-    Ok(())
-}
-
-/// Repeats the decisions at their ticks, then waits until `end`.
-fn replay(g: &mut Game, decisions: &[Decision], end: Tick) -> Result<(), String> {
-    for d in decisions {
-        advance(g, d.tick)?;
-        let res = match &d.kind {
-            DecisionKind::ActionStarted { action_id, target } => {
-                g.start_action(action_id, target.clone()).map_err(err)
-            }
-            DecisionKind::Abdicate => g.abdicate().map_err(err),
-            DecisionKind::EventChoice {
-                event_id,
-                choice_idx,
-                ..
-            } => match &g.pending_event {
-                Some(p) if p.event_id == *event_id => g.choose(*choice_idx).map_err(err),
-                p => Err(format!("ждали событие {event_id}, а есть {p:?}")),
-            },
-        };
-        res.map_err(|e| format!("журнал не совпадает на тике {}: {e}", d.tick.0))?;
-    }
-    advance(g, end)
-}
-
-/// An event before `tick` means the journal skipped a choice.
-fn advance(g: &mut Game, tick: Tick) -> Result<(), String> {
-    while g.world.tick < tick {
-        if let Some(p) = &g.pending_event {
-            let (id, now) = (&p.event_id, g.world.tick.0);
-            return Err(format!(
-                "журнал не совпадает: событие {id} на тике {now} без выбора"
-            ));
-        }
-        g.wait().map_err(err)?;
     }
     Ok(())
 }

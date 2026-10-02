@@ -1,6 +1,7 @@
 pub mod data;
 pub mod fx;
 pub mod game;
+pub mod link;
 pub mod neighbour;
 pub mod rng;
 pub mod rules;

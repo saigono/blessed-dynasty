@@ -201,8 +201,9 @@ pub fn summary(
                 if ui.button("Новый seed").clicked() {
                     cmd = Some(Cmd::NewSeed);
                 }
-                ui.add_enabled(false, Button::new("Скопировать ссылку"))
-                    .on_disabled_hover_text("Ссылки на партию появятся позже");
+                if ui.button("Скопировать ссылку").clicked() {
+                    cmd = Some(Cmd::CopyLink);
+                }
             });
             let decisions = g.decisions.len() as u32;
             let line = format!(

@@ -15,11 +15,12 @@ const RULES: &str = include_str!("../../../data/rules.ron");
 const ACTIONS: &str = include_str!("../../../data/actions.ron");
 const NAMES: &str = include_str!("../../../data/names.ron");
 /// Every top-level file of data/events, in file name order like the CLI.
-const EVENTS: [&str; 4] = [
+const EVENTS: [&str; 5] = [
     include_str!("../../../data/events/death.ron"),
     include_str!("../../../data/events/heirs.ron"),
     include_str!("../../../data/events/neighbours.ron"),
     include_str!("../../../data/events/reign.ron"),
+    include_str!("../../../data/events/war.ron"),
 ];
 /// `(preset, map)`.
 const PRESETS: [(&str, &str); 1] = [(
@@ -888,6 +889,21 @@ mod tests {
             ("no_name +1.5", true),
         ];
         assert_eq!(shown, want.map(|(s, up)| (s.to_string(), up)));
+    }
+
+    #[test]
+    fn every_event_file_is_embedded() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../data/events");
+        let mut files: Vec<_> = (std::fs::read_dir(dir).unwrap())
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "ron"))
+            .collect();
+        files.sort();
+        let texts: Vec<String> = files
+            .iter()
+            .map(|p| std::fs::read_to_string(p).unwrap())
+            .collect();
+        assert_eq!(texts, EVENTS, "EVENTS must list {files:?} in this order");
     }
 
     #[test]

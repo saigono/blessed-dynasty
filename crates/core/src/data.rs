@@ -878,9 +878,7 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
     if let Some(s) = &data.stability {
         let plain = |a| is_axis(a) && !data.is_derived(a);
         if !plain(&s.axis) || !plain(&s.shocks) || s.axis == s.shocks {
-            return Err(DataError::Invalid(
-                "stability: needs two plain axes".into(),
-            ));
+            return Err(DataError::Invalid("stability: needs two plain axes".into()));
         }
     }
     let w = &data.war;

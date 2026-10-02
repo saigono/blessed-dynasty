@@ -23,7 +23,10 @@ fn ron_files(rel: &str) -> Vec<String> {
         .filter(|p| p.extension().is_some_and(|x| x == "ron"))
         .collect();
     files.sort();
-    files.iter().map(|f| fs::read_to_string(f).unwrap()).collect()
+    files
+        .iter()
+        .map(|f| fs::read_to_string(f).unwrap())
+        .collect()
 }
 
 /// `rules` and `actions` texts, the rest of the content from data/.
@@ -77,7 +80,10 @@ fn runs_hash(data: &Data, n: u64) -> u64 {
 /// no new nodes, no stability block) play exactly as on main, byte for byte.
 #[test]
 fn data_without_edges_plays_as_main() {
-    let data = content(&read("tests/main/rules.ron"), &read("tests/main/actions.ron"));
+    let data = content(
+        &read("tests/main/rules.ron"),
+        &read("tests/main/actions.ron"),
+    );
     assert_eq!(runs_hash(&data, 50), 15158972918327858678);
 }
 
@@ -85,7 +91,11 @@ fn data_without_edges_plays_as_main() {
 fn with(axes: &str, edges: &str) -> Data {
     let rules = read("../../data/rules.ron");
     let rules = rules.replacen("    axes: [\n", &format!("    axes: [\n{axes}\n"), 1);
-    let rules = rules.replacen("    influences: [\n", &format!("    influences: [\n{edges}\n"), 1);
+    let rules = rules.replacen(
+        "    influences: [\n",
+        &format!("    influences: [\n{edges}\n"),
+        1,
+    );
     content(&rules, &read("../../data/actions.ron"))
 }
 
@@ -101,10 +111,22 @@ fn target(d: &Data, w: &World, id: &str) -> Fx {
 /// and at the start every source stands at its rest: every target is the anchor.
 #[test]
 fn the_graph_of_the_design_is_silent_at_the_start() {
-    let d = content(&read("../../data/rules.ron"), &read("../../data/actions.ron"));
+    let d = content(
+        &read("../../data/rules.ron"),
+        &read("../../data/actions.ron"),
+    );
     let hidden = (d.axes.iter()).filter(|a| a.hidden && a.reveal.is_some());
     let hidden: Vec<_> = hidden.map(|a| a.id.0.as_str()).collect();
-    let nodes = ["serfdom", "strata", "mobility", "liberties", "trade", "grain", "literacy", "faith"];
+    let nodes = [
+        "serfdom",
+        "strata",
+        "mobility",
+        "liberties",
+        "trade",
+        "grain",
+        "literacy",
+        "faith",
+    ];
     assert_eq!(hidden, nodes);
     for i in 1..=18 {
         assert!(d.influences.iter().any(|e| e.id == format!("e{i}")), "e{i}");
@@ -129,7 +151,12 @@ fn a_loop_of_gain_over_one_stops_where_its_curve_saturates() {
     let mut w = Game::new(d.clone(), &preset(&d), 0).world;
     w.axes.insert(ax("x"), Fx::from_int(52));
     w.axes.insert(ax("y"), Fx::from_int(52));
-    let at = |w: &World| (w.axes[&ax("x")].0 / Fx::SCALE, w.axes[&ax("y")].0 / Fx::SCALE);
+    let at = |w: &World| {
+        (
+            w.axes[&ax("x")].0 / Fx::SCALE,
+            w.axes[&ax("y")].0 / Fx::SCALE,
+        )
+    };
     graph::tick(&d, &mut w);
     assert_eq!(at(&w), (53, 52)); // 50 + 1.5 * 2: it grows
     for _ in 0..200 {

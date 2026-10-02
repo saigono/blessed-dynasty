@@ -232,13 +232,16 @@ mod tests {
     #[test]
     fn a_target_edge_shifts_the_target_by_k_times_the_distance_from_rest() {
         let (mut d, mut w) = setup(RULES);
-        d.influences = vec![edge(r#"(from: "legitimacy", to: "army", k: 0.5, rest: 40)"#)];
+        d.influences = vec![edge(
+            r#"(from: "legitimacy", to: "army", k: 0.5, rest: 40)"#,
+        )];
         // Legitimacy 45 (preset): 50 + 0.5 * (45 - 40).
         assert_eq!(army_target(&d, &w), Fx(52_500));
         w.axes.insert(ax("legitimacy"), Fx::from_int(20));
         assert_eq!(army_target(&d, &w), Fx::from_int(40));
         // A second edge adds up; an edge of k < 0 pulls down.
-        d.influences.push(edge(r#"(from: "prestige", to: "army", k: -1, rest: 0)"#));
+        d.influences
+            .push(edge(r#"(from: "prestige", to: "army", k: -1, rest: 0)"#));
         assert_eq!(army_target(&d, &w), Fx::from_int(20)); // prestige 20
         // The army steps toward it.
         def(&mut d, "army").step = Some(Fx::from_int(100));
@@ -310,7 +313,9 @@ mod tests {
         assert_eq!(d.economy.flows, [(ax("income"), Fx::from_int(1))]);
         d.economy.flows.clear();
         assert_ne!(crate::war::income_parts(&w, &d), old);
-        d.influences = vec![edge(r#"(from: "income", to: "treasury", k: 1, kind: Flow)"#)];
+        d.influences = vec![edge(
+            r#"(from: "income", to: "treasury", k: 1, kind: Flow)"#,
+        )];
         assert_eq!(crate::war::income_parts(&w, &d), old);
     }
 
@@ -328,7 +333,11 @@ mod tests {
         // preset's 55 is where it starts, the gap of 8.5 a shock.
         assert_eq!(w.axes[&ax("shocks")], Fx(8_500));
         assert_eq!(w.axes[&ax("stability")], Fx::from_int(55));
-        let factions = [("loyalty_nobles", 80), ("loyalty_church", 60), ("loyalty_people", 40)];
+        let factions = [
+            ("loyalty_nobles", 80),
+            ("loyalty_church", 60),
+            ("loyalty_people", 40),
+        ];
         set(&mut w, &d, &factions);
         set(&mut w, &d, &[("legitimacy", 20), ("shocks", -4)]);
         // 50 + 0.6 * (65 - 50) + 0.4 * (20 - 50) - 4, no heresy at faith 65.
@@ -345,7 +354,11 @@ mod tests {
     #[test]
     fn writes_to_stability_are_shocks_and_shocks_fade() {
         let (d, mut w) = setup(RULES);
-        let still = [("loyalty_nobles", 50), ("loyalty_church", 50), ("shocks", 0)];
+        let still = [
+            ("loyalty_nobles", 50),
+            ("loyalty_church", 50),
+            ("shocks", 0),
+        ];
         set(&mut w, &d, &still); // nothing else moves
         let base = w.axes[&ax("stability")];
         add_axis(&mut w, &d, &ax("stability"), Fx::from_int(-10));

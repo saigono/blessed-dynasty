@@ -256,6 +256,7 @@ mod tests {
             kin: Vec::new(),
             axes: Default::default(),
             deserted: 0,
+            nodes: vec![],
         }
     }
 

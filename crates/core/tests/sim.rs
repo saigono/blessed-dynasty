@@ -131,7 +131,10 @@ fn golden_seed_42_script_a() {
     // Stage 18: the influence graph and a derived stability whose shocks fade: a quieter
     // reign, Конрад weathers «Смута» and the dynasty lives to the horizon; Вейр, grown by
     // the grants, still revolts.
-    assert_eq!((c.years, &c.fall, c.entries.len()), (300, &FallReason::Alive, 101));
+    assert_eq!(
+        (c.years, &c.fall, c.entries.len()),
+        (300, &FallReason::Alive, 101)
+    );
     let hint = |h: &'static str| Some(h);
     assert_eq!(
         texts(&c)[..3],
@@ -1048,7 +1051,10 @@ fn year_changes_of_seed_42_script_a() {
         (1199, vec![Change::Born("Освальд".into())]),
         (1200, vec![people(5_928)]),
         (1201, vec![nobles(-6)]),
-        (1202, vec![axis("army", 20), Change::Born("Рейнхольд".into())]),
+        (
+            1202,
+            vec![axis("army", 20), Change::Born("Рейнхольд".into())],
+        ),
         (1204, vec![axis("loyalty_church", 5)]),
         (1207, vec![nobles(6)]),
         (1212, vec![Change::Axis(ax("loyalty_nobles"), Fx(-6_480))]),

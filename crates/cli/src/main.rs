@@ -66,7 +66,8 @@ enum Cmd {
         files: Files,
     },
     /// Plays a script, then the neutral strategy until the reign ends, and prints for every
-    /// chronicle entry the chain decision -> mark -> event.
+    /// chronicle entry the chain decision -> mark -> event; with `--node`, instead, every
+    /// simulated year of that axis: its value, its target and what each edge adds to it.
     Trace {
         #[arg(long)]
         seed: u64,
@@ -74,6 +75,8 @@ enum Cmd {
         files: Files,
         #[arg(long)]
         script: PathBuf,
+        #[arg(long)]
+        node: Option<String>,
     },
 }
 
@@ -214,13 +217,16 @@ fn run(cli: Cli) -> Result<(), String> {
             let rows = (seed_start..seed_start + runs)
                 .map(|seed| batch_row(&start, seed, &script, auto.as_ref(), &rules))
                 .collect::<Result<Vec<_>, _>>()?;
-            print!("{}", batch_report(&rows));
+            let hidden = start.data.axes.iter().filter(|a| a.hidden);
+            let hidden: Vec<&str> = hidden.map(|a| a.id.0.as_str()).collect();
+            print!("{}", batch_report(&rows, &hidden));
             Ok(())
         }
         Cmd::Trace {
             seed,
             files,
             script,
+            node,
         } => {
             let mut g = load(&files, seed)?;
             let rules = score_rules(&files, &g)?;
@@ -229,7 +235,10 @@ fn run(cli: Cli) -> Result<(), String> {
             let (Some(c), _) = dynasty(&g, &rules) else {
                 return Err("правление не кончилось".into());
             };
-            print!("{}", trace(&g, &c));
+            match node {
+                Some(node) => print!("{}", node_trace(&g, &c, &node)?),
+                None => print!("{}", trace(&g, &c)),
+            }
             Ok(())
         }
     }
@@ -280,7 +289,15 @@ struct Row {
     /// Coronations of an heir designated over the rightful one, and of bastards.
     designated: u32,
     bastards: u32,
+    /// Per hidden axis (`AxisDef.hidden`, in data order): its value at the dynasty's years
+    /// `NODES_AT` (None: fallen before) and at the fall; its years at a bound and all its
+    /// simulated years.
+    nodes: Vec<[Option<i64>; 3]>,
+    bounds: Vec<(usize, usize)>,
 }
+
+/// Dynasty years `batch` reports the hidden nodes at, besides the fall.
+const NODES_AT: [u32; 2] = [100, 150];
 
 /// Reign years `batch` reports the treasury at.
 const TREASURY_AT: [usize; 3] = [10, 20, 30];
@@ -315,7 +332,28 @@ fn batch_row(
     let contested =
         |e: &&sim::ChronicleEntry| e.snapshot.flags.contains(&g.data.abdication.contested_flag);
     let laws = c.entries.iter().filter(|e| e.title == t.law_changed.0);
+    let hidden = (g.data.axes.iter().enumerate()).filter(|(_, a)| a.hidden);
+    let year = |y: u32, i: usize| {
+        let n = c.nodes.iter().find(|n| n.year == y);
+        n.map(|n| n.axes[i].0 / Fx::SCALE)
+    };
+    let nodes = (hidden.clone())
+        .map(|(i, a)| {
+            [
+                year(NODES_AT[0], i),
+                year(NODES_AT[1], i),
+                Some(axis(&a.id)),
+            ]
+        })
+        .collect();
+    let bounds = (hidden.map(|(i, a)| {
+        let at = (c.nodes.iter()).filter(|n| n.axes[i] <= a.min || n.axes[i] >= a.max);
+        (at.count(), c.nodes.len())
+    }))
+    .collect();
     Ok(Row {
+        nodes,
+        bounds,
         successions: crowned.clone().count() as u32,
         contested: crowned.filter(contested).count() as u32,
         law_changes: laws.count() as u32,
@@ -337,12 +375,17 @@ fn batch_row(
 
 /// The CSV, then `#` lines: quartiles of the dynasty years, score, reign years, army and
 /// treasury at the end, the reign's treasury at `TREASURY_AT`, the share of early deaths and
-/// of dynasties whose army deserted, the fall reasons by frequency.
-fn batch_report(rows: &[Row]) -> String {
+/// of dynasties whose army deserted, the fall reasons by frequency; the hidden nodes (`hidden`,
+/// the order of `Row.nodes`) at `NODES_AT` and the fall, and their years at a bound.
+fn batch_report(rows: &[Row], hidden: &[&str]) -> String {
     let mut out = String::from(
         "seed,reign_years,dynasty_years,score,fall_reason,early_death,army,treasury,deserted,\
-         treasury_10,treasury_20,treasury_30\n",
+         treasury_10,treasury_20,treasury_30",
     );
+    for id in hidden {
+        out += &format!(",{id}_{},{id}_{},{id}_fall", NODES_AT[0], NODES_AT[1]);
+    }
+    out += "\n";
     for r in rows {
         let early = r.reign < EARLY_YEARS;
         let (seed, reign, years, score, army) = (r.seed, r.reign, r.years, r.score, r.army);
@@ -355,6 +398,9 @@ fn batch_report(rows: &[Row]) -> String {
                 .get(y - 1)
                 .map_or(String::new(), |t| t.to_string());
             out += &format!(",{t}");
+        }
+        for v in r.nodes.iter().flatten() {
+            out += &format!(",{}", v.map_or(String::new(), |v| v.to_string()));
         }
         out += "\n";
     }
@@ -408,6 +454,37 @@ fn batch_report(rows: &[Row]) -> String {
         "# закон сменён после основателя в {}% династий\n",
         percent(changed, rows.len())
     );
+    if !hidden.is_empty() {
+        let at = NODES_AT.map(|y| format!("{y}-м году"));
+        out += &format!(
+            "# скрытые узлы, квартили на {} / {} / при падении; на краях:\n",
+            at[0], at[1]
+        );
+    }
+    let permille = |(n, of): (usize, usize)| {
+        format!(
+            "{}.{}%",
+            n * 1000 / of.max(1) / 10,
+            n * 1000 / of.max(1) % 10
+        )
+    };
+    for (k, id) in hidden.iter().enumerate() {
+        let at = |j: usize| quartiles(rows.iter().filter_map(|r| r.nodes[k][j]).collect());
+        let bounds = rows.iter().map(|r| r.bounds[k]);
+        let bounds = bounds.fold((0, 0), |(a, b), (n, of)| (a + n, b + of));
+        out += &format!(
+            "#   {id} {} | {} | {} | {}\n",
+            at(0),
+            at(1),
+            at(2),
+            permille(bounds)
+        );
+    }
+    let all = rows.iter().flat_map(|r| &r.bounds);
+    let all = all.fold((0, 0), |(a, b), (n, of)| (a + n, b + of));
+    if !hidden.is_empty() {
+        out += &format!("# узло-лет на краях {}\n", permille(all));
+    }
     out += "# причины падения:\n";
     let mut falls: BTreeMap<String, usize> = BTreeMap::new();
     for r in rows {
@@ -453,6 +530,40 @@ fn trace(g: &Game, c: &sim::Chronicle) -> String {
         }
     }
     out
+}
+
+/// Every simulated year of `node`: its value, its target and the `Target` edges into it,
+/// each with what it adds (in file order).
+fn node_trace(g: &Game, c: &sim::Chronicle, node: &str) -> Result<String, String> {
+    let d = &g.data;
+    let pos = |id: &str| d.axes.iter().position(|a| a.id.0 == id);
+    let i = pos(node).ok_or(format!("нет оси {node}"))?;
+    let a = &d.axes[i];
+    let edges = (d.influences.iter().enumerate())
+        .filter(|(_, e)| e.to.0 == node && e.kind == bd_core::graph::InfluenceKind::Target);
+    let mut out = String::new();
+    for n in &c.nodes {
+        let date = g.world.start_year + n.year;
+        let parts: Vec<(&str, Fx)> = (edges.clone())
+            .map(|(j, e)| {
+                let src = match e.delay {
+                    0 => n.axes[pos(&e.from.0).expect("checked on load")],
+                    _ => n.lagged[j],
+                };
+                (e.id.as_str(), e.contribution(src))
+            })
+            .collect();
+        let anchor = a.anchor.unwrap_or(a.default);
+        let target = (parts.iter())
+            .fold(anchor, |s, (_, v)| s + *v)
+            .clamp(a.min, a.max);
+        out += &format!("{date} {node} {} → {target}:", n.axes[i]);
+        for (id, v) in parts {
+            out += &format!(" {id} {}{v}", if v < Fx(0) { "" } else { "+" });
+        }
+        out += "\n";
+    }
+    Ok(out)
 }
 
 fn target_name(t: &Option<Target>) -> String {
@@ -801,6 +912,8 @@ mod tests {
             law_changes: (seed == 3) as u32,
             designated: (seed == 1) as u32,
             bastards: 2 * (seed == 2) as u32,
+            nodes: vec![],
+            bounds: vec![],
         };
         let rows = [
             row(0, 5, 10, FallReason::NoHeir, 0),
@@ -808,7 +921,7 @@ mod tests {
             row(2, 40, 20, FallReason::Usurped, 0),
             row(3, 20, 40, FallReason::Alive, 0),
         ];
-        let out = batch_report(&rows);
+        let out = batch_report(&rows, &[]);
         let mut lines = out.lines();
         assert_eq!(
             lines.next(),
@@ -848,6 +961,27 @@ mod tests {
                 "#   NoHeir 25%",
             ]
         );
+        // A hidden node x: three columns, quartiles at 100 (none lived to 150) and at the
+        // fall, its years at a bound (0 + 1 + 2 + 3 of 400).
+        let rows = rows.map(|r| Row {
+            nodes: vec![[Some(r.seed as i64 * 10), None, Some(5)]],
+            bounds: vec![(r.seed as usize, 100)],
+            ..r
+        });
+        let out = batch_report(&rows, &["x"]);
+        let mut lines = out.lines();
+        assert!(
+            lines
+                .next()
+                .unwrap()
+                .ends_with(",treasury_30,x_100,x_150,x_fall")
+        );
+        assert_eq!(lines.next(), Some("0,5,100,10,NoHeir,true,5,100,0,,,,0,,5"));
+        assert!(
+            out.contains("\n#   x 10 / 20 / 30 | 0 / 0 / 0 | 5 / 5 / 5 | 1.5%\n"),
+            "{out}"
+        );
+        assert!(out.contains("\n# узло-лет на краях 1.5%\n"), "{out}");
     }
 
     #[test]

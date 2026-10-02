@@ -340,7 +340,12 @@ fn runaway_loops(data: &Data) -> Vec<(String, bd_core::fx::Fx)> {
         false => Fx(0),
     };
     (data.loops.iter())
-        .map(|(name, ids)| (name.clone(), (ids.iter().map(edge)).fold(Fx::from_int(1), |g, e| g * gain(e))))
+        .map(|(name, ids)| {
+            (
+                name.clone(),
+                (ids.iter().map(edge)).fold(Fx::from_int(1), |g, e| g * gain(e)),
+            )
+        })
         .filter(|(_, g)| *g >= Fx(1_500))
         .collect()
 }
@@ -349,7 +354,11 @@ fn runaway_loops(data: &Data) -> Vec<(String, bd_core::fx::Fx)> {
 fn no_loop_runs_away_outside_its_curves() {
     let data = load_all();
     assert_eq!(data.loops.len(), 5);
-    assert!(runaway_loops(&data).is_empty(), "{:?}", runaway_loops(&data));
+    assert!(
+        runaway_loops(&data).is_empty(),
+        "{:?}",
+        runaway_loops(&data)
+    );
     // П1 with e2 straight and steep: 1.875 * 0.8 = 1.5.
     let mut steep = data.clone();
     let e2 = steep.influences.iter_mut().find(|e| e.id == "e2").unwrap();
@@ -386,9 +395,14 @@ fn direct_writes_to_stability_do_not_grow() {
     for (id, effects) in lists {
         let mut all = vec![];
         walk(effects, &mut all);
-        let direct = all.iter().filter(|e| matches!(e, Effect::Axis(a, _) if a == stability));
+        let direct = all
+            .iter()
+            .filter(|e| matches!(e, Effect::Axis(a, _) if a == stability));
         writes.extend(direct.map(|_| id.clone()));
     }
     eprintln!("warning: stability written directly (as shocks): {writes:?}");
-    assert!(writes.len() <= 22, "new direct writes to stability: {writes:?}");
+    assert!(
+        writes.len() <= 22,
+        "new direct writes to stability: {writes:?}"
+    );
 }

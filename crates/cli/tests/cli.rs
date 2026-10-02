@@ -84,8 +84,9 @@ fn batch_of_ten_is_deterministic() {
         assert_eq!(out, batch(&args));
         let mut lines = out.lines();
         let header = "seed,reign_years,dynasty_years,score,fall_reason,early_death,army,\
-                      treasury,deserted,treasury_10,treasury_20,treasury_30";
-        assert_eq!(lines.next(), Some(header));
+                      treasury,deserted,treasury_10,treasury_20,treasury_30,";
+        let head = lines.next().unwrap();
+        assert!(head.starts_with(header), "{head}");
         let rows: Vec<_> = lines.clone().filter(|l| !l.starts_with('#')).collect();
         assert_eq!(rows.len(), 10, "{out}");
         assert!(
@@ -146,6 +147,59 @@ fn trace_links_entries_to_decisions() {
         "{chain}"
     );
     assert!(out.contains("  без решений основателя\n"), "{out}");
+}
+
+/// Stage 18: the hidden nodes at the dynasty's 100th and 150th year and at the fall, one
+/// column each, and their share of years at a bound.
+#[test]
+fn batch_reports_the_hidden_nodes() {
+    let out = batch(&["--runs", "3"]);
+    let mut lines = out.lines();
+    let head: Vec<_> = lines.next().unwrap().split(',').collect();
+    for col in [
+        "serfdom_100",
+        "serfdom_150",
+        "serfdom_fall",
+        "faith_150",
+        "shocks_fall",
+    ] {
+        assert!(head.contains(&col), "{col}: {head:?}");
+    }
+    let row: Vec<_> = lines.next().unwrap().split(',').collect();
+    assert_eq!(row.len(), head.len());
+    let fall = head.iter().position(|c| *c == "faith_fall").unwrap();
+    assert!(row[fall].parse::<i64>().is_ok(), "{row:?}");
+    assert!(out.contains("#   faith "), "{out}");
+    assert!(out.contains("# узло-лет на краях "), "{out}");
+}
+
+/// Stage 18: `trace --node` tells a node's value, target and edges year by year.
+#[test]
+fn trace_tells_the_edges_into_a_node() {
+    let args = [
+        "trace",
+        "--seed",
+        "42",
+        "--script",
+        "data/scripts/test.ron",
+        "--node",
+    ];
+    let out = stdout(cli(&[&args[..], &["serfdom"]].concat()));
+    let first = out.lines().next().unwrap();
+    // «1218 serfdom 30 → 30: e4 +0»: the year, the value, the target, edge e4 from the nobles.
+    assert!(
+        first.contains(" serfdom ") && first.contains(" → "),
+        "{out}"
+    );
+    assert!(first.contains(": e4 "), "{out}");
+    assert!(out.lines().count() > 50, "{out}");
+    let bad = Command::new(env!("CARGO_BIN_EXE_cli"))
+        .args([&args[..], &["nothing"]].concat())
+        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+        .output()
+        .unwrap();
+    assert!(!bad.status.success());
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("нет оси nothing"));
 }
 
 /// Stage 8b acceptance: 1000 games in under 60 s. Only meaningful in release:

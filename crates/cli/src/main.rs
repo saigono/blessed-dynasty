@@ -483,10 +483,9 @@ fn wait(g: &mut Game, n: u32, soft: bool) -> Result<(), String> {
 /// and makes every choice; without it (`neutral`) no actions and the middle choice.
 fn play(g: &mut Game, auto: Option<&AutoChooser>) -> Result<(), String> {
     let end = MAX_YEARS.ticks(g.world.time_unit);
-    while g.world.tick < end {
+    while g.world.tick < end && g.ended.is_none() {
         if let Some(a) = auto
             && g.pending_event.is_none()
-            && g.ended.is_none()
             && let Some((id, target)) = a.action(g)
         {
             g.start_action(&id, target).map_err(err)?;
@@ -649,6 +648,47 @@ mod tests {
         assert!(fails("[Action(\"nope\", None)]").contains("Unknown"));
         assert!(fails("[Wait(1), Abdicate]").contains("EventPending"));
         assert!(parse("[Jump]").is_err());
+    }
+
+    #[test]
+    fn soft_wait_takes_the_middle_and_goes_on() {
+        let mut g = game();
+        play_script(&mut g, &script("[Wait(5), Wait(1)]"), true).unwrap();
+        // An event every tick: each one waiting when the next tick comes takes the middle.
+        assert_eq!(g.world.tick, Tick(6));
+        assert_eq!(tags(&g), ["b"; 5]);
+        assert!(g.pending_event.is_some());
+    }
+
+    #[test]
+    fn batch_summary() {
+        let row = |seed, reign, score, fall| (seed, reign, 100, score, fall);
+        let rows = [
+            row(0, 5, 10, FallReason::NoHeir),
+            row(1, 30, 30, FallReason::Usurped),
+            row(2, 40, 20, FallReason::Usurped),
+            row(3, 20, 40, FallReason::Alive),
+        ];
+        let out = batch_report(&rows);
+        let mut lines = out.lines();
+        assert_eq!(lines.next(), Some("seed,reign_years,dynasty_years,score,fall_reason,early_death"));
+        assert_eq!(lines.next(), Some("0,5,100,10,NoHeir,true"));
+        let summary: Vec<_> = lines.skip(3).collect();
+        assert_eq!(
+            summary,
+            [
+                "# runs 4",
+                "# квартили (25 / 50 / 75%):",
+                "#   лет династии 100 / 100 / 100",
+                "#   счёт 20 / 30 / 40",
+                "#   лет правления 20 / 30 / 40",
+                "# ранняя смерть 25%",
+                "# причины падения:",
+                "#   Usurped 50%",
+                "#   Alive 25%",
+                "#   NoHeir 25%",
+            ]
+        );
     }
 
     #[test]

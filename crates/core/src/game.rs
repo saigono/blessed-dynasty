@@ -1317,6 +1317,19 @@ mod tests {
     }
 
     #[test]
+    fn only_some_effects_move_crown_power() {
+        let moves = |text: &str| moves_crown_power(&crate::data::parse::<Vec<Effect>>(text).unwrap());
+        assert!(!moves(r#"[Axis("army", 5), SetFlag("x"), RulerHealth(-5), Clash, EndWar(Victory)]"#));
+        assert!(!moves("[Province(EventTarget, Income, 1)]"));
+        assert!(moves("[Province(EventTarget, Loyalty, -5)]"));
+        assert!(moves("[Grant(EventTarget)]"));
+        assert!(moves("[Relation(EventTarget, 5)]"));
+        let chance = "[Chance((percent: 50, then: [], otherwise: [Revoke(EventTarget)]))]";
+        assert!(moves(chance));
+        assert!(moves("[IfFriendly([OtherRelations(-5)])]"));
+    }
+
+    #[test]
     fn marriage_raises_relation_once() {
         let mut g = map_game();
         let vestrum = Target::Neighbour(NeighbourId("vestrum".into()));

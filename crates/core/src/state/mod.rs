@@ -7,6 +7,7 @@ pub use preset::{Map, Preset};
 use crate::data::{CrownPowerRules, Data};
 use crate::fx::Fx;
 use crate::time::{Tick, TimeUnit};
+use crate::war::War;
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
@@ -81,6 +82,10 @@ pub struct Ruler {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Heir {
+    /// Stable across births and deaths, unlike the index; `Target::Heir` holds it.
+    /// Assigned by the world (`from_preset`, `add_heir`), so data may omit it.
+    #[serde(default)]
+    pub id: u32,
     pub name: String,
     pub age: u32,
     pub ability: Fx,
@@ -142,6 +147,12 @@ pub struct World {
     /// Added to the crown power formula; set by `Effect::CrownPower`, drifts to 0.
     #[serde(default)]
     pub crown_modifiers: BTreeMap<ProvinceId, Fx>,
+    /// At most one war at a time.
+    #[serde(default)]
+    pub war: Option<War>,
+    /// The id `add_heir` gives next.
+    #[serde(default)]
+    pub next_heir_id: u32,
 }
 
 impl World {
@@ -169,7 +180,12 @@ impl World {
             flags: preset.flags.clone(),
             last_fired: BTreeMap::new(),
             crown_modifiers: BTreeMap::new(),
+            war: None,
+            next_heir_id: 0,
         };
+        for h in std::mem::take(&mut world.heirs) {
+            world.add_heir(h);
+        }
         world.recompute_loyalty(data);
         world.recompute_crown_power(data);
         // Unreachable provinces are not expected (the map is connected); they get u32::MAX.
@@ -178,6 +194,40 @@ impl World {
             p.distance_to_capital = hops.get(&p.id).copied().unwrap_or(u32::MAX);
         }
         world
+    }
+
+    /// Appends the heir under the next free id.
+    pub fn add_heir(&mut self, mut heir: Heir) {
+        heir.id = self.next_heir_id;
+        self.next_heir_id += 1;
+        self.heirs.push(heir);
+    }
+
+    /// Index in `heirs` of the heir with this id.
+    pub fn heir_index(&self, id: u32) -> Option<usize> {
+        self.heirs.iter().position(|h| h.id == id)
+    }
+
+    /// Foreign states owning a province next to this one, its own holder excluded.
+    pub fn foreign_neighbours(&self, id: &ProvinceId) -> BTreeSet<NeighbourId> {
+        let Some(p) = self.provinces.get(id) else {
+            return BTreeSet::new();
+        };
+        let near = p.neighbours.iter().filter_map(|n| self.provinces.get(n));
+        near.filter_map(|q| match &q.holder {
+            Holder::Foreign(n) if q.holder != p.holder => Some(n.clone()),
+            _ => None,
+        })
+        .collect()
+    }
+
+    /// The own province on the border with `n` with the weakest crown power, smallest id
+    /// on a tie: where that neighbour presses.
+    pub fn weakest_border(&self, n: &NeighbourId) -> Option<&Province> {
+        (self.provinces.values())
+            .filter(|p| !matches!(p.holder, Holder::Foreign(_)))
+            .filter(|p| self.foreign_neighbours(&p.id).contains(n))
+            .min_by_key(|p| p.crown_power)
     }
 
     /// Fewest border crossings from `from` to every reachable province (BFS).
@@ -325,6 +375,14 @@ mod tests {
         w.flags.insert("married".into());
         w.last_fired.insert("plague".into(), Tick(3));
         w.crown_modifiers.insert(pid("holm"), Fx(-500));
+        w.war = Some(War {
+            enemy: NeighbourId("nordmark".into()),
+            stage: crate::war::WarStage::Peace,
+            our_strength: Fx(60_500),
+            their_strength: Fx::from_int(40),
+            war_score: Fx(-12_250),
+            started: Tick(2),
+        });
         w.axes.insert(AxisId("treasury".into()), Fx(-1_250));
         for (i, stance) in [Stance::Expand, Stance::Defend, Stance::Trade, Stance::Wait]
             .into_iter()
@@ -400,6 +458,41 @@ mod tests {
         }
         let w = World::from_preset(&data, &preset);
         assert_eq!(w.provinces[&pid("kirm")].distance_to_capital, u32::MAX);
+    }
+
+    #[test]
+    fn foreign_neighbours_of_a_province() {
+        let (_, w) = world();
+        let of = |p: &str| {
+            let ns = w.foreign_neighbours(&pid(p));
+            ns.into_iter().map(|n| n.0).collect::<Vec<_>>()
+        };
+        assert_eq!(of("sol"), ["purpur", "vestrum"]);
+        assert_eq!(of("arden"), ["nordmark"]);
+        assert!(of("capital").is_empty());
+        // A foreign province: other states only, not its own holder.
+        assert!(of("nordheim").is_empty());
+        assert_eq!(of("skala"), ["purpur"]);
+        assert!(of("nowhere").is_empty());
+        let weakest = |n: &str| {
+            w.weakest_border(&NeighbourId(n.into()))
+                .map(|p| p.id.0.clone())
+        };
+        assert_eq!(weakest("nordmark").as_deref(), Some("arden")); // 22.5 vs holm 25
+        assert_eq!(weakest("nobody"), None);
+    }
+
+    #[test]
+    fn heirs_get_stable_ids() {
+        let (data, mut w) = world();
+        assert_eq!((w.heirs[0].id, w.next_heir_id), (0, 1));
+        w.add_heir(data.new_heir.clone());
+        w.add_heir(data.new_heir.clone());
+        w.heirs.remove(1);
+        w.add_heir(data.new_heir.clone());
+        let ids: Vec<_> = w.heirs.iter().map(|h| h.id).collect();
+        assert_eq!(ids, [0, 2, 3], "a removed id is not given again");
+        assert_eq!((w.heir_index(3), w.heir_index(1)), (Some(2), None));
     }
 
     #[test]

@@ -47,7 +47,8 @@ fn game(data: Data, seed: u64) -> Game {
 /// The preset has one heir, Конрад (6, ability 50, claim 70); tests of two heirs add
 /// Агнесса (5, ability 55, claim 40).
 fn two_heirs(w: &mut World) {
-    w.heirs.push(Heir {
+    w.add_heir(Heir {
+        id: 0, // add_heir gives 1
         name: "Агнесса".into(),
         age: 5,
         ability: Fx::from_int(55),
@@ -81,6 +82,7 @@ fn force(g: &mut Game, id: &str, choice: usize) {
     g.pending_event = Some(PendingEvent {
         event_id: id.into(),
         target: None,
+        neighbour: None,
     });
     g.choose(choice).unwrap();
 }
@@ -392,7 +394,7 @@ fn death_roll() {
         first_death_event(plot, plotted).as_deref(),
         Some("assassination")
     );
-    // War wounds need a war: before stage 4 the risk never applies.
+    // War wounds need a war under way: without one the risk never applies.
     let war = |d: &mut Data| d.death.risks[0].per_mille = Fx::from_int(1000);
     assert_eq!(first_death_event(war, none), None);
 }
@@ -472,6 +474,7 @@ fn heir_ops() {
             data: &data,
             queue: &mut queue,
             target: target.as_ref(),
+            neighbour: None,
         };
         e.apply(w, &mut ctx);
     };
@@ -540,7 +543,12 @@ fn content_loads() {
 #[test]
 fn war_wound_waits_for_war() {
     let mut g = game(content(), 1);
-    g.queue.push((Tick(1), "war_wound".into()));
+    let wound = PendingEvent {
+        event_id: "war_wound".into(),
+        target: None,
+        neighbour: None,
+    };
+    g.queue.push((Tick(1), wound));
     g.world.axes.insert(ax("treasury"), Fx(0)); // keeps the festival out
     for _ in 0..3 {
         if let Step::Event(v) = g.wait().unwrap() {
@@ -564,14 +572,15 @@ fn death_goes_before_other_events() {
     let mut data = bare();
     data.death.base = vec![(0, Fx::from_int(1000))];
     data.events = vec![event("illness", vec![]), event("other", vec![])];
+    data.add_events(EVENTS[1]).unwrap();
+    data.neighbour_ai.wait.events = vec![("neighbour_trade".into(), 100)];
     let mut g = game(data, 1);
     let other = PendingEvent {
         event_id: "other".into(),
         target: None,
+        neighbour: None,
     };
-    let nordmark = NeighbourId("nordmark".into());
-    g.neighbour_events = vec![(nordmark.clone(), other.clone()), (nordmark, other)];
-    g.queue.push((Tick(1), "other".into()));
+    g.queue.push((Tick(1), other));
     let Step::Event(v) = g.wait().unwrap() else {
         panic!()
     };
@@ -650,17 +659,36 @@ fn deferred_events_beat_neighbours() {
     assert_eq!(fired[0].1, "neighbour_raid");
 }
 
-#[test]
-fn one_waiting_event_per_neighbour() {
+/// Events fired in 40 years of `raided` with a pool event of this weight and this quiet weight.
+fn raids_and_pool(pool: u32, quiet: u32) -> (usize, usize) {
     let mut g = raided();
-    for _ in 0..10 {
-        if let Step::Event(_) = g.wait().unwrap() {
+    let mut local = event("local", vec![]);
+    local.weight = pool;
+    g.data.events.push(local);
+    g.data.quiet_weight = quiet;
+    g.data.neighbour_ai.weight = 30;
+    let (mut raids, mut locals) = (0, 0);
+    for _ in 0..40 {
+        if let Step::Event(v) = g.wait().unwrap() {
+            match v.event_id.as_str() {
+                "neighbour_raid" => raids += 1,
+                "local" => locals += 1,
+                other => panic!("{other}"),
+            }
             g.choose(0).unwrap();
         }
     }
-    let mut ids: Vec<_> = g.neighbour_events.iter().map(|(n, _)| n.clone()).collect();
-    assert_eq!(ids.len(), 2, "three raids a year, one fired a tick");
-    ids.sort();
-    ids.dedup();
-    assert_eq!(ids.len(), 2);
+    (raids, locals)
+}
+
+#[test]
+fn neighbour_events_join_the_weighted_pick() {
+    // Three raids offered a year, weight 30 each, next to a pool event of 30: the pool
+    // event gets about a quarter of the ticks instead of none.
+    let (raids, locals) = raids_and_pool(30, 0);
+    assert_eq!(raids + locals, 40);
+    assert!((5..=20).contains(&locals), "{locals}");
+    // Offers not picked are dropped, not saved up: against a heavy quiet weight few fire.
+    let (raids, _) = raids_and_pool(0, 2000);
+    assert!(raids <= 6, "{raids}");
 }

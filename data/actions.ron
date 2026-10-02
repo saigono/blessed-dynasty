@@ -1,4 +1,4 @@
-// Map actions (stage 3) and the stage 2 test action. Stage 9 adds the rest.
+// Map actions (stage 3), the war (stage 4) and the stage 2 test action. Stage 9 adds the rest.
 [
     // The succession law is a flag; one action per law, since ActionTarget has no law
     // target. Claims follow the law year by year (rules.ron `heirs.laws`).
@@ -120,5 +120,24 @@
         target: None,
         on_complete: [Axis("legitimacy", 3), Axis("loyalty_nobles", 2)],
         cause_tag: "royal_progress",
+    ),
+    (
+        // Starts the war chain of events/war.ron at once; one war at a time.
+        id: "declare_war",
+        name: "Объявить войну",
+        duration_years: 0,
+        cost: 20,
+        requires: Not(AtWar),
+        min_crown_power: 0,
+        target: Neighbour,
+        // War on a friend (relation above neighbour_ai.friendly_above) earns a name for
+        // treachery: prestige and every other neighbour's trust drop.
+        on_complete: [
+            IfFriendly([Axis("prestige", -15), OtherRelations(-10)]),
+            StartWar(EventTarget),
+            Relation(EventTarget, -30),
+            Axis("loyalty_people", -3),
+        ],
+        cause_tag: "war_declared_by_crown",
     ),
 ]

@@ -2,6 +2,7 @@ use crate::fx::Fx;
 use crate::rules::{Action, Event, Predicate};
 use crate::state::{AxisId, Heir, Stance, World};
 use crate::time::TimeUnit;
+use crate::war::WarOutcome;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use std::collections::{BTreeMap, BTreeSet};
@@ -27,6 +28,7 @@ pub struct Data {
     pub heirs: HeirRules,
     pub neighbour_ai: NeighbourAi,
     pub grant: GrantRules,
+    pub war: WarRules,
     /// From `add_events`, not from `rules.ron`.
     #[serde(default)]
     pub events: Vec<Event>,
@@ -256,6 +258,9 @@ pub struct NeighbourAi {
     pub defend: StanceRules,
     pub trade: StanceRules,
     pub wait: StanceRules,
+    /// Weight of an event a neighbour starts in the random event pick, next to the pool
+    /// events and `quiet_weight`. Not picked, it is dropped.
+    pub weight: u32,
 }
 
 impl NeighbourAi {
@@ -285,6 +290,29 @@ pub struct GrantRules {
     /// Otherwise a new house from `Data.names.vassals` is founded with these.
     pub new_loyalty: Fx,
     pub new_strength: Fx,
+}
+
+/// War, see `war::strengths` and `war::clash`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct WarRules {
+    /// `StartWar` queues it at once, with the enemy as its target.
+    pub start_event: String,
+    pub army: AxisId,
+    /// `(building, bonus)` per own province with it on the border with the enemy.
+    pub fort: (String, Fx),
+    /// `sum(axis * k)`, added to the multiplier with the fort bonus.
+    pub bonus: Vec<(AxisId, Fx)>,
+    /// The treasury factor runs from `treasury_poor` at 0 up to 1 at `treasury_full`.
+    pub treasury_full: Fx,
+    pub treasury_poor: Fx,
+    /// Each side's strength is multiplied by a roll in this inclusive range.
+    pub roll: (Fx, Fx),
+    pub score_k: Fx,
+    pub max_score: Fx,
+    /// `Tribute(v)`: the treasury gets `v`, the neighbour loses `v * tribute_strength` strength.
+    pub tribute_strength: Fx,
+    /// `EndWar(outcome)` adds this to the enemy's strength.
+    pub end_strength: Vec<(WarOutcome, Fx)>,
 }
 
 #[derive(Debug)]
@@ -325,13 +353,25 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
         return Err(DataError::Invalid("faction weights sum to 0".into()));
     }
     let flows = data.economy.flows.iter().map(|(a, _)| a);
-    for a in [&data.action_slots.axis, &data.economy.treasury]
-        .into_iter()
-        .chain(flows)
+    let war = data.war.bonus.iter().map(|(a, _)| a);
+    for a in [
+        &data.action_slots.axis,
+        &data.economy.treasury,
+        &data.war.army,
+    ]
+    .into_iter()
+    .chain(flows)
+    .chain(war)
     {
         if !is_axis(a) {
             return Err(DataError::Invalid(format!("unknown axis {}", a.0)));
         }
+    }
+    let w = &data.war;
+    if w.treasury_full <= Fx(0) || w.roll.0 > w.roll.1 {
+        return Err(DataError::Invalid(
+            "war: needs treasury_full > 0 and roll lo <= hi".into(),
+        ));
     }
     if data.is_derived(&data.economy.treasury) {
         return Err(DataError::Invalid("economy.treasury is derived".into()));
@@ -403,6 +443,10 @@ mod tests {
             (r#"treasury: "treasury""#, r#"treasury: "nothing""#),
             (r#"treasury: "treasury""#, r#"treasury: "loyalty""#),
             (r#"("army", -0.1)"#, r#"("nothing", -0.1)"#),
+            (r#"army: "army""#, r#"army: "nothing""#),
+            (r#"("loyalty_nobles", 0.005)"#, r#"("nothing", 0.005)"#),
+            ("treasury_full: 100", "treasury_full: 0"),
+            ("roll: (0.5, 1.5)", "roll: (1.5, 0.5)"),
         ] {
             assert!(
                 matches!(broken(from, to), Err(DataError::Invalid(_))),
@@ -430,8 +474,8 @@ mod tests {
         data.add_events(EVENTS).unwrap();
         data.add_events(NEIGHBOUR_EVENTS).unwrap();
         data.add_actions(ACTIONS).unwrap();
-        assert_eq!(data.events.len(), 37);
-        assert_eq!(data.actions.len(), 10);
+        assert_eq!(data.events.len(), 38);
+        assert_eq!(data.actions.len(), 11);
         // Ids must be unique across files.
         assert!(matches!(
             data.add_events(EVENTS),
@@ -441,7 +485,7 @@ mod tests {
             data.add_actions(ACTIONS),
             Err(DataError::Invalid(_))
         ));
-        assert_eq!(data.events.len(), 37);
+        assert_eq!(data.events.len(), 38);
     }
 
     #[test]

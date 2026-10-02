@@ -67,7 +67,8 @@
     // otherwise (or with no common border) Defend; above `friendly_above` Trade; else Wait.
     // Then relation moves by the stance's `relation`, and one roll in 0..100 picks at most
     // one of its `events` (id, chance in percent per year; chances sum to <= 100).
-    // Events targeting a province hit the weakest border province, others the neighbour.
+    // Events targeting a province hit the weakest border province and name the neighbour
+    // as its second target; others target the neighbour.
     neighbour_ai: (
         hostile_below: -20,
         friendly_above: 30,
@@ -78,6 +79,30 @@
         defend: (relation: -1, events: [("neighbour_ultimatum", 10)]),
         trade: (relation: 1, events: [("neighbour_trade", 20)]),
         wait: (relation: 0, events: [("neighbour_trade", 5), ("neighbour_ultimatum", 3)]),
+        // An event a neighbour starts joins the random pick with this weight, next to
+        // quiet_weight and the weights of the pool events; not picked, it is dropped.
+        weight: 50,
+    ),
+
+    // War, one at a time. StartWar queues `start_event` at the enemy at once.
+    // Strength: ours = army * (1 + fort bonus per own fortified province on the enemy border
+    // + sum(axis * k) of `bonus`) * treasury factor (treasury_poor at an empty treasury,
+    // rising to 1 at treasury_full); theirs = the neighbour's strength.
+    // Clash: each side's strength times a roll in `roll`; war_score += (ours - theirs) * score_k,
+    // clamped to +-max_score. Tribute(v): treasury += v, the neighbour's strength -= v *
+    // tribute_strength. EndWar(outcome): the enemy's strength changes by `end_strength`.
+    war: (
+        start_event: "war_declared",
+        army: "army",
+        fort: ("fort", 0.1),
+        bonus: [("loyalty_nobles", 0.005)],
+        treasury_full: 100,
+        treasury_poor: 0.6,
+        roll: (0.5, 1.5),
+        score_k: 0.5,
+        max_score: 100,
+        tribute_strength: 0.1,
+        end_strength: [(Victory, -10), (Draw, 0), (Defeat, 5)],
     ),
 
     // Effect Grant: the nearest vassal within `max_distance` border crossings gets the
@@ -94,7 +119,7 @@
         health_k: 0.2,
         event: "illness",
         risks: [
-            (when: AtWar, per_mille: 30, event: "war_wound"),
+            (when: WarStage(Fighting), per_mille: 30, event: "war_wound"),
             (when: Flag("plot"), per_mille: 60, event: "assassination"),
             (when: Flag("plague"), per_mille: 40, event: "illness"),
         ],

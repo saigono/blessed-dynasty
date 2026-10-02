@@ -123,7 +123,7 @@ impl MapView {
             pts.iter().for_each(|&q| mesh.colored_vertex(q, fill));
             mesh.indices.extend(tris.iter().map(|i| first + i));
             base.push(Shape::closed_line(pts.clone(), Stroke::new(1.5, BG2)));
-            if own && p.loyalty < data.crown_power.loyalty_threshold {
+            if own && p.loyalty < data.unrest_below {
                 top.push(Shape::closed_line(pts.clone(), Stroke::new(2.5, UNREST)));
             }
             if marked.contains(id) {

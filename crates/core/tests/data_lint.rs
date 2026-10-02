@@ -265,3 +265,42 @@ fn every_sim_event_fires_in_a_thousand_dynasties() {
     );
     eprintln!("{fired:?}");
 }
+
+/// What the player reads instead of ids: a name for every axis, a text for every way a
+/// reign ends (a `RulerDies` cause, nested ones too, or abdication) and every fall.
+#[test]
+fn reign_ends_falls_and_axes_have_display_texts() {
+    fn deaths<'a>(effects: &'a [Effect], out: &mut BTreeSet<&'a str>) {
+        for e in effects {
+            match e {
+                Effect::RulerDies(cause) => {
+                    out.insert(cause);
+                }
+                Effect::Chance(c) => {
+                    deaths(&c.then, out);
+                    deaths(&c.otherwise, out);
+                }
+                Effect::IfFriendly(es) => deaths(es, out),
+                _ => {}
+            }
+        }
+    }
+    let data = load_all();
+    let nameless: Vec<_> = data.axes.iter().filter(|a| a.name.is_empty()).collect();
+    assert!(nameless.is_empty(), "{nameless:?}");
+    let mut causes = BTreeSet::from([data.abdication.event.as_str()]);
+    let all = data.events.iter().chain(&data.sim_events);
+    for c in all.flat_map(|e| &e.choices) {
+        deaths(&c.effects, &mut causes);
+    }
+    let texts = &data.sim.texts;
+    let missing: Vec<_> = (causes.iter())
+        .filter(|c| !texts.reign_ends.contains_key(**c))
+        .collect();
+    assert!(missing.is_empty(), "no text for {missing:?}");
+    assert!(causes.len() >= 4, "{causes:?}");
+    use sim::FallReason::*;
+    for f in [NoHeir, CapitalLost, Usurped, NoCrownLand, Alive] {
+        assert!(texts.falls.iter().any(|(r, _)| *r == f), "{f:?}");
+    }
+}

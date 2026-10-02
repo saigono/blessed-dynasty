@@ -122,32 +122,44 @@ fn golden_seed_42_script_a() {
     // Stage 14: armies cost by the upkeep curve, the dynasty wars with its own actions.
     // Stage 15: gentler heir deaths, Конрад reigns with children born before; less money;
     // Вейр, grown by the three grants, revolts and takes the land bit by bit.
-    // Stage 16: sons and daughters; Конрад dies before his father, his brother Генрих reigns.
-    // The coronation resets the factions and tells his trait; he reigns 50 years.
-    assert_eq!((c.years, &c.fall), (96, &FallReason::Usurped));
+    // Stage 16: sons and daughters, the coronation resets the factions and tells the trait,
+    // heirs marry one by one: Конрад outlives his father; pious, he brings in the Salic law
+    // and the line ends without a man.
+    assert_eq!((c.years, &c.fall), (151, &FallReason::NoHeir));
     let hint = |h: &'static str| Some(h);
+    let raid = hint("Набег, отбитый при основателе, научил соседа осторожности.");
     assert_eq!(
-        texts(&c)[..4],
+        texts(&c)[..6],
         [
             (
                 "Новое правление",
-                "Престол наследует Генрих. Знать ликует: на троне воинственный король.",
-                hint("Наследник основателя учился власти в королевском совете."),
+                "Престол наследует Конрад. Церковь ликует: на троне набожный король.",
+                hint("Основатель породнил наследника с домом своего барона."),
             ),
             (
-                "Мятеж дома Вейр",
-                "В тот год дом Вейр поднял мятеж в земле Гарт и отказался присягать короне.",
-                hint("Вассал, которому основатель доверил меч, привык к нему."),
+                "Смерть наследника",
+                "Не стало первого в очереди на престол: Гизела.",
+                None,
             ),
             (
-                "Великое бедствие",
-                "В тот год великое наводнение, а за ним мор опустошили землю Столица.",
-                hint("В чуму основатель уповал на молитву, и город поредел."),
+                "Мятеж дома Арден",
+                "В тот год дом Арден поднял мятеж в земле Мар и отказался присягать короне.",
+                raid,
             ),
             (
-                "Смута",
-                "На престоле Генрих, но присягнули не все. Претенденты собирают сторонников, знать выжидает.",
-                hint("Основатель диктовал свою волю собору знати."),
+                "Потеря земли",
+                "Земля Арден потеряна, ею владеет Арден.",
+                raid
+            ),
+            (
+                "Потеря земли",
+                "Земля Мар потеряна, ею владеет Арден.",
+                None
+            ),
+            (
+                "Новый закон о престоле",
+                "Отныне престол наследуют по закону «Салический закон».",
+                None,
             ),
         ]
     );
@@ -246,7 +258,8 @@ fn heirs(data: &Data, list: &[(u32, i64, HeirStatus)]) -> Game {
             claim: Fx::from_int(*claim),
             status: status.clone(),
             sex: Sex::Male,
-            married: false,
+            // Grown heirs are wed, as `heir_marriage` would have it, and crowned so.
+            married: *age >= 16,
         });
     }
     g
@@ -971,19 +984,11 @@ fn year_changes_of_seed_42_script_a() {
         (1191, vec![nobles(-6)]),
         (1194, vec![axis("loyalty_people", 7)]),
         (1196, vec![Change::Born("Генрих".into())]),
-        (1202, vec![nobles(5)]),
-        (
-            1203,
-            vec![axis("loyalty_church", 5), Change::Born("Освальд".into())],
-        ),
-        (1204, vec![nobles(-7)]),
-        (1205, vec![Change::HeirGone("Освальд".into())]),
-        (1213, vec![axis("legitimacy", 6), axis("prestige", 15)]),
-        // No births after the founder's fiftieth year (1205); Конрад dies at 43.
-        (
-            1224,
-            vec![axis("loyalty_church", 5), Change::HeirGone("Конрад".into())],
-        ),
+        (1200, vec![Change::Born("Ирмгард".into())]),
+        (1205, vec![axis("army", 20)]),
+        (1206, vec![axis("loyalty_people", 6)]),
+        (1211, vec![axis("loyalty_church", 5)]),
+        (1213, vec![nobles(6)]),
     ];
     assert_eq!(log, want);
 }
@@ -1001,24 +1006,24 @@ fn kin_of_seed_42_script_a() {
     );
     assert_eq!((k[0].crowned, k[0].parent), (Some(1187), None));
     assert_eq!(k[0].died, Some(1187 + c.rulers[0].end.0));
-    // Конрад, 6 at the start, died 1224 before his father; Генрих, born 1196, reigned from
-    // 1229; Освальд born 1203 died in 1205.
+    // Конрад, 6 at the start, reigned from 1221 to 1239; Генрих, born 1196, died 1260
+    // uncrowned; Ирмгард born 1200.
     assert_eq!(
         (k[1].name.as_str(), k[1].born, k[1].crowned, k[1].died),
-        ("Конрад", 1181, None, Some(1224))
+        ("Конрад", 1181, Some(1221), Some(1239))
     );
     assert_eq!(
         (k[2].name.as_str(), k[2].born, k[2].parent, k[2].crowned),
-        ("Генрих", 1196, Some(0), Some(1229))
+        ("Генрих", 1196, Some(0), None)
     );
     assert_eq!(
         (k[3].name.as_str(), k[3].born, k[3].parent, k[3].died),
-        ("Освальд", 1203, Some(0), Some(1205))
+        ("Ирмгард", 1200, Some(0), Some(1265))
     );
-    // Гизела, born to Генрих in 1213 before his coronation.
+    // Гизела, born to Конрад in 1201 before his coronation.
     assert_eq!(
         (k[4].name.as_str(), k[4].born, k[4].parent),
-        ("Гизела", 1213, Some(2))
+        ("Гизела", 1201, Some(1))
     );
     // Every ruler in the chronicle is a crowned kin, in order; children point at a ruler.
     let crowned: Vec<(&str, u32)> = (k.iter())
@@ -1092,11 +1097,13 @@ fn law_texts_take_their_numbers_from_the_rules() {
     );
 }
 
-/// Stage 13: the bond of a finished marriage, while its flag holds.
+/// Stage 13: the bond of a finished marriage; stage 16: one per union (`World.unions`).
 #[test]
 fn bonds_name_the_married_neighbour() {
-    let data = content();
+    let mut data = content();
+    data.marriage.percent = Fx::from_int(100);
     let mut g = game(&data, 1);
+    g.world.flags.remove("married");
     let vestrum = bd_core::state::NeighbourId("vestrum".into());
     assert!(g.bonds().is_empty());
     g.start_action("marry_neighbour", Some(Target::Neighbour(vestrum.clone())))
@@ -1106,8 +1113,9 @@ fn bonds_name_the_married_neighbour() {
     let bonds: Vec<_> = (g.bonds().into_iter())
         .map(|(n, a, t)| (n, a.bond.clone(), t))
         .collect();
-    assert_eq!(bonds, [(vestrum, "брачный союз".to_string(), Tick(0))]);
-    g.world.flags.remove("royal_marriage");
+    // Dated by the wedding, a year after the suit.
+    assert_eq!(bonds, [(vestrum, "брачный союз".to_string(), Tick(1))]);
+    g.world.unions.clear();
     assert!(g.bonds().is_empty());
 }
 

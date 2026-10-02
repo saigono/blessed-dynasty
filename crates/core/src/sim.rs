@@ -8,8 +8,8 @@ use crate::rng::Rng;
 use crate::rules::add_axis;
 use crate::rules::{Choice, Effect, Event, HeirOp, NewHolder, Predicate, ProvinceField, Target};
 use crate::state::{
-    Axes, CauseTag, HeirStatus, Holder, Kin, MarkKey, ProvinceId, Ruler, Sex, Vassal, VassalId,
-    World,
+    Axes, CauseTag, HeirStatus, Holder, Kin, MarkKey, NeighbourId, ProvinceId, Ruler, Sex, Vassal,
+    VassalId, World,
 };
 use crate::time::Tick;
 use crate::war::WarStage;
@@ -290,6 +290,11 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     let heir = w
         .heirs
         .remove(successor(w, d).expect("succession found one"));
+    // The late ruler's unions end with him; the new one's come with him to the throne.
+    w.unions.retain(|_, u| u.spouse.is_some());
+    for u in w.unions.values_mut().filter(|u| u.spouse == Some(heir.id)) {
+        u.spouse = None;
+    }
     // The late ruler's other sons, eldest first, for a partition.
     let sons: Vec<_> = (w.heirs.iter())
         .filter(|h| h.id >= w.line_from && h.sex == Sex::Male)
@@ -301,7 +306,14 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     }
     // His brothers and sisters become the collateral line, behind his children.
     w.line_from = w.next_heir_id;
+    // Children before the coronation come as in wedlock, as heir marriages were never
+    // tracked year by year (stage 15); from now on births follow his own marriage.
+    let married = &d.heirs.married_flag;
+    w.flags.insert(married.clone());
     born_before(d, w, rng, ruler.age);
+    if !heir.married {
+        w.flags.remove(married);
+    }
     if let Some(l) = d.heirs.law(w) {
         // Each heir left is a rival: a chance of dispute per head, rolled only if the law has one.
         let rivals = l.dispute_per_heir * Fx::from_int(w.heirs.len() as i64);
@@ -626,9 +638,15 @@ impl AutoChooser {
 
     /// Index of the best choice.
     pub fn choose(&self, g: &mut Game, choices: &[Choice]) -> usize {
+        // The neighbour of the event, for a suit among the choices.
+        let p = g.pending_event.as_ref();
+        let nb = p.and_then(|p| match &p.target {
+            Some(Target::Neighbour(n)) => Some(n),
+            _ => p.neighbour.as_ref(),
+        });
         let scores = choices
             .iter()
-            .map(|c| self.worth(&c.effects, &g.world, &g.data));
+            .map(|c| self.worth(&c.effects, &g.world, &g.data, nb));
         let scores: Vec<Fx> = scores.collect();
         self.best(&scores, &mut g.rng)
     }
@@ -646,9 +664,18 @@ impl AutoChooser {
                 continue;
             }
             let years = Fx::from_int(a.duration_years.0.max(1) as i64);
-            let score = self.worth(&a.on_complete, &g.world, &g.data) - treasury * a.cost
-                + self.worth(&a.yearly, &g.world, &g.data) * years;
+            let (w, d) = (&g.world, &g.data);
+            let score = |nb| {
+                self.worth(&a.on_complete, w, d, nb) - treasury * a.cost
+                    + self.worth(&a.yearly, w, d, None) * years
+            };
+            let first = score(None);
             for t in 0..targets.len().max(1) {
+                // Only a suit weighs its court; the rest score alike on every target.
+                let score = match targets.get(t) {
+                    Some(Target::Neighbour(n)) if a.marries() => score(Some(n)),
+                    _ => first,
+                };
                 options.push(Some((k, t)));
                 scores.push(score);
             }
@@ -681,7 +708,7 @@ impl AutoChooser {
     /// room, `crown_capacity`), `province` (+1 gained, -1 given away), `heir` (+1 born, -1 lost),
     /// `heir_ability`, `heir_claim` (by the delta), `army_upkeep` (by the change in the yearly
     /// upkeep a change of the army brings). A chance weighs both branches by its odds.
-    fn worth(&self, effects: &[Effect], w: &World, data: &Data) -> Fx {
+    fn worth(&self, effects: &[Effect], w: &World, data: &Data, nb: Option<&NeighbourId>) -> Fx {
         let one = Fx::from_int(1);
         let mut sum = Fx(0);
         for e in effects {
@@ -726,6 +753,7 @@ impl AutoChooser {
                     ("province", Fx::from_int(-1))
                 }
                 Effect::HeirOp(HeirOp::Add) => ("heir", one),
+                Effect::HeirOp(HeirOp::TargetMarry) => ("marriage", one),
                 Effect::HeirOp(HeirOp::Remove(_) | HeirOp::TargetRemove) => {
                     ("heir", Fx::from_int(-1))
                 }
@@ -735,12 +763,19 @@ impl AutoChooser {
                 Effect::HeirOp(HeirOp::Claim(_, d) | HeirOp::TargetClaim(d)) => ("heir_claim", *d),
                 Effect::Chance(c) => {
                     let hit = c.percent(w) / Fx::from_int(100);
-                    sum = sum + self.worth(&c.then, w, data) * hit;
-                    sum = sum + self.worth(&c.otherwise, w, data) * (one - hit);
+                    sum = sum + self.worth(&c.then, w, data, nb) * hit;
+                    sum = sum + self.worth(&c.otherwise, w, data, nb) * (one - hit);
+                    continue;
+                }
+                Effect::Marry { then, otherwise } => {
+                    let chance = nb.map_or(Fx(0), |n| data.marriage.chance(w, data, n));
+                    let yes = chance / Fx::from_int(100);
+                    let wed = self.worth(then, w, data, nb) + self.weight("marriage");
+                    sum = sum + wed * yes + self.worth(otherwise, w, data, nb) * (one - yes);
                     continue;
                 }
                 Effect::IfFriendly(es) => {
-                    sum = sum + self.worth(es, w, data);
+                    sum = sum + self.worth(es, w, data, nb);
                     continue;
                 }
                 Effect::HeirOp(HeirOp::SetStatus(..) | HeirOp::TargetStatus(_))

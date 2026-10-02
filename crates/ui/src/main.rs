@@ -1222,6 +1222,16 @@ fn effects(d: &Data, list: &[Effect]) -> Vec<Line> {
                 out.extend(friendly.map(|(t, up)| (format!("если сосед — друг: {t}"), up)));
                 continue;
             }
+            Effect::Marry { then, otherwise } => {
+                let yes = effects(d, then)
+                    .into_iter()
+                    .map(|(t, up)| (format!("согласие: {t}"), up));
+                let no = effects(d, otherwise)
+                    .into_iter()
+                    .map(|(t, up)| (format!("отказ: {t}"), up));
+                out.extend(yes.chain(no));
+                continue;
+            }
             Effect::Chance(_) if !out.iter().any(|(t, _)| t == "риск") => ("риск".into(), None),
             _ => continue,
         };
@@ -1783,6 +1793,10 @@ mod tests {
         h.ctx
             .global_style_mut(|s| s.interaction.tooltip_delay = 0.0);
         h.ctx.enable_accesskit();
+        // Away first: the last tooltip, which takes the pointer, may cover the widget.
+        for _ in 0..3 {
+            h.frame(vec![Event::PointerMoved(Pos2::new(1.0, 1.0))]);
+        }
         let out = h.frame(vec![]);
         let tree = out
             .platform_output
@@ -1841,15 +1855,20 @@ mod tests {
         ] {
             assert!(road.contains(&t.to_string()), "{t}: {road:?}");
         }
+        // A widowed king may wed; Веструм agrees for sure.
+        let g = h.app.game.as_mut().unwrap();
+        g.world.flags.remove("married");
+        g.data.marriage.percent = Fx::from_int(100);
         let marriage = hover(&mut h, "Заключить брачный союз");
         assert!(
-            marriage.contains(&"отношения +30".to_string()),
+            marriage.contains(&"согласие: отношения +30".to_string())
+                && marriage.contains(&"отказ: Престиж -5".to_string()),
             "{marriage:?}"
         );
         assert!(
             marriage
                 .iter()
-                .any(|t| t.starts_with("Брак правящего дома"))
+                .any(|t| t.starts_with("Посвататься к соседнему двору"))
         );
 
         let law = hover(&mut h, "Закон: Абсолютное первородство (?)");
@@ -1873,7 +1892,8 @@ mod tests {
             h.app.apply(Cmd::Choose(0));
         }
         let n = hover(&mut h, "Веструм ♥");
-        assert!(n.contains(&"брачный союз с 1187".to_string()), "{n:?}");
+        // Dated by the wedding, a year after the suit.
+        assert!(n.contains(&"брачный союз с 1188".to_string()), "{n:?}");
     }
 
     #[test]

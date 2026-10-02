@@ -209,6 +209,14 @@ pub enum Effect {
     /// The vassal holding the province breaks away with all his provinces as a new foreign
     /// state of his name, strength `strength * provinces`, relation `sim.secession_relation`.
     Secede(ProvinceTarget),
+    /// A suit to the neighbour of the event or action: with the chance of
+    /// `MarriageRules::chance` the spouse it names weds into a union with that court
+    /// (`World.unions`) and `then` applies, else `otherwise`. Applied by `Game`.
+    Marry {
+        then: Vec<Effect>,
+        #[serde(default)]
+        otherwise: Vec<Effect>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -289,6 +297,8 @@ pub enum HeirOp {
     TargetAbility(Fx),
     TargetClaim(Fx),
     TargetRemove,
+    /// The heir of the event or action is married from now on (`Heir.married`).
+    TargetMarry,
 }
 
 /// What an effect may touch besides the world.
@@ -383,6 +393,11 @@ impl Effect {
                 };
                 match &op {
                     HeirOp::Add => w.add_heir(ctx.data.newborn(w.next_heir_id)),
+                    HeirOp::TargetMarry => {
+                        if let Some(h) = w.heirs.get_mut(heir(&t)) {
+                            h.married = true;
+                        }
+                    }
                     HeirOp::Remove(i) if heir(i) < w.heirs.len() => {
                         w.heirs.remove(heir(i));
                     }
@@ -412,6 +427,7 @@ impl Effect {
             }
             Effect::RulerDies(_)
             | Effect::Abdicate
+            | Effect::Marry { .. }
             | Effect::Chance(_)
             | Effect::Clash
             | Effect::IfFriendly(_) => {
@@ -434,6 +450,8 @@ impl Effect {
                     _ => None,
                 };
                 let target = target.or_else(|| crate::war::enemy_border(w, enemy));
+                // A war ends the union with that court.
+                w.unions.remove(enemy);
                 w.war = Some(War {
                     enemy: enemy.clone(),
                     stage: WarStage::Declared,
@@ -599,6 +617,9 @@ impl Effect {
                     .try_for_each(|e| e.check(data))
             }
             Effect::IfFriendly(es) => es.iter().try_for_each(|e| e.check(data)),
+            Effect::Marry { then, otherwise } => {
+                then.iter().chain(otherwise).try_for_each(|e| e.check(data))
+            }
             _ => Ok(()),
         }
     }
@@ -685,6 +706,8 @@ pub enum EventTarget {
     Neighbour,
     /// A random heir aged within this inclusive range; cannot fire while there is none.
     Heir(u32, u32),
+    /// The same among the heirs not yet married.
+    UnmarriedHeir(u32, u32),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -744,8 +767,8 @@ pub struct Action {
     /// What the action does, in plain words, for the UI tooltip.
     #[serde(default)]
     pub description: String,
-    /// For a neighbour action: what the target is to the crown once it is done, while the
-    /// flags it sets hold (`Game::bonds`), e.g. «брачный союз». Empty: no bond.
+    /// For an action that marries (`Effect::Marry`): what a union is to the crown
+    /// (`Game::bonds`), e.g. «брачный союз». Empty: no bond.
     #[serde(default)]
     pub bond: String,
 }
@@ -761,6 +784,11 @@ pub enum ActionTarget {
 }
 
 impl Action {
+    /// A suit: its `on_complete` has `Effect::Marry`.
+    pub fn marries(&self) -> bool {
+        (self.on_complete.iter()).any(|e| matches!(e, Effect::Marry { .. }))
+    }
+
     pub(crate) fn check(&self, data: &Data) -> Result<(), String> {
         self.requires.check(data)?;
         let effects = self.on_complete.iter().chain(&self.yearly);

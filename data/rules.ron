@@ -230,6 +230,20 @@
         death: [(0, 120), (1, 40), (5, 6), (16, 6), (30, 10), (40, 15), (50, 30), (55, 60), (60, 90), (65, 130), (70, 180), (80, 300)],
     ),
 
+    // A suit (Effect::Marry, marry_neighbour): the ruler weds without heirs.married_flag,
+    // else the first heir in line of `age` or older not yet married. A court at war with the
+    // crown, already wed to it or with a relation below refuse_below turns it away outright;
+    // else it agrees with the chance in percent: percent + relation * relation_k
+    // + sum(axis * k) + (our strength / theirs - 1) * strength_k (war::strengths), 0..=100.
+    marriage: (
+        age: 14,
+        refuse_below: -20,
+        percent: 30,
+        relation_k: 0.5,
+        axes: [("prestige", 0.1)],
+        strength_k: 20,
+    ),
+
     // Every coronation in the simulation (sim::crown), in this order: each faction axis moves
     // `reset` of the way back to its default (a new page); the axis of legitimacy_from_claim
     // moves its share of the way toward the new ruler's claim (0.5: the mean of the two);
@@ -292,7 +306,7 @@
         // province_income, province_population, province_loyalty, health, relation,
         // crown_power, heir_ability, heir_claim (by the delta), army_upkeep (by the change in
         // yearly upkeep an army change brings, war.army_upkeep); build, grant, revoke, secede,
-        // war, hostage, death, abdicate (+1); overreach (+1 for a grant while the crown is over
+        // war, hostage, death, abdicate, marriage (+1 a wedding; a suit by its chance); overreach (+1 for a grant while the crown is over
         // crown_capacity); province (+1 gained, -1 given); heir (+1, -1).
         // Weights of the ruler's traits add to `base`.
         auto: (
@@ -305,7 +319,7 @@
                 "health": 0.5, "relation": 0.1, "crown_power": 0.5,
                 "build": 3, "grant": -20, "revoke": -3, "secede": -10, "war": -10, "hostage": -10,
                 "death": -500, "abdicate": -500, "province": 20, "heir": 60,
-                "heir_ability": 0.3, "heir_claim": 0.2, "army_upkeep": -0.1,
+                "heir_ability": 0.3, "heir_claim": 0.2, "army_upkeep": -0.1, "marriage": 20, "married": 30,
                 // Beyond the limit a grant is weighed like any other (grant, province); with
                 // overreach 30 the heirs give the conquests away and warmonger dynasties fall
                 // to usurpation (stage 15, docs/calibration.md).

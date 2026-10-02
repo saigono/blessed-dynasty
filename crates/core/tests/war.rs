@@ -229,12 +229,11 @@ fn a_second_war_is_refused() {
 }
 
 /// The whole content, death included, all kinds of choices; wars declared by the crown again
-/// and again, and by the neighbours. Every war ends within six years of its start, unless the
-/// ruler's death events (they go before the war's own, see `Game::death_roll`) hold it up a
-/// year more (stage 16: seed 370, an old king's two death events in a row), or the reign ends
-/// first.
+/// and again, and by the neighbours. Every war ends within six years of its start, plus a
+/// year for every death event of the ruler while it goes on (they go before the war's own,
+/// see `Game::death_roll`; stage 16: seeds 370 and 647), or the reign ends first.
 #[test]
-fn every_war_ends_within_seven_years() {
+fn every_war_ends_within_six_years_and_the_deaths() {
     let data = content();
     let preset = Preset::load_with_map(PRESET, MAP, &data).unwrap();
     let unit = data.time_unit;
@@ -245,7 +244,12 @@ fn every_war_ends_within_seven_years() {
         "war_siege_target",
     ];
     let (mut wars, mut longest) = (0, 0);
+    let d = &data.death;
+    let deaths: Vec<&String> = std::iter::once(&d.event)
+        .chain(d.risks.iter().map(|r| &r.event))
+        .collect();
     for seed in 0..1000u64 {
+        let mut held = 0;
         let mut g = Game::new(data.clone(), &preset, seed);
         let mut n = seed as usize;
         for _ in 0..60 * unit.ticks_per_year {
@@ -266,7 +270,12 @@ fn every_war_ends_within_seven_years() {
                 }
             }
             match g.wait().unwrap() {
-                Step::Event(v) => g.choose((seed as usize + n) % v.choices.len()).unwrap(),
+                Step::Event(v) => {
+                    if g.world.war.is_some() && deaths.contains(&&v.event_id) {
+                        held += 1;
+                    }
+                    g.choose((seed as usize + n) % v.choices.len()).unwrap()
+                }
                 Step::Idle => {}
                 Step::ReignEnded(_) => break,
             }
@@ -274,9 +283,10 @@ fn every_war_ends_within_seven_years() {
                 let age = g.world.tick.0 - war.started.0;
                 longest = longest.max(age);
                 if age == 0 {
-                    wars += 1;
+                    (wars, held) = (wars + 1, 0);
                 }
-                assert!(age < 7 * unit.ticks_per_year, "seed {seed}: {war:?}");
+                let years = 6 + held;
+                assert!(age < years * unit.ticks_per_year, "seed {seed}: {war:?}");
             }
         }
     }

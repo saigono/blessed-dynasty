@@ -9,7 +9,8 @@ use crate::rules::{
     add_axis,
 };
 use crate::state::{
-    ActiveAction, CauseTag, HeirStatus, Holder, MarkKey, NeighbourId, Preset, ProvinceId, World,
+    ActiveAction, CauseTag, HeirStatus, Holder, MarkKey, NeighbourId, Preset, ProvinceId, Union,
+    World,
 };
 use crate::time::Tick;
 use serde::{Deserialize, Serialize};
@@ -135,6 +136,7 @@ impl Game {
         let treasury = w.axes[&self.data.economy.treasury];
         let capital = w.provinces.get(&w.capital.province);
         let capital_power = capital.map_or(Fx(0), |p| p.crown_power);
+        let m = &self.data.marriage;
         let actions = self.data.actions.iter();
         let actions = actions.filter(|a| a.cost <= treasury && a.requires.eval(w));
         actions
@@ -152,7 +154,9 @@ impl Game {
                         .collect(),
                     _ if capital_power < a.min_crown_power => return None,
                     ActionTarget::None => return (!busy(None)).then(|| (a.id.clone(), vec![])),
+                    // A suit goes only where it has a chance.
                     ActionTarget::Neighbour => (w.neighbours.keys())
+                        .filter(|n| !a.marries() || m.chance(w, &self.data, n) > Fx(0))
                         .filter_map(|n| free(Target::Neighbour(n.clone())))
                         .collect(),
                     ActionTarget::Heir => (w.heirs.iter())
@@ -167,30 +171,15 @@ impl Game {
             .collect()
     }
 
-    /// Neighbours tied to the crown by a finished player action with a `bond` whose flags
-    /// (`SetFlag` of its `on_complete`) all still hold: the neighbour, the action, its start.
+    /// The crown's unions (`World.unions`): the court, the action that makes a union (the
+    /// first with `Effect::Marry` and a `bond`), the wedding.
     pub fn bonds(&self) -> Vec<(NeighbourId, &Action, Tick)> {
-        let w = &self.world;
-        (self.decisions.iter())
-            .filter_map(|d| {
-                let DecisionKind::ActionStarted {
-                    action_id,
-                    target: Some(Target::Neighbour(n)),
-                } = &d.kind
-                else {
-                    return None;
-                };
-                let a = self.data.actions.iter().find(|a| a.id == *action_id)?;
-                let running = (w.active_actions.iter())
-                    .any(|x| x.id == a.id && x.target.as_deref() == Some(n.0.as_str()));
-                let flags = a.on_complete.iter().all(|e| match e {
-                    Effect::SetFlag(f) => w.flags.contains(f),
-                    _ => true,
-                });
-                let tied = !a.bond.is_empty() && !running && flags && w.neighbours.contains_key(n);
-                tied.then(|| (n.clone(), a, d.tick))
-            })
-            .collect()
+        let suit = (self.data.actions.iter()).find(|a| a.marries() && !a.bond.is_empty());
+        let Some(a) = suit else {
+            return vec![];
+        };
+        let unions = self.world.unions.iter();
+        unions.map(|(n, u)| (n.clone(), a, u.since)).collect()
     }
 
     pub fn start_action(&mut self, id: &str, target: Option<Target>) -> Result<(), GameError> {
@@ -573,6 +562,31 @@ impl Game {
                     }
                 }
                 Effect::RulerDies(cause) => self.ended = Some(cause.clone()),
+                Effect::Marry { then, otherwise } => {
+                    let n = match target {
+                        Some(Target::Neighbour(n)) => Some(n),
+                        _ => nb,
+                    };
+                    let (d, w) = (&self.data, &mut self.world);
+                    let chance = n.map_or(Fx(0), |n| d.marriage.chance(w, d, n));
+                    let yes = self.rng.range(0, Fx::from_int(100).0) < chance.0;
+                    let spouse = d.marriage.spouse(w, d);
+                    if let (true, Some(n), Some(spouse)) = (yes, n, spouse) {
+                        match spouse {
+                            None => _ = w.flags.insert(d.heirs.married_flag.clone()),
+                            Some(id) => w
+                                .heirs
+                                .iter_mut()
+                                .filter(|h| h.id == id)
+                                .for_each(|h| h.married = true),
+                        }
+                        let since = w.tick;
+                        w.unions.insert(n.clone(), Union { spouse, since });
+                        self.apply(then, target, nb);
+                    } else {
+                        self.apply(otherwise, target, nb);
+                    }
+                }
                 Effect::HeirOp(HeirOp::Add) => {
                     let sex = self.data.heirs.sex(&mut self.rng);
                     let w = &mut self.world;
@@ -801,6 +815,11 @@ fn candidates<'a>(
         EventTarget::Heir(lo, hi) => Some(Box::new(
             (w.heirs.iter())
                 .filter(|h| (*lo..=*hi).contains(&h.age))
+                .map(|h| Target::Heir(h.id)),
+        )),
+        EventTarget::UnmarriedHeir(lo, hi) => Some(Box::new(
+            (w.heirs.iter())
+                .filter(|h| !h.married && (*lo..=*hi).contains(&h.age))
                 .map(|h| Target::Heir(h.id)),
         )),
     }
@@ -1623,8 +1642,10 @@ mod tests {
     }
 
     #[test]
-    fn marriage_raises_relation_once() {
+    fn a_suit_taken_weds_the_unmarried_ruler_once() {
         let mut g = map_game();
+        g.data.marriage.percent = Fx::from_int(100);
+        g.world.flags.remove("married");
         let vestrum = Target::Neighbour(NeighbourId("vestrum".into()));
         g.start_action("marry_neighbour", Some(vestrum.clone()))
             .unwrap();
@@ -1632,7 +1653,10 @@ mod tests {
         // 40 + 30 on completion; then Vestrum, friendly, trades: +1, and drifts toward 0: -1.
         let n = &g.world.neighbours[&NeighbourId("vestrum".into())];
         assert_eq!(n.relation, Fx::from_int(70));
-        assert!(g.world.flags.contains("royal_marriage"));
+        assert!(g.world.flags.contains("married"));
+        let union = &g.world.unions[&NeighbourId("vestrum".into())];
+        assert_eq!(union.spouse, None);
+        // The ruler is wed and Конрад too young: no suit anywhere.
         assert!(targets(&g, "marry_neighbour").is_empty());
     }
 

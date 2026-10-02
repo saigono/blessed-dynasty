@@ -2,7 +2,7 @@ use crate::fx::Fx;
 use crate::rng::Rng;
 use crate::rules::{Action, ActionTarget, Event, Predicate};
 use crate::sim::FallReason;
-use crate::state::{AxisId, Heir, Holder, Province, Sex, Stance, World};
+use crate::state::{AxisId, Heir, Holder, NeighbourId, Province, Sex, Stance, World};
 use crate::time::TimeUnit;
 use crate::war::WarOutcome;
 use serde::Deserialize;
@@ -38,6 +38,8 @@ pub struct Data {
     pub sim: SimRules,
     #[serde(default)]
     pub coronation: CoronationRules,
+    #[serde(default)]
+    pub marriage: MarriageRules,
     /// From `add_events`, not from `rules.ron`.
     #[serde(default)]
     pub events: Vec<Event>,
@@ -639,6 +641,56 @@ pub struct TraitRule {
     pub told: (String, String),
 }
 
+/// The suit of `Effect::Marry`.
+#[derive(Debug, Clone, PartialEq, Deserialize, Default)]
+pub struct MarriageRules {
+    /// The youngest heir who may wed.
+    pub age: u32,
+    /// A court at war with the crown or with a relation below this turns any suit away.
+    pub refuse_below: Fx,
+    /// The chance in percent: percent + relation * relation_k + sum(axis * k)
+    /// + (ours / theirs - 1) * strength_k (`war::strengths`), clamped to 0..=100.
+    pub percent: Fx,
+    pub relation_k: Fx,
+    #[serde(default)]
+    pub axes: Vec<(AxisId, Fx)>,
+    pub strength_k: Fx,
+}
+
+impl MarriageRules {
+    /// Who would wed: the ruler without `heirs.married_flag`, else the first heir in line
+    /// of `age` or older not yet married (`Some(id)`). None: nobody.
+    pub fn spouse(&self, w: &World, d: &Data) -> Option<Option<u32>> {
+        if !w.flags.contains(&d.heirs.married_flag) {
+            return Some(None);
+        }
+        let free = w.heirs.iter().find(|h| !h.married && h.age >= self.age);
+        free.map(|h| Some(h.id))
+    }
+
+    /// The chance in percent that the court of `n` takes a suit now; 0 with nobody to wed,
+    /// a union with it already, a war with it or a relation below `refuse_below`.
+    pub fn chance(&self, w: &World, d: &Data, n: &NeighbourId) -> Fx {
+        let Some(nb) = w.neighbours.get(n) else {
+            return Fx(0);
+        };
+        let war = w.war.as_ref().is_some_and(|x| x.enemy == *n);
+        if war || nb.relation < self.refuse_below || w.unions.contains_key(n) {
+            return Fx(0);
+        }
+        if self.spouse(w, d).is_none() {
+            return Fx(0);
+        }
+        let (ours, theirs) = crate::war::strengths(w, d, n);
+        let one = Fx::from_int(1);
+        let ratio = ours / theirs.max(one) - one;
+        let base = self.percent + nb.relation * self.relation_k + ratio * self.strength_k;
+        let axes = self.axes.iter().map(|(a, k)| w.axes[a] * *k);
+        axes.fold(base, |s, v| s + v)
+            .clamp(Fx(0), Fx::from_int(100))
+    }
+}
+
 /// What every coronation in the simulation does to the axes, in this order: each faction
 /// axis moves `reset` of the way toward its default (a new page), the axis of
 /// `legitimacy_from_claim` moves its share of the way toward the new ruler's claim, a
@@ -738,6 +790,7 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
         .chain(data.sim.traits.iter().flat_map(|t| &t.axes))
         .chain(&data.coronation.contested)
         .chain(&data.coronation.legitimacy_from_claim)
+        .chain(&data.marriage.axes)
         .map(|(a, _)| a);
     for a in [
         &data.action_slots.axis,

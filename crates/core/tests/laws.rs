@@ -1,11 +1,12 @@
-//! Stage 16: succession laws, the sex of heirs.
+//! Stage 16: succession laws, the sex of heirs, the coronation, marriages.
 
 use bd_core::data::Data;
 use bd_core::fx::Fx;
 use bd_core::game::{Game, ReignEnd};
 use bd_core::rng::Rng;
+use bd_core::rules::Target;
 use bd_core::sim::{self, AutoChooser, FallReason};
-use bd_core::state::{AxisId, Heir, HeirStatus, Holder, Preset, ProvinceId, Sex};
+use bd_core::state::{AxisId, Heir, HeirStatus, Holder, NeighbourId, Preset, ProvinceId, Sex};
 use std::fs;
 use std::path::PathBuf;
 
@@ -48,7 +49,8 @@ fn game(data: &Data, law: &str, people: &[Person]) -> Game {
         claim: Fx::from_int(50),
         status: HeirStatus::Home,
         sex: *sex,
-        married: false,
+        // Grown heirs are wed, and crowned so (births before the coronation).
+        married: *age >= 16,
     };
     for (i, p) in people.iter().enumerate().filter(|(_, p)| !p.2) {
         w.add_heir(heir(i, p));
@@ -516,4 +518,216 @@ fn the_traits_of_a_new_ruler_shift_the_axes() {
         e.text,
         "Престол наследует p0. Церковь ликует: на троне набожная королева."
     );
+}
+
+fn court(id: &str) -> NeighbourId {
+    NeighbourId(id.into())
+}
+
+/// The default preset with these heirs, a full treasury and only the `marriage_refused`
+/// event; a suit of `percent` flat, unless None (the rules.ron formula).
+fn suitors(percent: Option<i64>, people: &[Person]) -> Game {
+    let mut data = data();
+    let heirs_ron = read("events/heirs.ron");
+    data.add_events(&heirs_ron).unwrap();
+    data.events
+        .retain(|e| e.id == "marriage_refused" || e.id == "heir_marriage");
+    data.events.iter_mut().for_each(|e| e.weight = 0);
+    if let Some(p) = percent {
+        let m = &mut data.marriage;
+        (m.percent, m.relation_k, m.strength_k, m.axes) = (Fx::from_int(p), Fx(0), Fx(0), vec![]);
+    }
+    let mut g = game(&data, "law_primogeniture", people);
+    g.world
+        .axes
+        .insert(AxisId("treasury".into()), Fx::from_int(1000));
+    g
+}
+
+fn courts(g: &Game) -> Vec<String> {
+    let suit = g
+        .available_actions()
+        .into_iter()
+        .find(|(id, _)| id == "marry_neighbour");
+    let targets = suit.map(|(_, t)| t).unwrap_or_default();
+    (targets.into_iter())
+        .map(|t| match t {
+            Target::Neighbour(n) => n.0,
+            t => panic!("{t:?}"),
+        })
+        .collect()
+}
+
+/// War on the court for a province of its on the border, declared within the year.
+fn war_on(g: &mut Game, n: &str) {
+    let (_, targets) = (g.available_actions().into_iter())
+        .find(|(id, _)| id == "declare_war")
+        .unwrap();
+    let theirs = |t: &&Target| match t {
+        Target::Province(p) => g.world.provinces[p].holder == Holder::Foreign(court(n)),
+        _ => false,
+    };
+    let t = targets.iter().find(theirs).cloned();
+    g.start_action("declare_war", t).unwrap();
+    g.wait().unwrap();
+    assert_eq!(g.world.war.as_ref().map(|w| w.enemy.0.as_str()), Some(n));
+}
+
+fn suit(g: &mut Game, n: &str) {
+    g.start_action("marry_neighbour", Some(Target::Neighbour(court(n))))
+        .unwrap();
+    g.wait().unwrap();
+}
+
+/// Acceptance: a court at war with the crown or with a relation below `refuse_below` turns
+/// the suit away outright: no chance, no suit.
+#[test]
+fn a_suit_is_turned_away_at_war_and_at_low_relations() {
+    let mut g = suitors(None, &[(M, 20, true, 50)]);
+    g.world.heirs[0].married = false;
+    let m = g.data.marriage.clone();
+    // Нордмарк at -40, below -20; the others take suits.
+    let chance = |g: &Game, n: &str| m.chance(&g.world, &g.data, &court(n));
+    assert_eq!(chance(&g, "nordmark"), Fx(0));
+    assert!(chance(&g, "vestrum") > Fx(0) && chance(&g, "purpur") > Fx(0));
+    assert_eq!(courts(&g), ["purpur", "vestrum"]);
+    g.world
+        .neighbours
+        .get_mut(&court("nordmark"))
+        .unwrap()
+        .relation = Fx::from_int(-20);
+    assert!(chance(&g, "nordmark") > Fx(0), "at the threshold");
+    assert_eq!(courts(&g), ["nordmark", "purpur", "vestrum"]);
+    // At war with Веструм (and Нордмарк cold again: war on a friend costs trust).
+    war_on(&mut g, "vestrum");
+    assert_eq!(chance(&g, "vestrum"), Fx(0));
+    assert_eq!(courts(&g), ["purpur"]);
+}
+
+/// Acceptance: the chance follows the formula of rules.ron and the roll the seed.
+#[test]
+fn the_chance_of_a_suit_follows_the_seed() {
+    let mut g = suitors(None, &[(M, 20, true, 50)]);
+    g.world.heirs[0].married = false;
+    let (w, d) = (&g.world, &g.data);
+    // 30 + relation 40 * 0.5 + prestige 20 * 0.1 + (ours / 45 - 1) * 20.
+    let (ours, theirs) = bd_core::war::strengths(w, d, &court("vestrum"));
+    let one = Fx::from_int(1);
+    let want = Fx::from_int(52) + (ours / theirs - one) * Fx::from_int(20);
+    assert_eq!(d.marriage.chance(w, d, &court("vestrum")), want);
+    let wed = |seed: u64| {
+        let mut g = suitors(Some(50), &[(M, 20, true, 50)]);
+        g.world.heirs[0].married = false;
+        g.rng = Rng::from_seed(seed);
+        suit(&mut g, "vestrum");
+        g.world.unions.contains_key(&court("vestrum"))
+    };
+    let first: Vec<bool> = (0..20).map(wed).collect();
+    assert_eq!(first, (0..20).map(wed).collect::<Vec<_>>());
+    assert!(first.contains(&true) && first.contains(&false), "{first:?}");
+}
+
+/// Acceptance: a refusal costs prestige and some relation, and is told as an event.
+#[test]
+fn a_refused_suit_costs_prestige() {
+    let mut g = suitors(Some(100), &[(M, 20, true, 50)]);
+    g.world.heirs[0].married = false;
+    g.start_action("marry_neighbour", Some(Target::Neighbour(court("purpur"))))
+        .unwrap();
+    // The court turns cold while the envoys travel: no chance left.
+    g.world
+        .neighbours
+        .get_mut(&court("purpur"))
+        .unwrap()
+        .relation = Fx::from_int(-50);
+    let prestige = axis(&g, "prestige");
+    let step = g.wait().unwrap();
+    assert_eq!(axis(&g, "prestige"), prestige - Fx::from_int(5));
+    assert!(g.world.unions.is_empty() && !g.world.heirs[0].married);
+    let bd_core::game::Step::Event(v) = step else {
+        panic!("{step:?}");
+    };
+    assert_eq!(v.title, "Пурпуляндия отверг сватовство");
+}
+
+/// Acceptance: a married heir does not marry again, by a suit or by `heir_marriage`.
+#[test]
+fn a_married_heir_does_not_marry_again() {
+    let mut g = suitors(Some(100), &[(M, 20, true, 50), (M, 18, true, 50)]);
+    (g.world.heirs[0].married, g.world.heirs[1].married) = (false, false);
+    suit(&mut g, "vestrum");
+    assert_eq!(
+        g.world.unions[&court("vestrum")].spouse,
+        Some(g.world.heirs[0].id)
+    );
+    assert!(g.world.heirs[0].married && !g.world.heirs[1].married);
+    // The event finds only the unmarried one, and once he weds, nobody.
+    let e = g.data.events.iter_mut().find(|e| e.id == "heir_marriage");
+    (e.unwrap().weight, g.data.quiet_weight) = (1000, 0);
+    let p1 = g.world.heirs[1].id;
+    let bd_core::game::Step::Event(v) = g.wait().unwrap() else {
+        panic!("heir_marriage fires");
+    };
+    assert_eq!(v.target, Some(Target::Heir(p1)));
+    g.choose(0).unwrap();
+    assert!(g.world.heirs[1].married);
+    for _ in 0..5 {
+        assert_eq!(g.wait().unwrap(), bd_core::game::Step::Idle);
+    }
+    // Nobody left to wed: no suit at all.
+    assert!(courts(&g).is_empty());
+}
+
+/// Acceptance: unions with two courts at once, each until its spouse dies or a war comes.
+#[test]
+fn unions_with_two_courts_end_with_the_spouse_and_with_war() {
+    let mut g = suitors(Some(100), &[(M, 20, true, 50), (M, 18, true, 50)]);
+    (g.world.heirs[0].married, g.world.heirs[1].married) = (false, false);
+    suit(&mut g, "vestrum");
+    suit(&mut g, "purpur");
+    let bonds = |g: &Game| g.bonds().into_iter().map(|(n, ..)| n.0).collect::<Vec<_>>();
+    assert_eq!(bonds(&g), ["purpur", "vestrum"]);
+    // The war on Веструм ends that union only.
+    war_on(&mut g, "vestrum");
+    assert_eq!(bonds(&g), ["purpur"]);
+    // The death of Purpur's son-in-law ends the other.
+    g.world.heirs.remove(1);
+    g.wait().unwrap();
+    assert!(bonds(&g).is_empty());
+}
+
+/// The new ruler comes to the throne wed or not as he was, with his unions; the late ruler's
+/// unions end with him.
+#[test]
+fn a_ruler_is_crowned_with_his_marriage_and_his_unions() {
+    let crowned = |married: bool| {
+        let mut g = suitors(Some(100), &[(M, 20, true, 50)]);
+        g.world.heirs[0].married = married;
+        let since = g.world.tick;
+        let id = g.world.heirs[0].id;
+        let union = |spouse| bd_core::state::Union { spouse, since };
+        g.world.unions.insert(court("vestrum"), union(None));
+        g.world
+            .unions
+            .insert(court("purpur"), union(Some(id)));
+        g.data.sim.max_years = 1;
+        let end = ReignEnd {
+            cause: "illness".into(),
+            tick: g.world.tick,
+            world: g.world.clone(),
+        };
+        sim::run(end, &g.data, Rng::from_seed(1))
+            .entries
+            .remove(0)
+            .snapshot
+    };
+    let w = crowned(true);
+    assert!(w.flags.contains("married"));
+    let unions: Vec<_> = w
+        .unions
+        .iter()
+        .map(|(n, u)| (n.0.as_str(), u.spouse))
+        .collect();
+    assert_eq!(unions, [("purpur", None)]);
+    assert!(!crowned(false).flags.contains("married"));
 }

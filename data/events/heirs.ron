@@ -30,6 +30,7 @@
                 text: "Пригласить учёного из-за моря",
                 effects: [HeirOp(TargetAbility(10)), Axis("treasury", -40), Axis("loyalty_church", -3)],
                 cause_tag: "tutor_scholar",
+                hint: "Учёный из-за моря научит многому, но не любви к своим.",
             ),
         ],
     ),
@@ -61,6 +62,7 @@
                 text: "Повременить со свадьбой",
                 effects: [Axis("prestige", -2)],
                 cause_tag: "heir_marriage_delayed",
+                hint: "Свадьба, отложенная надолго, может не состояться вовсе.",
             ),
         ],
     ),
@@ -69,7 +71,7 @@
         // frequent without a law.
         id: "heir_dispute",
         title: "Спор наследников",
-        text: "Двое детей {ruler} не уступают друг другу, у каждого свои сторонники при дворе.",
+        text: "Двое королевских детей не уступают друг другу, у каждого свои сторонники при дворе.",
         when: All([HeirAge(1, 14, 99), ClaimGapBelow(15)]),
         weight: 8,
         once: false,
@@ -125,6 +127,7 @@
                     Chance((percent: 60, then: [HeirOp(TargetAbility(-3))], otherwise: [HeirOp(TargetRemove)])),
                 ],
                 cause_tag: "heir_doctors",
+                hint: "Хорошие лекари дороги, но жизнь наследника дороже.",
             ),
             (
                 text: "Молиться",
@@ -133,6 +136,7 @@
                     Chance((percent: 40, then: [HeirOp(TargetAbility(-3))], otherwise: [HeirOp(TargetRemove)])),
                 ],
                 cause_tag: "heir_prayer",
+                hint: "Церковь запомнит смирение двора, исход в руках Божьих.",
             ),
             (
                 text: "Положиться на крепость юности",
@@ -160,11 +164,13 @@
                 text: "Купить верность баронов",
                 effects: [Axis("treasury", -100), Axis("loyalty_nobles", 5), HeirOp(Claim(0, 10))],
                 cause_tag: "succession_bought",
+                hint: "Купленная верность длится, пока есть чем платить.",
             ),
             (
                 text: "Опереться на церковь",
                 effects: [Axis("loyalty_church", 5), Axis("loyalty_nobles", -10), HeirOp(Claim(0, 5))],
                 cause_tag: "succession_church",
+                hint: "Церковь освятит наследника, но знать сочтёт себя обойдённой.",
             ),
             (
                 text: "Уступить совету баронов",

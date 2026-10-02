@@ -7,7 +7,7 @@
     (
         id: "cap_court_intrigue",
         title: "Интриги при дворе",
-        text: "Во дворце две партии: старые роды и новые писцы. Каждая шепчет {ruler} о кознях другой.",
+        text: "Во дворце две партии: старые роды и новые писцы. Каждая нашёптывает у трона о кознях другой.",
         when: All([]),
         weight: 4,
         once: false,
@@ -39,7 +39,7 @@
     (
         id: "cap_guild_charter",
         title: "Гильдии просят хартию",
-        text: "Старшины цехов столицы принесли {ruler} хартию вольностей и просят скрепить её печатью.",
+        text: "Старшины цехов столицы принесли к трону хартию вольностей и просят скрепить её печатью.",
         when: All([]),
         weight: 4,
         once: false,
@@ -71,7 +71,7 @@
     (
         id: "cap_cathedral",
         title: "Собор на холме",
-        text: "Епископ просит {ruler} заложить в столице собор, какого не видели на сто вёрст окрест.",
+        text: "Епископ просит корону заложить в столице собор, какого не видели на сто вёрст окрест.",
         when: NotFlag("cathedral_building"),
         weight: 3,
         once: true,
@@ -104,7 +104,7 @@
         // Chain step of cap_cathedral.
         id: "cap_cathedral_consecrated",
         title: "Освящение собора",
-        text: "Собор достроен. Колокола слышны далеко за стенами, и епископ ждёт {ruler} на освящение.",
+        text: "Собор достроен. Колокола слышны далеко за стенами, и епископ ждёт двор на освящение.",
         when: Flag("cathedral_building"),
         weight: 0,
         once: true,
@@ -195,7 +195,7 @@
         // Chain step of cap_plot.
         id: "cap_plot_unmasked",
         title: "Заговорщики раскрыты",
-        text: "Соглядатаи назвали имена. Заговорщики в руках {ruler}, и вся знать ждёт, что будет.",
+        text: "Соглядатаи назвали имена. Заговорщики в руках короны, и вся знать ждёт, что будет.",
         when: Flag("plot"),
         weight: 0,
         once: false,
@@ -345,7 +345,7 @@
     (
         id: "prov_crop_failure",
         title: "Неурожай",
-        text: "В {province} град выбил хлеба. Старосты пишут, что до весны не дотянут.",
+        text: "В земле {province} град выбил хлеба. Старосты пишут, что до весны не дотянут.",
         when: All([]),
         weight: 4,
         once: false,
@@ -377,7 +377,7 @@
     (
         id: "prov_border_dispute",
         title: "Спор о границе",
-        text: "Пастухи из {neighbour} гонят стада на наши луга и говорят, что межа всегда шла по реке.",
+        text: "Чужие пастухи гонят стада на наши луга. {neighbour} уверяет, что межа всегда шла по реке.",
         when: All([]),
         weight: 3,
         once: false,
@@ -441,7 +441,7 @@
     (
         id: "prov_new_mine",
         title: "Серебряная жила",
-        text: "Рудознатцы нашли в горах {province} серебряную жилу.",
+        text: "Рудознатцы нашли серебряную жилу в горах земли {province}.",
         when: All([]),
         weight: 3,
         once: false,
@@ -473,7 +473,7 @@
     (
         id: "prov_rebel_elder",
         title: "Мятежный староста",
-        text: "Староста в {province} отказался платить подати и собрал вокруг себя мужиков с вилами.",
+        text: "Староста в земле {province} отказался платить подати и собрал вокруг себя мужиков с вилами.",
         when: All([]),
         weight: 3,
         once: false,
@@ -505,7 +505,7 @@
     (
         id: "prov_pilgrimage",
         title: "Паломники",
-        text: "В {province} у источника явилось чудо, и туда потянулись паломники со всех земель.",
+        text: "В земле {province} у источника явилось чудо, и туда потянулись паломники со всех земель.",
         when: All([]),
         weight: 3,
         once: false,
@@ -538,7 +538,7 @@
     (
         id: "fac_church_demands",
         title: "Церковь требует",
-        text: "Епископ напоминает {ruler}, что корону возложила церковь, и просит десятину со всех земель.",
+        text: "Епископ напоминает трону, что корону возложила церковь, и просит десятину со всех земель.",
         when: AxisBelow("loyalty_church", 60),
         weight: 4,
         once: false,
@@ -570,7 +570,7 @@
     (
         id: "fac_nobles_demand",
         title: "Знать требует",
-        text: "Бароны прислали к {ruler} гонца: они желают подтверждения старых вольностей.",
+        text: "Бароны прислали ко двору гонца: они желают подтверждения старых вольностей.",
         when: AxisBelow("loyalty_nobles", 50),
         weight: 4,
         once: false,
@@ -693,7 +693,7 @@
     (
         id: "fac_noble_assembly",
         title: "Собор знати",
-        text: "Знать съезжается в столицу и требует, чтобы {ruler} держал совет с лучшими людьми.",
+        text: "Знать съезжается в столицу и требует, чтобы корона держала совет с лучшими людьми.",
         when: All([]),
         weight: 3,
         once: false,
@@ -723,70 +723,70 @@
         ],
     ),
     // ------------------------------------------------------------------ heirs
-    // Upbringing, bad company and fever target a random heir of the age (`{heir}`). The
-    // betrothal comes from a neighbour's court, so it targets the neighbour and asks the
-    // first heir's age. The quarrel addresses heirs 0 and 1 by index.
+    // Upbringing and marriage live in heirs.ron (heir_tutor, heir_marriage). Here: the first
+    // campaign, an appanage, a quarrel, bad company and fever. All but the quarrel target a
+    // random heir of the age (`{heir}`); the quarrel addresses heirs 0 and 1 by index.
     (
-        id: "heir_mentor",
-        title: "Дядька для наследника",
-        text: "{heir} растёт непоседой. Двор спорит, кому доверить воспитание.",
-        when: All([]),
-        weight: 4,
+        id: "heir_first_campaign",
+        title: "Первый поход",
+        text: "{heir} просит отряд под начало и позволения ехать в первый поход на порубежье.",
+        when: Not(AtWar),
+        weight: 3,
         once: false,
-        cooldown_years: 6,
+        cooldown_years: 10,
         importance: 2,
         sign: Good,
-        target: Heir(4, 12),
+        target: Heir(15, 25),
         choices: [
             (
-                text: "Отдать в монастырь к учёным монахам",
-                effects: [HeirOp(TargetStatus(Studying("монастырь"))), HeirOp(TargetAbility(6)), Axis("loyalty_church", 4)],
-                cause_tag: "heir_monks",
-                hint: "Наследник, выученный монахами, будет благочестив и учён.",
+                text: "Дать отряд и отпустить",
+                effects: [HeirOp(TargetAbility(6)), Axis("prestige", 3), Chance((percent: 85, then: [], otherwise: [HeirOp(TargetRemove)]))],
+                cause_tag: "campaign_alone",
+                hint: "Поход закаляет, но с поля возвращаются не все.",
             ),
             (
-                text: "Доверить старому воеводе",
-                effects: [HeirOp(TargetAbility(4)), Axis("loyalty_nobles", 4)],
-                cause_tag: "heir_captain",
-                hint: "Воевода растит воина, знать растит своего короля.",
+                text: "Отпустить под присмотром старого воеводы",
+                effects: [HeirOp(TargetAbility(3)), Axis("loyalty_nobles", 2)],
+                cause_tag: "campaign_escorted",
+                hint: "Под рукой воеводы наследник учится войне без лишнего риска.",
             ),
             (
-                text: "Учить при себе",
-                effects: [HeirOp(TargetAbility(2)), HeirOp(TargetClaim(3)), Axis("legitimacy", 2)],
-                cause_tag: "heir_at_court",
-                hint: "Наследник, выросший у трона, знает его цену.",
+                text: "Оставить при дворе",
+                effects: [HeirOp(TargetClaim(-3)), Axis("prestige", -2)],
+                cause_tag: "campaign_refused",
+                hint: "Войско не любит наследников, не видевших боя.",
             ),
         ],
     ),
     (
-        id: "heir_betrothal",
-        title: "Сватовство",
-        text: "Двор {neighbour} предлагает обручить наследника {ruler} со своей наследницей.",
-        when: All([HeirAge(0, 16, 40), NotFlag("heir_betrothed"), NotFlag("heir_married")]),
+        id: "heir_appanage",
+        title: "Удел для наследника",
+        text: "{heir} просит собственный двор и удел, чтобы учиться править на деле, а не со слов наставников.",
+        when: All([]),
         weight: 3,
         once: false,
-        cooldown_years: 8,
-        importance: 3,
+        cooldown_years: 10,
+        importance: 2,
         sign: Good,
-        target: Neighbour,
+        target: Heir(18, 40),
         choices: [
             (
-                text: "Принять сватовство",
-                effects: [SetFlag("heir_betrothed"), Relation(EventTarget, 15), Axis("legitimacy", 3)],
-                cause_tag: "betrothal_foreign",
-                hint: "Брачный союз связывает дома крепче договоров.",
+                text: "Дать удел в кормление",
+                effects: [HeirOp(TargetAbility(5)), HeirOp(TargetClaim(5)), Axis("income", -1), Axis("loyalty_nobles", -3)],
+                cause_tag: "appanage_granted",
+                hint: "Наследник с уделом учится править, но обзаводится своим двором.",
             ),
             (
-                text: "Обручить с дочерью знатного рода",
-                effects: [SetFlag("heir_betrothed"), Relation(EventTarget, -5), Axis("loyalty_nobles", 8)],
-                cause_tag: "betrothal_noble",
-                hint: "Свой род на троне радует знать и ссорит с соседями.",
+                text: "Посадить в королевский совет",
+                effects: [HeirOp(TargetAbility(3)), Axis("bureaucracy", 2)],
+                cause_tag: "appanage_council",
+                hint: "В совете наследник видит, как делается власть.",
             ),
             (
-                text: "Не спешить",
-                effects: [Relation(EventTarget, -3), Axis("prestige", -2)],
-                cause_tag: "betrothal_delayed",
-                hint: "Отказ сватам обидел соседний двор.",
+                text: "Отказать",
+                effects: [HeirOp(TargetClaim(-3)), Axis("stability", -2)],
+                cause_tag: "appanage_refused",
+                hint: "Наследник на привязи ищет друзей среди недовольных.",
             ),
         ],
     ),
@@ -858,7 +858,7 @@
         // Not deadly: heir_death of heirs.ron is the deadly one. A bad roll costs ability.
         id: "heir_fever",
         title: "Горячка",
-        text: "{heir} слёг в горячке. Лекари разводят руками, знахарка предлагает травы.",
+        text: "{heir} мечется в горячке. Лекари разводят руками, знахарка предлагает травы.",
         when: All([]),
         weight: 3,
         once: false,
@@ -891,7 +891,7 @@
     (
         id: "nb_embassy",
         title: "Посольство",
-        text: "Послы {neighbour} предлагают договор о вечном мире и торговле.",
+        text: "{neighbour} шлёт послов с договором о вечном мире и торговле.",
         when: All([]),
         weight: 3,
         once: false,
@@ -923,7 +923,7 @@
     (
         id: "nb_refugees",
         title: "Беженцы",
-        text: "Из {neighbour} бегут целыми сёлами: там голод и усобица. Беженцы просят земли.",
+        text: "Из-за рубежа бегут целыми сёлами: в земле {neighbour} голод и усобица. Беженцы просят земли.",
         when: All([]),
         weight: 3,
         once: false,
@@ -955,7 +955,7 @@
     (
         id: "nb_border_incident",
         title: "Пограничная стычка",
-        text: "Дозор {neighbour} перешёл реку и сжёг нашу мельницу. Есть убитые.",
+        text: "Чужой дозор перешёл реку и сжёг нашу мельницу, есть убитые. {neighbour} молчит.",
         when: All([]),
         weight: 3,
         once: false,
@@ -988,7 +988,7 @@
     (
         id: "dis_flood",
         title: "Наводнение",
-        text: "Весенний разлив снёс мосты и мельницы в {province}. Поля под водой.",
+        text: "Весенний разлив снёс мосты и мельницы в земле {province}. Поля под водой.",
         when: All([]),
         weight: 3,
         once: false,
@@ -1052,7 +1052,7 @@
     (
         id: "dis_pestilence",
         title: "Мор",
-        text: "В {province} пришёл мор. Деревни пустеют, на дорогах заставы.",
+        text: "В землю {province} пришёл мор. Деревни пустеют, на дорогах заставы.",
         when: NotFlag("plague"),
         weight: 2,
         once: false,

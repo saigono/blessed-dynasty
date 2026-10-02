@@ -1103,6 +1103,7 @@ fn effects(d: &Data, list: &[Effect]) -> Vec<Line> {
                 ("провинция меняет хозяина".into(), None)
             }
             Effect::StartWar(_) => ("война".into(), Some(false)),
+            Effect::Tribute(v) => signed(axis_name(d, &d.economy.treasury), *v),
             Effect::Clash if !out.iter().any(|(t, _)| t == "битва") => ("битва".into(), None),
             Effect::Abdicate | Effect::RulerDies(_) => ("конец правления".into(), Some(false)),
             Effect::IfFriendly(es) => {
@@ -2041,6 +2042,9 @@ mod tests {
                 Effect::Chance(chance),
                 Effect::Grant(here()),
                 Effect::Province(here(), bd_core::rules::ProvinceField::Loyalty, Fx(1)),
+                Effect::Tribute(Fx::from_int(-30)),
+                Effect::Clash,
+                Effect::Clash,
             ],
         );
         let want = [
@@ -2050,6 +2054,8 @@ mod tests {
             ("риск", None),
             ("провинция уходит вассалу", None),
             ("лояльность провинции +0.001", Some(true)),
+            ("Казна -30", Some(false)),
+            ("битва", None),
         ];
         assert_eq!(shown, want.map(|(s, up)| (s.to_string(), up)));
         assert!(effects(&d, &[Effect::RulerHealth(Fx(1))]).is_empty());

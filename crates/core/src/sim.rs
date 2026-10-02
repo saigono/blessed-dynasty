@@ -27,6 +27,9 @@ pub struct Chronicle {
     /// The axes at the end, e.g. the army a dynasty fell or lived on with.
     #[serde(default)]
     pub axes: Axes,
+    /// Years the army deserted for want of pay after the founder (`World.deserted`).
+    #[serde(default)]
+    pub deserted: u32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -87,8 +90,10 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
         }],
         kin: Vec::new(),
         axes: Axes::new(),
+        deserted: 0,
     };
     let mut world = reign_end.world;
+    let deserted = world.deserted;
     died(&mut world, &data, c.rulers[0].cause.as_deref());
     let mut g = Game {
         world,
@@ -199,6 +204,7 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
     c.years = w.tick.year(w.time_unit);
     c.kin = w.kin.clone();
     c.axes = w.axes.clone();
+    c.deserted = w.deserted - deserted;
     let last = c.rulers.last_mut().expect("a ruler reigned");
     if last.cause.is_none() {
         last.end = w.tick;
@@ -471,18 +477,18 @@ impl AutoChooser {
         self.best(&scores, &mut g.rng)
     }
 
-    /// The best action of `available_actions` (its cost counts as treasury spent), or None
-    /// when no slot is free or doing nothing (score 0) wins.
+    /// The best action of `available_actions` with a free slot of its kind (its cost counts
+    /// as treasury spent), or None when doing nothing (score 0) wins.
     pub fn action(&self, g: &mut Game) -> Option<(ActionId, Option<Target>)> {
-        if g.world.active_actions.len() as u32 >= g.data.action_slots.slots(&g.world) {
-            return None;
-        }
         let mut options = vec![None];
         let mut scores = vec![Fx(0)];
         let treasury = self.weight(&g.data.economy.treasury.0);
         let mut actions = g.available_actions();
         for (k, (id, targets)) in actions.iter().enumerate() {
             let a = g.data.actions.iter().find(|a| a.id == *id).expect("listed");
+            if !g.data.action_slots.free(&g.world, &g.data.actions, a) {
+                continue;
+            }
             let score = self.worth(&a.on_complete, &g.world, &g.data) - treasury * a.cost;
             for t in 0..targets.len().max(1) {
                 options.push(Some((k, t)));
@@ -512,7 +518,8 @@ impl AutoChooser {
     /// Keys: axis ids (by the delta), flag ids (+1 set, -1 cleared), `province_income`,
     /// `province_population`, `province_loyalty`, `health`, `relation`, `crown_power`
     /// (by the delta), `build`, `grant`, `revoke`, `secede`, `war`, `hostage`, `death`,
-    /// `abdicate` (+1 each), `province` (+1 gained, -1 given away), `heir` (+1 born, -1 lost),
+    /// `abdicate` (+1 each), `overreach` (+1 for a grant while the crown holds more than its
+    /// room, `crown_capacity`), `province` (+1 gained, -1 given away), `heir` (+1 born, -1 lost),
     /// `heir_ability`, `heir_claim` (by the delta), `army_upkeep` (by the change in the yearly
     /// upkeep a change of the army brings). A chance weighs both branches by its odds.
     fn worth(&self, effects: &[Effect], w: &World, data: &Data) -> Fx {
@@ -539,7 +546,13 @@ impl AutoChooser {
                 Effect::Relation(_, d) | Effect::OtherRelations(d) => ("relation", *d),
                 Effect::CrownPower(_, d) => ("crown_power", *d),
                 Effect::Build(..) => ("build", one),
-                Effect::Grant(_) => ("grant", one),
+                Effect::Grant(_) => {
+                    // A crown beyond its room is glad to give land away.
+                    if !data.crown_capacity.over(w).is_empty() {
+                        sum = sum + self.weight("overreach");
+                    }
+                    ("grant", one)
+                }
                 Effect::Revoke(_) => ("revoke", one),
                 Effect::Secede(_) => ("secede", one),
                 Effect::StartWar(_) => ("war", one),

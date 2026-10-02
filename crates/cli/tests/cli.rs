@@ -82,7 +82,8 @@ fn batch_of_ten_is_deterministic() {
         let out = batch(&args);
         assert_eq!(out, batch(&args));
         let mut lines = out.lines();
-        let header = "seed,reign_years,dynasty_years,score,fall_reason,early_death,army";
+        let header = "seed,reign_years,dynasty_years,score,fall_reason,early_death,army,\
+                      treasury,deserted,treasury_10,treasury_20,treasury_30";
         assert_eq!(lines.next(), Some(header));
         let rows: Vec<_> = lines.clone().filter(|l| !l.starts_with('#')).collect();
         assert_eq!(rows.len(), 10, "{out}");

@@ -853,6 +853,24 @@ fn auto_chooser_acts_only_when_it_pays() {
     assert_eq!(flat(&[("build", 100)]).action(&mut g), None);
 }
 
+/// Stage 15: a crown over its limit is glad to grant land: `overreach` adds to a grant.
+#[test]
+fn auto_chooser_grants_land_over_the_limit() {
+    let data = content();
+    let mut g = game(&data, 1);
+    let auto = AutoChooser {
+        weights: [("grant", -20), ("overreach", 30)]
+            .map(|(k, v)| (k.to_string(), Fx::from_int(v)))
+            .into(),
+        noise: Fx(0),
+    };
+    // Room 6 for the 6 crown provinces at the start: a grant only costs.
+    assert_eq!(auto.action(&mut g), None);
+    g.data.crown_capacity.per_power = Fx(50); // room 4
+    let (id, target) = auto.action(&mut g).unwrap();
+    assert_eq!((id.as_str(), target.is_some()), ("grant_province", true));
+}
+
 /// Stage 7: the score of a chronicle depends on nothing else.
 #[test]
 fn the_score_of_a_dynasty_is_deterministic() {

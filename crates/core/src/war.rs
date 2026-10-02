@@ -96,18 +96,35 @@ pub fn enemy_border(w: &World, n: &NeighbourId) -> Option<ProvinceId> {
 }
 
 /// What the treasury gains in a year: `Economy::yearly_income`, less `income_penalty` of the
-/// crown provinces' income while at war, less `army_upkeep` at the army's size.
+/// crown provinces' income while at war, less `army_upkeep` at the army's size, less
+/// `crown_capacity.income` per province beyond the crown's room.
 pub fn yearly_income(w: &World, data: &Data) -> Fx {
+    let (income, upkeep) = income_parts(w, data);
+    income - upkeep
+}
+
+/// `yearly_income` as (income, upkeep): the crown provinces and the positive `economy.flows`;
+/// the negative flows, the war's toll, the army and the land beyond the crown's room.
+pub fn income_parts(w: &World, data: &Data) -> (Fx, Fx) {
     let r = &data.war;
-    let base = data.economy.yearly_income(w);
-    let penalty = match w.war {
-        Some(_) => {
-            let crown = w.provinces.values().filter(|p| p.holder == Holder::Crown);
-            crown.fold(Fx(0), |s, p| s + p.income) * r.income_penalty
-        }
+    let crown = w.provinces.values().filter(|p| p.holder == Holder::Crown);
+    let land = crown.fold(Fx(0), |s, p| s + p.income);
+    let flows = data.economy.flows.iter().map(|(a, k)| w.axes[a] * *k);
+    let (gain, cost) = flows.fold((Fx(0), Fx(0)), |(g, c), f| match f > Fx(0) {
+        true => (g + f, c),
+        false => (g, c - f),
+    });
+    let war = match w.war {
+        Some(_) => land * r.income_penalty,
         None => Fx(0),
     };
-    base - penalty - crate::data::curve(&r.army_upkeep, w.axes[&r.army])
+    let c = &data.crown_capacity;
+    let over = match c.income == Fx(0) {
+        true => Fx(0),
+        false => c.income * Fx::from_int(c.over(w).len() as i64),
+    };
+    let army = crate::data::curve(&r.army_upkeep, w.axes[&r.army]);
+    (land + gain, cost + war + army + over)
 }
 
 #[cfg(test)]

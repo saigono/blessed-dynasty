@@ -634,7 +634,8 @@ fn known_axis(data: &Data, a: &AxisId) -> Result<(), String> {
     }
 }
 
-/// Texts may contain `{province}`, `{neighbour}`, `{heir}`, `{ruler}`; `Game` fills them in for display.
+/// Texts may contain `{province}`, `{neighbour}`, `{heir}`, `{ruler}`, `{vassal}`,
+/// `{war_target}`; `Game` fills them in for display.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Event {
     pub id: String,

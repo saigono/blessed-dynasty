@@ -1,7 +1,7 @@
 use crate::fx::Fx;
-use crate::rules::{Action, Event, Predicate};
+use crate::rules::{Action, ActionTarget, Event, Predicate};
 use crate::sim::FallReason;
-use crate::state::{AxisId, Heir, Holder, Stance, World};
+use crate::state::{AxisId, Heir, Holder, Province, Stance, World};
 use crate::time::TimeUnit;
 use crate::war::WarOutcome;
 use serde::Deserialize;
@@ -61,11 +61,18 @@ pub struct Names {
     pub vassals: Vec<String>,
 }
 
-/// Concurrent actions: the largest `slots` whose `threshold` the axis has reached.
+/// Concurrent actions: the largest `slots` whose `threshold` the axis has reached. The
+/// actions of a war going on (target `Enemy`) run in `war_slots` of their own instead.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ActionSlots {
     pub axis: AxisId,
     pub steps: Vec<(Fx, u32)>,
+    #[serde(default = "one")]
+    pub war_slots: u32,
+}
+
+fn one() -> u32 {
+    1
 }
 
 impl ActionSlots {
@@ -73,6 +80,27 @@ impl ActionSlots {
         let v = w.axes[&self.axis];
         let open = self.steps.iter().filter(|(threshold, _)| v >= *threshold);
         open.map(|(_, slots)| *slots).max().unwrap_or(0)
+    }
+
+    /// Running actions of the kind of `a` (war or peace) and the slots of that kind.
+    pub fn used(&self, w: &World, actions: &[Action], a: &Action) -> (u32, u32) {
+        let war = |a: &Action| a.target == ActionTarget::Enemy;
+        let def = |id: &str| actions.iter().find(|d| d.id == id);
+        let running = (w.active_actions.iter())
+            .filter(|x| def(&x.id).is_some_and(|d| war(d) == war(a)))
+            .count() as u32;
+        let slots = if war(a) {
+            self.war_slots
+        } else {
+            self.slots(w)
+        };
+        (running, slots)
+    }
+
+    /// A slot of the kind of `a` is free.
+    pub fn free(&self, w: &World, actions: &[Action], a: &Action) -> bool {
+        let (running, slots) = self.used(w, actions, a);
+        running < slots
     }
 }
 
@@ -395,13 +423,47 @@ pub struct StanceRules {
 }
 
 /// Yearly limit of direct rule, see `Game::overreach`: the crown holds at most
-/// `capital crown power * per_power` provinces; each of its weakest beyond that loses
-/// `loyalty`, and goes to a vassal below `grant_below`.
+/// `capital crown power * per_power + sum(axis * k of per_axis)` provinces itself. Beyond
+/// that, each year: the weakest extra provinces (by crown power) lose `loyalty`, the axes of
+/// `penalty` move by their amount per extra province, and the yearly income
+/// (`war::yearly_income`) is `income` per extra province lower. Only the player, or the
+/// automaton by its weights, gives land away.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct CrownCapacity {
     pub per_power: Fx,
     pub loyalty: Fx,
+    /// Unused since stage 15, when the forced grant went; kept for the signature.
+    #[serde(default)]
     pub grant_below: Fx,
+    #[serde(default)]
+    pub per_axis: Vec<(AxisId, Fx)>,
+    #[serde(default)]
+    pub penalty: Vec<(AxisId, Fx)>,
+    #[serde(default)]
+    pub income: Fx,
+}
+
+impl CrownCapacity {
+    /// How many provinces the crown can hold itself now, the capital included.
+    pub fn room(&self, w: &World) -> i64 {
+        let capital = w.provinces.get(&w.capital.province);
+        let power = capital.map_or(Fx(0), |p| p.crown_power) * self.per_power;
+        let room = (self.per_axis.iter()).fold(power, |s, (a, k)| s + w.axes[a] * *k);
+        (room.0 / Fx::SCALE).max(0)
+    }
+
+    /// The crown's provinces beyond `room`: the weakest by crown power, the capital never;
+    /// the smallest id first on a tie.
+    pub fn over<'a>(&self, w: &'a World) -> Vec<&'a Province> {
+        let crown = w.provinces.values().filter(|p| p.holder == Holder::Crown);
+        let over = (crown.count() as i64 - self.room(w)).max(0) as usize;
+        let mut weakest: Vec<&Province> = (w.provinces.values())
+            .filter(|p| p.holder == Holder::Crown && p.id != w.capital.province)
+            .collect();
+        weakest.sort_by_key(|p| p.crown_power);
+        weakest.truncate(over);
+        weakest
+    }
 }
 
 /// Who gets a province from `Effect::Grant`.
@@ -557,6 +619,8 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
     }
     let flows = data.economy.flows.iter().map(|(a, _)| a);
     let war = data.war.bonus.iter().map(|(a, _)| a);
+    let c = &data.crown_capacity;
+    let capacity = c.per_axis.iter().chain(&c.penalty).map(|(a, _)| a);
     for a in [
         &data.action_slots.axis,
         &data.economy.treasury,
@@ -565,8 +629,9 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
     .into_iter()
     .chain(flows)
     .chain(war)
+    .chain(capacity)
     {
-        if !is_axis(a) {
+        if !is_axis(a) || (data.is_derived(a) && c.penalty.iter().any(|(p, _)| p == a)) {
             return Err(DataError::Invalid(format!("unknown axis {}", a.0)));
         }
     }

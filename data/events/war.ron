@@ -6,6 +6,8 @@
 // is dropped. Nominally four years from the declaration. The war actions of actions.ron
 // (battle, talks, siege) can cut it short: talks spawn the outcome by the score at once.
 // Victory takes the province the war is fought for (War.target, ProvinceTarget WarTarget).
+// war_siege_won is the card of the siege action (actions.ron war_siege_target): the province
+// is taken already, its one choice signs the peace.
 [
     (
         id: "war_declared",
@@ -71,7 +73,7 @@
     ),
     (
         id: "war_siege",
-        title: "Осада",
+        title: "Осада крепости",
         text: "Королевское войско стоит под стенами вражеской крепости, {neighbour} шлёт ей подмогу. Осада затягивается.",
         when: All([WarStage(Fighting), WarScoreAbove(0)]),
         weight: 0,
@@ -198,6 +200,26 @@
                 effects: [Tribute(-30), Relation(EventTarget, 15), EndWar(Draw)],
                 cause_tag: "war_draw_gifts",
                 hint: "Подарки после войны соседи принимают за слабость или за дружбу.",
+            ),
+        ],
+    ),
+    (
+        id: "war_siege_won",
+        title: "Крепость {war_target} пала",
+        text: "Осада кончилась: голод и мины сделали своё, гарнизон открыл ворота. Над стенами земли {war_target} поднят королевский стяг, и {neighbour} шлёт послов просить мира.",
+        when: WarStage(Peace),
+        weight: 0,
+        once: false,
+        cooldown_years: 0,
+        importance: 5,
+        sign: Good,
+        target: Neighbour,
+        choices: [
+            (
+                text: "Принять ключи от крепости и подписать мир",
+                effects: [EndWar(Victory)],
+                cause_tag: "war_siege_won",
+                hint: "Город, взятый измором, долго помнит голод.",
             ),
         ],
     ),

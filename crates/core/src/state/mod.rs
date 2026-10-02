@@ -169,6 +169,9 @@ pub struct World {
     /// The dynasty for the family tree: the founder, then every heir in order of appearance.
     #[serde(default)]
     pub kin: Vec<Kin>,
+    /// Years the army deserted for want of pay (`war.desertion`), over the whole game.
+    #[serde(default)]
+    pub deserted: u32,
 }
 
 /// A member of the dynasty. Years are calendar years.
@@ -249,6 +252,7 @@ impl World {
             line_from: 0,
             marks: BTreeMap::new(),
             kin: Vec::new(),
+            deserted: 0,
         };
         let r = &world.ruler;
         let founder = Kin {

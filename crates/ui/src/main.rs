@@ -2274,6 +2274,59 @@ mod tests {
         );
     }
 
+    /// Stage 17 bugs: an heir target is named by its id, not its index; a ruler who gave up
+    /// the crown has the year of it in the tree; a state breaking away does not repaint
+    /// the others.
+    #[test]
+    fn heir_names_abdication_years_and_state_colours_hold() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(1));
+        let g = h.app.game.as_mut().unwrap();
+        let mut x = g.data.new_heir.clone();
+        x.name = "Ада".into();
+        g.world.add_heir(x);
+        g.world.heirs.remove(0);
+        assert_eq!(target_name(&g.world, &Target::Heir(1)), "Ада");
+
+        let colour =
+            |w: &World, n: &str| map::holder_color(w, &Holder::Foreign(NeighbourId(n.into())));
+        let states = ["nordmark", "purpur", "vestrum"];
+        let before = states.map(|n| colour(&g.world, n));
+        // Арден, whose id sorts before every state, breaks away.
+        let mut queue = vec![];
+        let mut ctx = bd_core::rules::Ctx {
+            data: &g.data,
+            queue: &mut queue,
+            target: None,
+            neighbour: None,
+        };
+        let land = (g.world.provinces.values())
+            .find(|p| p.holder == Holder::Vassal(bd_core::state::VassalId("arden".into())))
+            .map(|p| p.id.clone())
+            .unwrap();
+        let secede = Effect::Secede(bd_core::rules::ProvinceTarget::ById(land));
+        secede.apply(&mut g.world, &mut ctx);
+        assert!(
+            g.world
+                .neighbours
+                .contains_key(&NeighbourId("arden".into()))
+        );
+        assert_eq!(states.map(|n| colour(&g.world, n)), before);
+        assert!(!before.contains(&colour(&g.world, "arden")));
+
+        h.app.apply(Cmd::Abdicate);
+        let id = h.app.data.abdication.event.clone();
+        let ev = h.app.data.events.iter().find(|e| e.id == id).unwrap();
+        let confirm = (ev.choices.iter())
+            .position(|c| c.effects.contains(&Effect::Abdicate))
+            .unwrap();
+        h.app.apply(Cmd::Choose(confirm));
+        (h.app.screen, h.app.tree) = (Screen::Chronicle, true);
+        let shown = texts_of(&mut h);
+        let founder = "♔ Ульрих (р. 1155, отрёкся в 1187)";
+        assert!(shown.iter().any(|t| t.starts_with(founder)), "{shown:?}");
+    }
+
     /// Line segments painted in the holder border colour, in map coordinates.
     fn borders(h: &Harness, out: &egui::FullOutput) -> Vec<[(i32, i32); 2]> {
         let map = &h.app.map;

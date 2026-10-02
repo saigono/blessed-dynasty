@@ -136,6 +136,11 @@ pub struct Neighbour {
     /// over start provinces) and by `Effect::Secede`; 0 means no recovery.
     #[serde(default)]
     pub per_province: Fx,
+    /// The order the state came into the world: the preset's in their order, a new one
+    /// (`Effect::Secede`) after all. Stable, unlike the position among `World.neighbours`;
+    /// the map colours by it.
+    #[serde(default)]
+    pub ordinal: u32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -313,6 +318,10 @@ impl World {
         world.kin.push(founder);
         for h in std::mem::take(&mut world.heirs) {
             world.add_heir(h);
+        }
+        for (i, n) in preset.neighbours.iter().enumerate() {
+            let n = world.neighbours.get_mut(&n.id).expect("from the preset");
+            n.ordinal = i as u32;
         }
         for n in world.neighbours.values_mut() {
             let holder = Holder::Foreign(n.id.clone());

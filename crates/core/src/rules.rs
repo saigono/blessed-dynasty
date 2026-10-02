@@ -620,6 +620,7 @@ impl Effect {
                     strength: vassal.strength * Fx::from_int(count),
                     stance: Stance::Defend,
                     per_province: vassal.strength,
+                    ordinal: (w.neighbours.values().map(|n| n.ordinal + 1).max()).unwrap_or(0),
                 };
                 w.neighbours.insert(id, n);
             }

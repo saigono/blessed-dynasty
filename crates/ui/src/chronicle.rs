@@ -366,9 +366,14 @@ pub fn tree(
                 };
                 for (i, depth) in family(kin) {
                     let k = &kin[i];
-                    let life = match k.died {
-                        Some(d) => format!("{}–{d}", k.born),
-                        None => format!("р. {}", k.born),
+                    // A reign over with no death: the ruler abdicated (sim::died).
+                    let gave_up = (k.crowned.and(reign(i)))
+                        .filter(|r| k.died.is_none() && r.cause.is_some())
+                        .map(|r| r.end.date(unit, start_year));
+                    let life = match (k.died, gave_up) {
+                        (Some(d), _) => format!("{}–{d}", k.born),
+                        (None, Some(y)) => format!("р. {}, отрёкся в {y}", k.born),
+                        (None, None) => format!("р. {}", k.born),
                     };
                     let bastard = if k.bastard { ", бастард" } else { "" };
                     let mut text = format!("{} ({life}{bastard})", k.name);

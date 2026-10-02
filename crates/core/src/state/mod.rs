@@ -108,6 +108,11 @@ pub struct Neighbour {
     pub relation: Fx,
     pub strength: Fx,
     pub stance: Stance,
+    /// Strength per province held: `strength` recovers toward this times the provinces the
+    /// state holds now (`neighbour_ai.recover`). Set by `World::from_preset` (start strength
+    /// over start provinces) and by `Effect::Secede`; 0 means no recovery.
+    #[serde(default)]
+    pub per_province: Fx,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -215,6 +220,11 @@ impl World {
         };
         for h in std::mem::take(&mut world.heirs) {
             world.add_heir(h);
+        }
+        for n in world.neighbours.values_mut() {
+            let holder = Holder::Foreign(n.id.clone());
+            let held = world.provinces.values().filter(|p| p.holder == holder);
+            n.per_province = n.strength / Fx::from_int(held.count().max(1) as i64);
         }
         world.recompute_loyalty(data);
         world.recompute_crown_power(data);

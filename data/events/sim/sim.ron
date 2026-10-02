@@ -164,7 +164,7 @@
     ),
     // ------------------------------------------------------- succession crisis
     (
-        // A contested succession (claim below heirs.crisis_claim, or an abdication), a child
+        // A contested succession (claim below the law's crisis_claim, or an abdication), a child
         // on the throne (sim.regency_flag), or rival heirs under a weak crown.
         id: "succession_crisis",
         title: "Смута",

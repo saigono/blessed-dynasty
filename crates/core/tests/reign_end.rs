@@ -191,7 +191,7 @@ fn abdicate(bureaucracy: i64, ability: i64) -> Game {
 
 #[test]
 fn abdication_with_weak_institutions_breaks_the_claim() {
-    let crisis = content().heirs.crisis_claim;
+    let crisis = content().heirs.laws[0].crisis_claim; // primogeniture, as in the preset
     let mut g = abdicate(20, 80);
     let Step::ReignEnded(end) = g.wait().unwrap() else {
         panic!()

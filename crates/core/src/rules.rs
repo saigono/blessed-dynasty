@@ -537,6 +537,7 @@ impl Effect {
                     relation: ctx.data.sim.secession_relation,
                     strength: vassal.strength * Fx::from_int(count),
                     stance: Stance::Defend,
+                    per_province: vassal.strength,
                 };
                 w.neighbours.insert(id, n);
             }
@@ -1010,6 +1011,8 @@ mod tests {
         assert!(!w.vassals.contains_key(&VassalId("weir".into())));
         let n = &w.neighbours[&weir];
         assert_eq!((n.name.as_str(), n.strength), ("Вейр", Fx::from_int(40)));
+        // Two provinces of a house of strength 20: it recovers toward 20 per province held.
+        assert_eq!(n.per_province, Fx::from_int(20));
         assert_eq!(
             (n.relation, &n.stance),
             (data.sim.secession_relation, &Stance::Defend)

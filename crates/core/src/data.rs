@@ -1,7 +1,7 @@
 use crate::fx::Fx;
 use crate::rules::{Action, Event, Predicate};
 use crate::sim::FallReason;
-use crate::state::{AxisId, Heir, Holder, NeighbourId, Stance, World};
+use crate::state::{AxisId, Heir, Holder, Stance, World};
 use crate::time::TimeUnit;
 use crate::war::WarOutcome;
 use serde::Deserialize;
@@ -233,8 +233,6 @@ pub struct HeirRules {
     /// Claims move by `claim_step` toward the target of the law whose flag is set.
     pub claim_step: Fx,
     pub laws: Vec<Law>,
-    /// A claim below this means a succession crisis.
-    pub crisis_claim: Fx,
     /// Birth chance in percent: the row of the largest `age_from <= ruler age`,
     /// times `unmarried` without `married_flag`.
     pub birth: Vec<(u32, Fx)>,
@@ -245,13 +243,22 @@ pub struct HeirRules {
     pub death: Vec<(u32, Fx)>,
 }
 
+impl HeirRules {
+    /// The succession law in force: the first whose flag is set.
+    pub fn law(&self, w: &World) -> Option<&Law> {
+        self.laws.iter().find(|l| w.flags.contains(&l.flag))
+    }
+}
+
 /// Claim target: `eldest` for heir 0, `others` for the rest, plus `ability * ability_k`.
+/// A new ruler's claim below `crisis_claim` contests the succession.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Law {
     pub flag: String,
     pub eldest: Fx,
     pub others: Fx,
     pub ability_k: Fx,
+    pub crisis_claim: Fx,
 }
 
 /// The row of the largest `from <= at`; 0 below the first row.
@@ -313,12 +320,9 @@ pub struct NeighbourAi {
     pub expand_margin: Fx,
     /// Every year the relation moves this much toward 0, after the stance's own change.
     pub drift: Fx,
-    /// Every year the strength moves this much toward the start strength in `start`.
+    /// Every year the strength moves this much toward `Neighbour.per_province` times the
+    /// provinces the state holds now.
     pub recover: Fx,
-    /// Start strength per neighbour, from the preset (`Game::new`), not from `rules.ron`.
-    /// A state born later (`Effect::Secede`) has none and does not recover.
-    #[serde(default)]
-    pub start: BTreeMap<NeighbourId, Fx>,
     pub expand: StanceRules,
     pub defend: StanceRules,
     pub trade: StanceRules,
@@ -398,6 +402,9 @@ pub struct SimRules {
     /// A ruler younger than `regency_age` reigns under `regency_flag` until he reaches it.
     pub regency_flag: String,
     pub regency_age: u32,
+    /// The death of the first heir (`texts.heir_died`) is told from this age on; younger,
+    /// only when he was the last heir and the dynasty ends without one.
+    pub heir_death_age: u32,
     pub ruler_health: Fx,
     /// Relation of a state born of a vassal revolt (`Effect::Secede`) with the kingdom.
     pub secession_relation: Fx,

@@ -100,8 +100,14 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
         g.queue.push((g.world.tick, p));
     }
     let tpy = g.world.time_unit.ticks_per_year;
+    // The death of a young first heir who was the last one, with its place in the entries:
+    // told only if no heir comes after and the dynasty ends for want of one.
+    let mut last_heir: Option<(usize, ChronicleEntry)> = None;
     c.fall = 'dynasty: loop {
         if !crown(&mut g, &mut c) {
+            if let Some((i, e)) = last_heir {
+                c.entries.insert(i, e);
+            }
             break FallReason::NoHeir;
         }
         let auto = AutoChooser::for_ruler(&g.data, &g.world.ruler);
@@ -137,7 +143,16 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
                     text.replace("{heir}", &h.name),
                 );
                 let causes = causes(&g.world, [MarkKey::Heir(h.id)].into());
-                c.entries.push(entry(&g, told, s.notable, causes));
+                let e = entry(&g, told, s.notable, causes);
+                // `h` is from before the tick; heirs age a year before the death roll.
+                if h.age + 1 >= s.heir_death_age {
+                    c.entries.push(e);
+                } else if g.world.heirs.is_empty() {
+                    last_heir = Some((c.entries.len(), e));
+                }
+            }
+            if !g.world.heirs.is_empty() {
+                last_heir = None;
             }
             match step {
                 Step::Idle => {}
@@ -214,7 +229,7 @@ fn next_heir(w: &World) -> Option<usize> {
     (0..w.heirs.len()).rev().max_by_key(|&i| w.heirs[i].claim)
 }
 
-/// Crowns the next heir: a claim below `heirs.crisis_claim` contests the succession
+/// Crowns the next heir: a claim below the law's `crisis_claim` contests the succession
 /// (`abdication.contested_flag`), a child reigns under the regency flag, the other heirs
 /// become the collateral line. False: no heir.
 fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
@@ -225,7 +240,7 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     let heir = w.heirs.remove(next_heir(w).expect("succession found one"));
     // His brothers and sisters become the collateral line, behind his children to come.
     w.line_from = w.next_heir_id;
-    if heir.claim < d.heirs.crisis_claim {
+    if (d.heirs.law(w)).is_some_and(|l| heir.claim < l.crisis_claim) {
         w.flags.insert(d.abdication.contested_flag.clone());
     }
     if ruler.age < d.sim.regency_age {

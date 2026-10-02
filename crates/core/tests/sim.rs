@@ -369,34 +369,76 @@ fn the_new_rulers_child_goes_before_his_brother() {
     assert!(brother.1 < Fx::from_int(75), "{:?}", line(2));
 }
 
-/// Stage 12: the first in line dies of age risk (heirs.death): an entry tells it.
+/// (years after the end of the reign, title) of every entry.
+fn told(g: &Game, c: &Chronicle) -> Vec<(u32, String)> {
+    let at = |e: &bd_core::sim::ChronicleEntry| e.tick.0 - g.world.tick.0;
+    (c.entries.iter())
+        .map(|e| (at(e), e.title.clone()))
+        .collect()
+}
+
+/// Stage 12: the first in line dies of age risk (heirs.death) at 14 or older: an entry tells
+/// it; a younger one dying is not told while the dynasty goes on.
 #[test]
-fn the_death_of_the_first_heir_is_told() {
+fn the_death_of_a_grown_first_heir_is_told() {
     let mut data = content();
     quiet(&mut data);
-    data.heirs.death = vec![(0, Fx(0)), (12, Fx::from_int(1000))];
+    data.heirs.death = vec![(0, Fx(0)), (14, Fx::from_int(1000))];
     data.sim.max_years = 5;
     let g = heirs(
         &data,
-        &[(30, 80, HeirStatus::Home), (10, 75, HeirStatus::Home)],
+        &[(30, 80, HeirStatus::Home), (12, 75, HeirStatus::Home)],
     );
     let c = sim::run(end_now(&g), &data, Rng::from_seed(1));
-    let told: Vec<_> = (c.entries.iter())
-        .map(|e| (e.tick.0 - g.world.tick.0, e.title.as_str(), e.text.as_str()))
-        .collect();
+    let crowned = (0, "Новое правление".to_string());
     assert_eq!(
-        told,
+        told(&g, &c),
+        [crowned.clone(), (2, "Смерть наследника".into())]
+    );
+    let e = &c.entries[1];
+    assert_eq!(e.text, "Не стало первого в очереди на престол: h1.");
+    assert_eq!(e.importance, data.sim.notable);
+    assert!(e.snapshot.heirs.is_empty());
+    // Dying at 13 (below sim.heir_death_age), the last heir of a living dynasty: not told.
+    data.heirs.death = vec![(0, Fx(0)), (13, Fx::from_int(1000))];
+    let c = sim::run(end_now(&g), &data, Rng::from_seed(1));
+    assert_eq!(told(&g, &c), [crowned]);
+    assert_eq!(c.entries[0].snapshot.heirs.len(), 1);
+}
+
+/// Stage 12: an infant, the last heir, dies; no other is born and the ruler dies: the
+/// dynasty ends NoHeir, and the infant's death is told where it happened.
+#[test]
+fn the_death_of_the_last_infant_heir_is_told_at_the_fall() {
+    let mut data = content();
+    quiet(&mut data);
+    data.add_events(&read("events/death.ron")).unwrap();
+    data.heirs.death = vec![(0, Fx(0)), (1, Fx::from_int(1000))];
+    data.death.base = vec![(0, Fx(0)), (33, Fx::from_int(1000))];
+    let g = heirs(
+        &data,
+        &[(30, 80, HeirStatus::Home), (0, 75, HeirStatus::Home)],
+    );
+    let c = sim::run(end_now(&g), &data, Rng::from_seed(1));
+    assert_eq!(c.fall, FallReason::NoHeir);
+    let told = told(&g, &c);
+    assert_eq!(
+        told[..2],
         [
-            (0, "Новое правление", "Престол наследует h0."),
-            (
-                2,
-                "Смерть наследника",
-                "Не стало первого в очереди на престол: h1."
-            ),
+            (0, "Новое правление".into()),
+            (1, "Смерть наследника".into())
         ]
     );
-    assert_eq!(c.entries[1].importance, data.sim.notable);
-    assert!(c.entries[1].snapshot.heirs.is_empty());
+    // With an heir born later (a birth every year), the same death is not told.
+    data.heirs.birth = vec![(0, Fx::from_int(100))];
+    data.heirs.death = vec![(0, Fx(0)), (1, Fx::from_int(1000)), (2, Fx(0))];
+    data.sim.max_years = 10;
+    let c = sim::run(end_now(&g), &data, Rng::from_seed(1));
+    assert!(
+        c.entries.iter().all(|e| e.title != "Смерть наследника"),
+        "{:?}",
+        texts(&c)
+    );
 }
 
 #[test]

@@ -112,11 +112,8 @@ pub struct Game {
 }
 
 impl Game {
-    /// `data` must already hold the events and actions. It takes the neighbours' start
-    /// strengths from the preset (`neighbour_ai.start`).
-    pub fn new(mut data: Data, preset: &Preset, seed: u64) -> Game {
-        let start = preset.neighbours.iter().map(|n| (n.id.clone(), n.strength));
-        data.neighbour_ai.start = start.collect();
+    /// `data` must already hold the events and actions.
+    pub fn new(data: Data, preset: &Preset, seed: u64) -> Game {
         Game {
             world: World::from_preset(&data, preset),
             rng: Rng::from_seed(seed),
@@ -600,7 +597,7 @@ fn heirs_year(d: &Data, w: &mut World, rng: &mut Rng) {
         risk <= Fx(0) || rng.range(0, 1000 * Fx::SCALE) >= risk.0
     });
     let pct = |v: Fx| v.clamp(Fx(0), Fx::from_int(100));
-    let law = r.laws.iter().find(|l| w.flags.contains(&l.flag));
+    let law = r.law(w);
     for (i, h) in w.heirs.iter_mut().enumerate() {
         let (growth, claim) = match h.status {
             HeirStatus::Home => (r.growth_home, Fx(0)),

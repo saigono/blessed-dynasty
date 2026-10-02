@@ -1,7 +1,7 @@
 use crate::fx::Fx;
 use crate::graph::{Influence, Stability};
 use crate::rng::Rng;
-use crate::rules::{Action, ActionTarget, Event, Predicate};
+use crate::rules::{Action, ActionTarget, Effect, Event, Predicate};
 use crate::sim::FallReason;
 use crate::state::{AxisId, Heir, Holder, NeighbourId, Province, Sex, Stance, World};
 use crate::time::TimeUnit;
@@ -32,6 +32,8 @@ pub struct Data {
     /// Stability derived from the graph; None: a plain axis, written directly.
     #[serde(default)]
     pub stability: Option<Stability>,
+    #[serde(default)]
+    pub laws: Laws,
     /// Weight of "nothing happens" in the random event pick.
     pub quiet_weight: u32,
     /// Province loyalty below this shows as unrest. Display only.
@@ -433,6 +435,64 @@ impl Law {
     }
 }
 
+/// Laws-institutions (`rules.ron` `laws`, docs/design/hidden-state.html, section 5).
+#[derive(Debug, Clone, PartialEq, Deserialize, Default)]
+pub struct Laws {
+    pub list: Vec<LawDef>,
+}
+
+/// A law is in force while its flag `id` is set; it outlives the ruler. In force, it shifts
+/// the anchors of axes (`graph::anchor`) and scales edges of the graph (`graph::scale`).
+/// The succession laws of `heirs.laws` are laws too, by their flag; their `name` and
+/// `description` default to theirs.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct LawDef {
+    pub id: String,
+    /// One law of a group is in force at a time; empty: no group.
+    #[serde(default)]
+    pub group: String,
+    #[serde(default)]
+    pub name: String,
+    /// What the law holds and what it feeds, in plain words, for the UI.
+    #[serde(default)]
+    pub description: String,
+    pub cost: Fx,
+    pub years: crate::time::Years,
+    #[serde(default = "always")]
+    pub requires: Predicate,
+    /// Anchor shifts while the law is being brought in: a faction against it.
+    #[serde(default)]
+    pub resistance: Vec<(AxisId, Fx)>,
+    /// Anchor shifts while in force.
+    #[serde(default)]
+    pub anchors: Vec<(AxisId, Fx)>,
+    /// Multipliers of edges (`Influence.id`) while in force.
+    #[serde(default)]
+    pub edges: Vec<(String, Fx)>,
+    /// Added to the yearly income while in force (negative: its upkeep).
+    #[serde(default)]
+    pub treasury: Fx,
+    /// Applied once, when brought in.
+    #[serde(default)]
+    pub on_complete: Vec<Effect>,
+}
+
+fn always() -> Predicate {
+    Predicate::All(vec![])
+}
+
+impl Data {
+    /// The law of this id.
+    pub fn law(&self, id: &str) -> Option<&LawDef> {
+        self.laws.list.iter().find(|l| l.id == id)
+    }
+
+    /// The laws in force now, in data order.
+    pub fn laws_in_force<'a>(&'a self, w: &'a World) -> impl Iterator<Item = &'a LawDef> + 'a {
+        self.laws.list.iter().filter(|l| w.flags.contains(&l.id))
+    }
+}
+
 /// The row of the largest `from <= at`; 0 below the first row.
 pub fn by_age(table: &[(u32, Fx)], at: u32) -> Fx {
     let rows = table.iter().filter(|(from, _)| *from <= at);
@@ -743,8 +803,8 @@ impl MarriageRules {
 }
 
 /// What every coronation in the simulation does to the axes, in this order: each faction
-/// axis moves `reset` of the way toward its default (a new page), the axis of
-/// `legitimacy_from_claim` moves its share of the way toward the new ruler's claim, a
+/// axis moves `reset` of the way toward its anchor (`graph::anchor`, a new page under the
+/// laws in force), the axis of `legitimacy_from_claim` moves its share of the way toward the new ruler's claim, a
 /// contested succession (`abdication.contested_flag`) adds `contested`, then the law's
 /// `coronation`, then the `axes` of the ruler's traits.
 #[derive(Debug, Clone, PartialEq, Deserialize, Default)]
@@ -800,7 +860,7 @@ pub enum DataError {
 
 /// Parses `rules.ron` contents. The caller does the file I/O.
 pub fn load(rules: &str) -> Result<Data, DataError> {
-    let data: Data = parse(rules)?;
+    let mut data: Data = parse(rules)?;
     if data.time_unit.ticks_per_year == 0 {
         return Err(DataError::Invalid(
             "time_unit.ticks_per_year must be > 0".into(),
@@ -904,6 +964,30 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
             return Err(DataError::Invalid(
                 "neighbour_ai: chances sum over 100".into(),
             ));
+        }
+    }
+    unique(data.laws.list.iter().map(|l| l.id.as_str()))?;
+    for l in &data.laws.list {
+        let axes = l.anchors.iter().chain(&l.resistance);
+        let axis = axes
+            .map(|(a, _)| a)
+            .all(|a| is_axis(a) && !data.is_derived(a));
+        let edge = |id: &String| data.influences.iter().any(|e| e.id == *id);
+        if !axis || !l.edges.iter().all(|(e, _)| edge(e)) {
+            return Err(invalid(
+                &l.id,
+                "laws: unknown or derived axis, or no such edge".into(),
+            ));
+        }
+        l.requires.check(&data).map_err(|m| invalid(&l.id, m))?;
+        for e in &l.on_complete {
+            e.check(&data).map_err(|m| invalid(&l.id, m))?;
+        }
+    }
+    let succession = &data.heirs.laws;
+    for l in data.laws.list.iter_mut().filter(|l| l.name.is_empty()) {
+        if let Some(s) = succession.iter().find(|s| s.flag == l.id) {
+            (l.name, l.description) = (s.name.clone(), s.text());
         }
     }
     Ok(data)

@@ -635,7 +635,7 @@ impl Effect {
         }
     }
 
-    fn check(&self, data: &Data) -> Result<(), String> {
+    pub(crate) fn check(&self, data: &Data) -> Result<(), String> {
         match self {
             Effect::Axis(a, _) if data.is_derived(a) => {
                 Err(format!("axis {} is derived, effects cannot write it", a.0))

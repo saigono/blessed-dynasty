@@ -29,6 +29,9 @@ pub struct Influence {
     pub delay: u32,
     #[serde(default)]
     pub kind: InfluenceKind,
+    /// Counts only while a law in force names it (`LawDef.edges`, `scale`).
+    #[serde(default)]
+    pub off: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
@@ -82,7 +85,7 @@ pub fn recompute_stability(d: &Data, w: &mut World) {
     let a = d.axes.iter().find(|a| a.id == s.axis);
     let a = a.expect("checked on load");
     let edges = parts(d, w, &a.id, InfluenceKind::Target);
-    let v = edges.fold(a.anchor.unwrap_or(a.default), |s, (_, c)| s + c) + w.axes[&s.shocks];
+    let v = edges.fold(anchor(d, w, a), |s, (_, c)| s + c) + w.axes[&s.shocks];
     w.axes.insert(a.id.clone(), v.clamp(a.min, a.max));
 }
 
@@ -96,7 +99,8 @@ pub fn step(d: &Data, a: &AxisDef) -> Fx {
     a.step.unwrap_or(if faction { d.drift.step } else { Fx(0) })
 }
 
-/// The edges of `kind` into `to` with their index and contribution now, in file order.
+/// The edges of `kind` into `to` with their index and contribution now (times `scale`), in
+/// file order.
 pub fn parts<'a>(
     d: &'a Data,
     w: &'a World,
@@ -105,15 +109,47 @@ pub fn parts<'a>(
 ) -> impl Iterator<Item = (usize, Fx)> + 'a {
     let edges = d.influences.iter().enumerate();
     let into = edges.filter(move |(_, e)| e.kind == kind && e.to == *to);
-    into.map(move |(i, e)| (i, e.now(i, w)))
+    into.map(move |(i, e)| (i, e.now(i, w) * scale(d, w, i)))
 }
 
-/// The target of `a`: its anchor (`default` without one) plus the `Target` edges into it,
-/// clamped to its bounds.
+/// The product of the multipliers the laws in force put on edge `i` (`LawDef.edges`); 0 for
+/// an edge `off` that none of them names.
+pub fn scale(d: &Data, w: &World, i: usize) -> Fx {
+    let e = &d.influences[i];
+    let (mut k, mut named) = (Fx::from_int(1), false);
+    for l in &d.laws.list {
+        for (_, m) in l.edges.iter().filter(|(id, _)| *id == e.id) {
+            if w.flags.contains(&l.id) {
+                (k, named) = (k * *m, true);
+            }
+        }
+    }
+    match e.off && !named {
+        true => Fx(0),
+        false => k,
+    }
+}
+
+/// The anchor of `a` now: its own (`default` without one) plus the shifts of the laws in
+/// force (`LawDef.anchors`).
+pub fn anchor(d: &Data, w: &World, a: &AxisDef) -> Fx {
+    let mut v = a.anchor.unwrap_or(a.default);
+    for l in &d.laws.list {
+        for (_, s) in l.anchors.iter().filter(|(x, _)| *x == a.id) {
+            if w.flags.contains(&l.id) {
+                v = v + *s;
+            }
+        }
+    }
+    v
+}
+
+/// The target of `a`: its `anchor` plus the `Target` edges into it, clamped to its bounds.
 pub fn target(d: &Data, w: &World, a: &AxisDef) -> Fx {
-    let anchor = a.anchor.unwrap_or(a.default);
     let edges = parts(d, w, &a.id, InfluenceKind::Target);
-    edges.fold(anchor, |s, (_, c)| s + c).clamp(a.min, a.max)
+    edges
+        .fold(anchor(d, w, a), |s, (_, c)| s + c)
+        .clamp(a.min, a.max)
 }
 
 /// The `Flow` edges into the treasury: they are part of the yearly income
@@ -150,7 +186,7 @@ pub fn tick(d: &Data, w: &mut World) {
     }
     let flows: Vec<(&AxisId, Fx)> = (d.influences.iter().enumerate())
         .filter(|(_, e)| e.kind == InfluenceKind::Flow && e.to != d.economy.treasury)
-        .map(|(i, e)| (&e.to, e.now(i, w) / tpy))
+        .map(|(i, e)| (&e.to, e.now(i, w) * scale(d, w, i) / tpy))
         .collect();
     for (to, v) in flows {
         add_axis(w, d, to, v);

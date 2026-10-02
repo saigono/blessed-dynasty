@@ -96,8 +96,8 @@
         (id: "e5", from: "serfdom", to: "loyalty_nobles", k: 0.4, rest: 30),
         // -0.6 up to 60, -1.0 above, flat above 85.
         (id: "e6", from: "strata", to: "loyalty_people", rest: 40, curve: [(0, 24), (40, 0), (60, -12), (85, -37)]),
-        // Off until the law «Городские вольности» (stage 19): k 0.4.
-        (id: "e7", from: "strata", to: "liberties", k: 0, rest: 50, delay: 10),
+        // Only under the law «Городские вольности» (`off`: counts while a law names it).
+        (id: "e7", from: "strata", to: "liberties", k: 0.4, rest: 50, delay: 10, off: true),
         (id: "e8", from: "liberties", to: "mobility", k: 0.5, rest: 15, delay: 10),
         (id: "e9", from: "liberties", to: "trade", k: 0.6, rest: 15, delay: 5),
         (id: "e10", from: "trade", to: "grain", k: 0.4, rest: 30),
@@ -122,6 +122,48 @@
         ("С1 Хлеб и цена", ["e11", "e10"]),
         ("С2 Вольный город", ["e7", "e8", "e3"]),
     ],
+
+    // Laws-institutions (docs/design/hidden-state.html, section 5). A law is in force while
+    // its flag `id` is set and outlives the ruler; one law of a `group` at a time. `cost` and
+    // `years` to bring it in, `requires` to start; `resistance`: anchor shifts while it is
+    // brought in (a faction against it); in force, `anchors`: anchor shifts, `edges`:
+    // multipliers of edges of `influences`, `treasury`: added to the yearly income; done,
+    // `on_complete` once. The succession laws are those of `heirs.laws` by their flag, named
+    // and described there.
+    laws: (
+        list: [
+            (id: "law_primogeniture", group: "Наследование", cost: 60, years: 3,
+                requires: NotFlag("succession_contested"),
+                resistance: [("loyalty_nobles", -10)],
+                on_complete: [Axis("loyalty_church", 3), Axis("loyalty_nobles", -3)]),
+            (id: "law_male", group: "Наследование", cost: 45, years: 2,
+                requires: NotFlag("succession_contested"),
+                resistance: [("loyalty_nobles", -5)],
+                on_complete: [Axis("loyalty_church", 2)]),
+            (id: "law_salic", group: "Наследование", cost: 45, years: 2,
+                requires: NotFlag("succession_contested"),
+                resistance: [("loyalty_church", -10)],
+                on_complete: [Axis("loyalty_nobles", 3), Axis("loyalty_church", -2)]),
+            // A grown man on the throne pleases the barons.
+            (id: "law_seniority", group: "Наследование", cost: 60, years: 3,
+                requires: NotFlag("succession_contested"),
+                resistance: [("loyalty_church", -10)],
+                anchors: [("loyalty_nobles", 3)],
+                on_complete: [Axis("loyalty_nobles", 3), Axis("stability", -3)]),
+            // The council of barons pulls toward the corvée.
+            (id: "law_elective", group: "Наследование", cost: 60, years: 3,
+                requires: NotFlag("succession_contested"),
+                resistance: [("loyalty_church", -10)],
+                anchors: [("loyalty_nobles", 5)], edges: [("e4", 1.2)],
+                on_complete: [Axis("loyalty_nobles", 5), Axis("legitimacy", -3)]),
+            // More lords, more corvée: with serfdom the gain of П2 nears 0.8.
+            (id: "law_partition", group: "Наследование", cost: 45, years: 2,
+                requires: NotFlag("succession_contested"),
+                resistance: [("loyalty_church", -10)],
+                anchors: [("loyalty_nobles", 8)], edges: [("e4", 1.25), ("e1", 1.2)],
+                on_complete: [Axis("loyalty_nobles", 5), Axis("stability", -3)]),
+        ],
+    ),
 
     // Per year: faction axes move by `step` toward their default, province loyalty toward
     // `province_loyalty`, crown power modifiers from effects toward 0.
@@ -329,7 +371,7 @@
     ),
 
     // Every coronation in the simulation (sim::crown), in this order: each faction axis moves
-    // `reset` of the way back to its default (a new page); the axis of legitimacy_from_claim
+    // `reset` of the way back to its anchor under the laws in force (a new page); the axis of legitimacy_from_claim
     // moves its share of the way toward the new ruler's claim (0.5: the mean of the two);
     // a contested succession (abdication.contested_flag) adds `contested`; then the law's
     // `coronation`, then the `axes` of the ruler's traits (sim.traits).

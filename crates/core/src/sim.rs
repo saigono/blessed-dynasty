@@ -421,7 +421,7 @@ fn coronation(w: &mut World, d: &Data, claim: Fx, ruler: &Ruler) -> Option<Strin
             .iter()
             .find(|a| a.id == f.axis)
             .expect("checked on load");
-        let back = (def.default - w.axes[&f.axis]) * c.reset;
+        let back = (crate::graph::anchor(d, w, def) - w.axes[&f.axis]) * c.reset;
         add_axis(w, d, &f.axis, back);
     }
     if let Some((a, k)) = &c.legitimacy_from_claim {

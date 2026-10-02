@@ -1,11 +1,16 @@
-//! egui front end: start, reign, event. Every rule lives in `bd_core`; this only shows and asks.
+//! egui front end: start, reign, event, chronicle, score. Every rule lives in `bd_core`; this
+//! only shows and asks.
 
+mod chronicle;
 mod map;
 
 use bd_core::data::Data;
 use bd_core::fx::Fx;
 use bd_core::game::{EventView, Game, GameError, Step};
+use bd_core::rng::Rng;
 use bd_core::rules::{ActionTarget, Effect, Target};
+use bd_core::score::{self, Score, ScoreRules};
+use bd_core::sim::{self, Chronicle};
 use bd_core::state::{AxisId, HeirStatus, Holder, NeighbourId, Preset, ProvinceId, World};
 use eframe::egui::{self, Button, Grid, ProgressBar, RichText, Ui};
 use map::{BG, BG2, FG, FG2, GOOD, MapView, RUBRIC, WARN, round};
@@ -14,6 +19,8 @@ use map::{BG, BG2, FG, FG2, GOOD, MapView, RUBRIC, WARN, round};
 const RULES: &str = include_str!("../../../data/rules.ron");
 const ACTIONS: &str = include_str!("../../../data/actions.ron");
 const NAMES: &str = include_str!("../../../data/names.ron");
+const HINTS: &str = include_str!("../../../data/hints.ron");
+const SCORE: &str = include_str!("../../../data/score.ron");
 /// Every top-level file of data/events, in file name order like the CLI.
 const EVENTS: [&str; 5] = [
     include_str!("../../../data/events/death.ron"),
@@ -22,6 +29,8 @@ const EVENTS: [&str; 5] = [
     include_str!("../../../data/events/reign.ron"),
     include_str!("../../../data/events/war.ron"),
 ];
+/// Every file of data/events/sim, in file name order.
+const SIM_EVENTS: [&str; 1] = [include_str!("../../../data/events/sim/sim.ron")];
 /// `(preset, map)`.
 const PRESETS: [(&str, &str); 1] = [(
     include_str!("../../../data/presets/default.ron"),
@@ -30,28 +39,13 @@ const PRESETS: [(&str, &str); 1] = [(
 /// DejaVu Sans, Bitstream Vera license: assets/DejaVuSans-LICENSE.txt.
 const FONT: &[u8] = include_bytes!("../assets/DejaVuSans.ttf");
 
-/// Display names of the axes of rules.ron; an unlisted axis shows its id.
-const AXIS_NAMES: [(&str, &str); 11] = [
-    ("treasury", "Казна"),
-    ("income", "Доход"),
-    ("army", "Армия"),
-    ("legitimacy", "Легитимность"),
-    ("stability", "Стабильность"),
-    ("bureaucracy", "Бюрократия"),
-    ("loyalty_nobles", "Знать"),
-    ("loyalty_church", "Церковь"),
-    ("loyalty_people", "Народ"),
-    ("prestige", "Престиж"),
-    ("loyalty", "Лояльность"),
-];
-/// The axis shown in the top bar next to the treasury.
-const ARMY: &str = "army";
-
 enum Screen {
     Start,
     Reign,
     Event(EventView),
-    ReignEnded,
+    /// The entry `App.entry` of the chronicle.
+    Chronicle,
+    Summary,
 }
 
 /// What a click asks for; `App::apply` carries it out.
@@ -65,7 +59,13 @@ enum Cmd {
     Act(String, Option<Target>),
     Choose(usize),
     Abdicate,
-    Again,
+    /// Show this entry of the chronicle.
+    Entry(usize),
+    Summary,
+    /// The same seed and preset again.
+    Restart,
+    /// A new seed, drawn from the last one, and the same preset.
+    NewSeed,
 }
 
 struct App {
@@ -75,6 +75,13 @@ struct App {
     presets: Vec<Preset>,
     preset: usize,
     seed: String,
+    /// The seed of the game in play.
+    played: u64,
+    score_rules: ScoreRules,
+    /// After the reign: the simulated dynasty and its score.
+    dynasty: Option<(Chronicle, Score)>,
+    /// The chronicle entry on screen.
+    entry: usize,
     map: MapView,
     /// The action whose target is being chosen, with its targets.
     picking: Option<(String, Vec<Target>)>,
@@ -88,6 +95,8 @@ fn load_data() -> Data {
     EVENTS
         .iter()
         .for_each(|e| d.add_events(e).expect("data/events"));
+    (SIM_EVENTS.iter()).for_each(|e| d.add_sim_events(e).expect("data/events/sim"));
+    d.add_hints(HINTS).expect("hints.ron");
     d.add_actions(ACTIONS).expect("actions.ron");
     d.add_names(NAMES).expect("names.ron");
     d
@@ -124,10 +133,14 @@ impl App {
             game: None,
             screen: Screen::Start,
             map: MapView::new(&presets[0].map.polygons),
+            score_rules: score::load(SCORE, &data).expect("score.ron"),
             data,
             presets,
             preset: 0,
             seed: "1".into(),
+            played: 1,
+            dynasty: None,
+            entry: 0,
             picking: None,
             note: String::new(),
             frame_ms: None,
@@ -136,16 +149,22 @@ impl App {
 
     fn apply(&mut self, cmd: Cmd) {
         self.note.clear();
-        if let Cmd::Start(seed) = cmd {
-            let p = &self.presets[self.preset];
-            self.map = MapView::new(&p.map.polygons);
-            self.game = Some(Game::new(self.data.clone(), p, seed));
-            self.screen = Screen::Reign;
-            return;
-        }
-        if cmd == Cmd::Again {
-            (self.game, self.screen, self.picking) = (None, Screen::Start, None);
-            return;
+        match cmd {
+            Cmd::Start(seed) => return self.start(seed),
+            Cmd::Restart => return self.start(self.played),
+            Cmd::NewSeed => {
+                let seed = Rng::from_seed(self.played).next_u64() % 1_000_000;
+                return self.start(seed);
+            }
+            Cmd::Entry(i) => {
+                (self.entry, self.screen) = (i, Screen::Chronicle);
+                return;
+            }
+            Cmd::Summary => {
+                self.screen = Screen::Summary;
+                return;
+            }
+            _ => {}
         }
         let g = self.game.as_mut().expect("only Start runs without a game");
         let res = match cmd {
@@ -177,16 +196,33 @@ impl App {
                 res => res.map(|_| Step::Idle),
             },
             Cmd::Abdicate => g.abdicate().and_then(|_| g.wait()),
-            Cmd::Start(_) | Cmd::Again => unreachable!("handled above"),
+            Cmd::Start(_) | Cmd::Restart | Cmd::NewSeed | Cmd::Entry(_) | Cmd::Summary => {
+                unreachable!("handled above")
+            }
         };
         self.step(res);
+    }
+
+    fn start(&mut self, seed: u64) {
+        let p = &self.presets[self.preset];
+        self.map = MapView::new(&p.map.polygons);
+        self.game = Some(Game::new(self.data.clone(), p, seed));
+        (self.screen, self.picking, self.dynasty) = (Screen::Reign, None, None);
+        (self.played, self.seed, self.entry) = (seed, seed.to_string(), 0);
     }
 
     fn step(&mut self, res: Result<Step, GameError>) {
         match res {
             Ok(Step::Idle) => self.screen = Screen::Reign,
             Ok(Step::Event(v)) => self.screen = Screen::Event(v),
-            Ok(Step::ReignEnded(_)) => self.screen = Screen::ReignEnded,
+            Ok(Step::ReignEnded(end)) => {
+                // The dynasty goes on with the game's rng, as in the CLI.
+                let g = self.game.as_ref().expect("a reign ended");
+                let c = sim::run(end, &g.data, g.rng.clone());
+                let s = score::compute(&c, &g.decisions, &self.score_rules);
+                (self.dynasty, self.entry) = (Some((c, s)), 0);
+                self.screen = Screen::Chronicle;
+            }
             Err(e) => {
                 self.note = match e {
                     GameError::NoSlot => "Все слоты действий заняты".into(),
@@ -206,7 +242,14 @@ impl App {
                 self.reign(ui);
                 event(ui.ctx(), self.game.as_ref().expect("in a game"), v)
             }
-            Screen::ReignEnded => self.ended(ui),
+            Screen::Chronicle | Screen::Summary => {
+                let g = self.game.as_ref().expect("in a game");
+                let (c, s) = self.dynasty.as_ref().expect("after the reign");
+                match self.screen {
+                    Screen::Chronicle => chronicle::chronicle(ui, g, c, &self.map, self.entry),
+                    _ => chronicle::summary(ui, g, (c, s), self.played, self.entry),
+                }
+            }
         };
         if let Some(cmd) = cmd {
             self.apply(cmd);
@@ -290,21 +333,12 @@ impl App {
             if let Some(ms) = self.frame_ms {
                 ui.small(RichText::new(format!("кадр {ms:.1} мс")).color(FG2));
             }
-            let own = w
-                .provinces
-                .values()
-                .filter(|p| !matches!(p.holder, Holder::Foreign(_)));
-            let crown = own.clone().filter(|p| p.holder == Holder::Crown).count();
             // Right to left: value first, then its key.
-            key_rtl(
-                ui,
-                "Провинций",
-                &format!("{} · короне {crown}", own.count()),
-            );
-            if let Some(army) = w.axes.get(&AxisId(ARMY.into())) {
-                key_rtl(ui, "Армия", &round(*army));
+            key_rtl(ui, "Провинций", &realm(w));
+            if let Some(army) = w.axes.get(&d.war.army) {
+                key_rtl(ui, axis_name(d, &d.war.army), &round(*army));
             }
-            let income = yearly_income(g);
+            let income = d.economy.yearly_income(w);
             let arrow = if income >= Fx(0) { "▲" } else { "▼" };
             let treasury = round(w.axes[&d.economy.treasury]);
             key_rtl(
@@ -368,25 +402,6 @@ impl App {
         ui.add_space(4.0);
         cmd
     }
-
-    fn ended(&self, ui: &mut Ui) -> Option<Cmd> {
-        let g = self.game.as_ref().expect("in a game");
-        let cause = g.ended.as_deref().unwrap_or_default();
-        // Causes are event ids (illness, abdication...); show the title when there is one.
-        let title = (g.data.events.iter())
-            .find(|e| e.id == cause)
-            .map_or(cause, |e| &e.title);
-        let mut cmd = None;
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.heading(format!("Правление окончено: {title}"));
-            let w = &g.world;
-            ui.label(w.tick.date(w.time_unit, w.start_year));
-            if ui.button("Снова").clicked() {
-                cmd = Some(Cmd::Again);
-            }
-        });
-        cmd
-    }
 }
 
 /// «Действия k из n: идёт X, t из T лет».
@@ -445,8 +460,13 @@ fn event(ctx: &egui::Context, g: &Game, v: &EventView) -> Option<Cmd> {
                         .min_size(egui::vec2(360.0, 28.0)),
                 );
                 ui.vertical(|ui| {
-                    for (text, up) in effects(&c.effects) {
-                        ui.small(RichText::new(text).color(if up { GOOD } else { RUBRIC }));
+                    for (text, up) in effects(&g.data, &c.effects) {
+                        let color = match up {
+                            Some(true) => GOOD,
+                            Some(false) => RUBRIC,
+                            None => FG2,
+                        };
+                        ui.small(RichText::new(text).color(color));
                     }
                 });
                 if r.clicked() {
@@ -494,7 +514,7 @@ fn side(ui: &mut Ui, g: &Game) {
     Grid::new("axes").show(ui, |ui| {
         for a in &d.axes {
             let v = w.axes[&a.id];
-            bar(ui, axis_name(&a.id), v, a.min, a.max, &round(v));
+            bar(ui, axis_name(d, &a.id), v, a.min, a.max, &round(v));
         }
     });
     heading(ui, "Наследники");
@@ -533,7 +553,7 @@ fn side(ui: &mut Ui, g: &Game) {
     });
 }
 
-fn heading(ui: &mut Ui, text: &str) {
+pub(crate) fn heading(ui: &mut Ui, text: &str) {
     ui.add_space(8.0);
     ui.label(RichText::new(text.to_uppercase()).small().color(FG2));
 }
@@ -563,11 +583,18 @@ fn bar(ui: &mut Ui, label: &str, v: Fx, min: Fx, max: Fx, value: &str) {
     ui.end_row();
 }
 
-fn axis_name(id: &AxisId) -> &str {
-    AXIS_NAMES
-        .iter()
-        .find(|(a, _)| *a == id.0)
-        .map_or(&id.0, |(_, n)| n)
+/// The axis name from rules.ron, or its id.
+pub(crate) fn axis_name<'a>(d: &'a Data, id: &'a AxisId) -> &'a str {
+    let def = d.axes.iter().find(|a| a.id == *id);
+    def.filter(|a| !a.name.is_empty())
+        .map_or(&id.0, |a| &a.name)
+}
+
+/// «10 · короне 6»: provinces of the crown and its vassals, then of the crown alone.
+pub(crate) fn realm(w: &World) -> String {
+    let own = (w.provinces.values()).filter(|p| !matches!(p.holder, Holder::Foreign(_)));
+    let crown = own.clone().filter(|p| p.holder == Holder::Crown).count();
+    format!("{} · короне {crown}", own.count())
 }
 
 fn action_name<'a>(d: &'a Data, id: &'a str) -> &'a str {
@@ -586,35 +613,53 @@ fn target_name(w: &World, t: &Target) -> String {
     name.cloned().unwrap_or_else(|| format!("{t:?}"))
 }
 
-/// Axis effects of a choice with their sign: `("Знать +15", true)`. Other effects stay hidden.
-fn effects(effects: &[Effect]) -> Vec<(String, bool)> {
+/// Axis effects of a choice with their sign, `("Знать +15", Some(true))`, then without
+/// numbers «риск» for a chance and «провинция» for a province effect (`None`: no sign).
+/// Other effects stay hidden.
+fn effects(d: &Data, effects: &[Effect]) -> Vec<(String, Option<bool>)> {
     let axes = effects.iter().filter_map(|e| match e {
         Effect::Axis(a, v) => Some((a, *v)),
         _ => None,
     });
-    axes.map(|(a, v)| {
-        let sign = if v > Fx(0) { "+" } else { "" };
-        (format!("{} {sign}{v}", axis_name(a)), v > Fx(0))
-    })
-    .collect()
-}
-
-/// What the treasury gains in a year by the formula of `Data.economy`.
-// ponytail: mirrors the yearly sum in `Game::passive`; a getter in core would keep them in step.
-fn yearly_income(g: &Game) -> Fx {
-    let (w, e) = (&g.world, &g.data.economy);
-    let crown = w.provinces.values().filter(|p| p.holder == Holder::Crown);
-    let income = crown.fold(Fx(0), |s, p| s + p.income);
-    e.flows.iter().fold(income, |s, (a, k)| s + w.axes[a] * *k)
+    let mut out: Vec<_> = axes
+        .map(|(a, v)| {
+            let sign = if v > Fx(0) { "+" } else { "" };
+            (format!("{} {sign}{v}", axis_name(d, a)), Some(v > Fx(0)))
+        })
+        .collect();
+    if effects.iter().any(|e| matches!(e, Effect::Chance(_))) {
+        out.push(("риск".into(), None));
+    }
+    let province = |e: &Effect| {
+        matches!(
+            e,
+            Effect::Province(..)
+                | Effect::CrownPower(..)
+                | Effect::Build(..)
+                | Effect::Grant(_)
+                | Effect::Revoke(_)
+                | Effect::TransferProvince(..)
+                | Effect::Secede(_)
+        )
+    };
+    if effects.iter().any(province) {
+        out.push(("провинция".into(), None));
+    }
+    out
 }
 
 /// `1 год`, `3 года`, `5 лет`, `21 год`, `11 лет`.
 fn years(n: u32) -> &'static str {
+    plural(n, ["год", "года", "лет"])
+}
+
+/// The Russian form of a word by `n`: `[1, 2..4, 5..]`, «21 правитель», «3 правителя».
+pub(crate) fn plural(n: u32, [one, few, many]: [&str; 3]) -> &str {
     match (n % 10, n % 100) {
-        (_, 11..=14) => "лет",
-        (1, _) => "год",
-        (2..=4, _) => "года",
-        _ => "лет",
+        (_, 11..=14) => many,
+        (1, _) => one,
+        (2..=4, _) => few,
+        _ => many,
     }
 }
 
@@ -713,22 +758,36 @@ mod tests {
             self.app.game.as_ref().unwrap()
         }
 
+        /// Clicks the widget with this label, found by its accessibility node.
+        fn click_label(&mut self, label: &str) {
+            self.ctx.enable_accesskit();
+            let out = self.frame(vec![]);
+            let tree = out
+                .platform_output
+                .accesskit_update
+                .expect("accesskit is on");
+            let node = tree.nodes.iter().find(|(_, n)| n.label() == Some(label));
+            let b = node.and_then(|(_, n)| n.bounds());
+            let b = b.unwrap_or_else(|| panic!("no «{label}» on screen"));
+            let centre = Pos2::new((b.x0 + b.x1) as f32 / 2.0, (b.y0 + b.y1) as f32 / 2.0);
+            self.click(centre);
+        }
+
         fn province_on_screen(&self, id: &str) -> Pos2 {
             let map = &self.app.map;
             map.to_screen(map.centre(&ProvinceId(id.into())).unwrap())
         }
     }
 
-    #[test]
-    fn reign_plays_from_start_to_the_end() {
-        let mut h = Harness::new();
-        h.app.apply(Cmd::Start(7));
+    /// Plays a reign from `seed` to its end: an action now and then (by the map for province
+    /// targets), choices by the year. Returns the number of events.
+    fn play(h: &mut Harness, seed: u64) -> usize {
+        h.app.apply(Cmd::Start(seed));
         let mut events = 0;
         for year in 0..200 {
             h.frame(vec![]);
             match &h.app.screen {
                 Screen::Reign => {
-                    // Now and then an action: by the map for province targets.
                     let first = h.game().available_actions().into_iter().next();
                     if year % 5 == 0
                         && let Some((id, targets)) = first
@@ -753,8 +812,8 @@ mod tests {
                     let last = v.choices.len() - 1;
                     h.app.apply(Cmd::Choose(year % (last + 1)));
                 }
-                Screen::ReignEnded => break,
-                Screen::Start => unreachable!(),
+                Screen::Chronicle => return events,
+                Screen::Start | Screen::Summary => unreachable!(),
             }
             assert!(
                 h.app.note.is_empty() || h.app.note.contains("слоты"),
@@ -762,16 +821,125 @@ mod tests {
                 h.app.note
             );
         }
-        assert!(
-            matches!(h.app.screen, Screen::ReignEnded),
-            "the ruler outlives 200 years"
-        );
-        assert!(events > 0);
+        panic!("the ruler outlives 200 years")
+    }
+
+    /// Start, reign, chronicle, score and the same start again, by the buttons on screen.
+    #[test]
+    fn a_game_runs_from_start_to_the_score_and_again() {
+        let mut h = Harness::new();
+        assert!(play(&mut h, 7) > 0);
         assert!(!h.game().decisions.is_empty());
-        h.frame(vec![]);
-        h.app.apply(Cmd::Again);
-        h.frame(vec![]);
-        assert!(matches!(h.app.screen, Screen::Start) && h.app.game.is_none());
+        let (c, s) = h.app.dynasty.clone().expect("simulated at the reign end");
+        assert!(!c.entries.is_empty() && h.app.entry == 0);
+        // The CLI's way: the game's rng goes on into the simulation.
+        let g = h.game();
+        let end = bd_core::game::ReignEnd {
+            cause: g.ended.clone().unwrap(),
+            tick: g.world.tick,
+            world: g.world.snapshot(),
+        };
+        let want = sim::run(end, &g.data, g.rng.clone());
+        assert_eq!(c, want);
+        assert_eq!(s, score::compute(&c, &g.decisions, &h.app.score_rules));
+
+        // A click on the list selects the entry.
+        let e = &c.entries[1];
+        let date = e
+            .tick
+            .date(h.game().world.time_unit, h.game().world.start_year);
+        h.click_label(&format!("{date}  {}", e.title));
+        assert!(matches!(h.app.screen, Screen::Chronicle) && h.app.entry == 1);
+        let last = c.entries.len() - 1;
+        h.app.apply(Cmd::Entry(last));
+        h.click_label("К итогу ▸");
+        assert!(matches!(h.app.screen, Screen::Summary));
+        h.click_label("◂ К хронике");
+        assert!(matches!(h.app.screen, Screen::Chronicle) && h.app.entry == last);
+        h.click_label("К итогу ▸");
+        h.click_label("Тот же старт, заново");
+        assert!(matches!(h.app.screen, Screen::Reign));
+        assert!(h.app.dynasty.is_none() && h.app.played == 7);
+        assert_eq!(h.game().world.tick.0, 0);
+        assert!(h.game().decisions.is_empty());
+
+        play(&mut h, 7);
+        h.click_label("К итогу ▸");
+        h.click_label("Новый seed");
+        let seed = Rng::from_seed(7).next_u64() % 1_000_000;
+        assert_eq!((h.app.played, h.app.seed.clone()), (seed, seed.to_string()));
+        assert!(matches!(h.app.screen, Screen::Reign) && h.game().world.tick.0 == 0);
+    }
+
+    #[test]
+    fn the_same_seed_and_choices_give_the_same_chronicle() {
+        let mut h = Harness::new();
+        play(&mut h, 3);
+        let first = h.app.dynasty.clone().unwrap();
+        h.app.apply(Cmd::Restart);
+        play(&mut h, 3);
+        assert_eq!(h.app.dynasty.clone().unwrap(), first);
+        play(&mut h, 4);
+        assert_ne!(h.app.dynasty.clone().unwrap().0, first.0);
+    }
+
+    /// Vertex colours of the meshes painted: the map is the only mesh on the screen.
+    fn mesh_colors(out: &egui::FullOutput) -> Vec<egui::Color32> {
+        (out.shapes.iter())
+            .filter_map(|s| match &s.shape {
+                egui::Shape::Mesh(m) => Some(m.vertices.iter().map(|v| v.color)),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
+    #[test]
+    fn another_entry_repaints_the_map_from_its_snapshot() {
+        let mut h = Harness::new();
+        let holders = |c: &Chronicle, i: usize| {
+            let w = &c.entries[i].snapshot;
+            w.provinces
+                .values()
+                .map(|p| p.holder.clone())
+                .collect::<Vec<_>>()
+        };
+        // The first seed whose chronicle moves a province.
+        let other = (1..20)
+            .find_map(|seed| {
+                play(&mut h, seed);
+                let c = &h.app.dynasty.as_ref().unwrap().0;
+                (1..c.entries.len()).find(|&i| holders(c, i) != holders(c, 0))
+            })
+            .expect("some realm changes over its chronicle");
+        h.app.apply(Cmd::Entry(0));
+        let before = mesh_colors(&h.frame(vec![]));
+        h.app.apply(Cmd::Entry(other));
+        let after = mesh_colors(&h.frame(vec![]));
+        assert!(!before.is_empty());
+        assert_ne!(before, after);
+        h.app.apply(Cmd::Entry(0));
+        assert_eq!(mesh_colors(&h.frame(vec![])), before);
+    }
+
+    #[test]
+    fn crownings_split_the_chronicle_into_reigns() {
+        let mut h = Harness::new();
+        play(&mut h, 7);
+        let c = h.app.dynasty.clone().unwrap().0;
+        let reigns = chronicle::reigns(&c, &h.app.data);
+        let crowned: Vec<usize> = (reigns.iter())
+            .filter(|(_, c)| *c)
+            .map(|(r, _)| *r)
+            .collect();
+        // Every ruler after the founder is crowned once, in order.
+        assert_eq!(crowned, (1..c.rulers.len()).collect::<Vec<_>>());
+        assert!(c.rulers.len() > 1);
+        for ((r, _), e) in reigns.iter().zip(&c.entries) {
+            assert!(c.rulers[*r].start <= e.tick, "{e:?}");
+        }
+        let founder = c.rulers[0].cause.as_deref().unwrap();
+        assert_ne!(chronicle::reign_end(&h.app.data, founder), founder);
     }
 
     #[test]
@@ -793,7 +961,10 @@ mod tests {
             .position(|c| c.effects.contains(&Effect::Abdicate))
             .unwrap();
         h.app.apply(Cmd::Choose(confirm));
-        assert!(matches!(h.app.screen, Screen::ReignEnded));
+        assert!(matches!(h.app.screen, Screen::Chronicle));
+        let c = &h.app.dynasty.as_ref().unwrap().0;
+        assert_eq!(c.rulers[0].cause.as_deref(), Some(id.as_str()));
+        assert_eq!(chronicle::reign_end(&h.app.data, &id), "отречение");
         h.frame(vec![]);
     }
 
@@ -875,35 +1046,79 @@ mod tests {
     }
 
     #[test]
-    fn choice_effects_show_axes_with_sign() {
+    fn choice_effects_show_axes_with_sign_risk_and_province() {
+        let d = load_data();
         let ax = |s: &str| AxisId(s.into());
-        let shown = effects(&[
-            Effect::Axis(ax("loyalty_nobles"), Fx::from_int(15)),
-            Effect::RulerHealth(Fx::from_int(5)),
-            Effect::Axis(ax("treasury"), Fx::from_int(-360)),
-            Effect::Axis(ax("no_name"), Fx(1500)),
-        ]);
+        let here = || bd_core::rules::ProvinceTarget::EventTarget;
+        let chance = bd_core::rules::Chance {
+            percent: Fx::from_int(50),
+            axes: vec![],
+            bonus: vec![],
+            then: vec![Effect::RulerDies("illness".into())],
+            otherwise: vec![],
+        };
+        let shown = effects(
+            &d,
+            &[
+                Effect::Axis(ax("loyalty_nobles"), Fx::from_int(15)),
+                Effect::RulerHealth(Fx::from_int(5)),
+                Effect::Axis(ax("treasury"), Fx::from_int(-360)),
+                Effect::Axis(ax("no_name"), Fx(1500)),
+                Effect::Chance(chance.clone()),
+                Effect::Chance(chance),
+                Effect::Grant(here()),
+                Effect::Province(here(), bd_core::rules::ProvinceField::Loyalty, Fx(1)),
+            ],
+        );
         let want = [
-            ("Знать +15", true),
-            ("Казна -360", false),
-            ("no_name +1.5", true),
+            ("Знать +15", Some(true)),
+            ("Казна -360", Some(false)),
+            ("no_name +1.5", Some(true)),
+            ("риск", None),
+            ("провинция", None),
         ];
         assert_eq!(shown, want.map(|(s, up)| (s.to_string(), up)));
+        assert!(effects(&d, &[Effect::RulerHealth(Fx(1))]).is_empty());
+    }
+
+    /// At the start no own province is in unrest; the threshold is its own, below the crown
+    /// power one.
+    #[test]
+    fn no_unrest_at_the_start() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(1));
+        let (w, d) = (&h.game().world, &h.game().data);
+        let unrest = (w.provinces.values())
+            .filter(|p| !matches!(p.holder, Holder::Foreign(_)))
+            .filter(|p| p.loyalty < d.unrest_below)
+            .count();
+        assert_eq!(unrest, 0);
+        assert!(d.unrest_below > Fx(0) && d.unrest_below < d.crown_power.loyalty_threshold);
+        assert_eq!(axis_name(d, &d.war.army), "Армия");
+        assert_eq!(axis_name(d, &AxisId("no_name".into())), "no_name");
     }
 
     #[test]
     fn every_event_file_is_embedded() {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../data/events");
-        let mut files: Vec<_> = (std::fs::read_dir(dir).unwrap())
-            .map(|e| e.unwrap().path())
-            .filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "ron"))
-            .collect();
-        files.sort();
-        let texts: Vec<String> = files
-            .iter()
-            .map(|p| std::fs::read_to_string(p).unwrap())
-            .collect();
-        assert_eq!(texts, EVENTS, "EVENTS must list {files:?} in this order");
+        let texts = |dir: &str| {
+            let mut files: Vec<_> = (std::fs::read_dir(dir).unwrap())
+                .map(|e| e.unwrap().path())
+                .filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "ron"))
+                .collect();
+            files.sort();
+            let texts: Vec<String> = (files.iter())
+                .map(|p| std::fs::read_to_string(p).unwrap())
+                .collect();
+            (texts, files)
+        };
+        let (events, files) = texts(dir);
+        assert_eq!(events, EVENTS, "EVENTS must list {files:?} in this order");
+        let (sim, files) = texts(&format!("{dir}/sim"));
+        assert_eq!(
+            sim, SIM_EVENTS,
+            "SIM_EVENTS must list {files:?} in this order"
+        );
     }
 
     #[test]
@@ -925,6 +1140,11 @@ mod tests {
             "112 лет",
         ];
         assert_eq!(got, want);
+        let rulers = |n| plural(n, ["правитель", "правителя", "правителей"]);
+        assert_eq!(
+            [1, 3, 12, 21].map(rulers),
+            ["правитель", "правителя", "правителей", "правитель"]
+        );
         assert_eq!(
             (num(2.0), num(2.5), num(0.0)),
             ("2".into(), "2,5".into(), "0".into())

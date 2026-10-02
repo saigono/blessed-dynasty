@@ -1,6 +1,7 @@
 use crate::fx::Fx;
 use crate::rules::{Action, Event, Predicate};
-use crate::state::{AxisId, Heir, Stance, World};
+use crate::sim::FallReason;
+use crate::state::{AxisId, Heir, Holder, Stance, World};
 use crate::time::TimeUnit;
 use crate::war::WarOutcome;
 use serde::Deserialize;
@@ -21,6 +22,9 @@ pub struct Data {
     pub drift: Drift,
     /// Weight of "nothing happens" in the random event pick.
     pub quiet_weight: u32,
+    /// Province loyalty below this shows as unrest. Display only.
+    #[serde(default)]
+    pub unrest_below: Fx,
     /// What `HeirOp::Add` and a birth push, named by `Data::newborn`.
     pub new_heir: Heir,
     pub death: Death,
@@ -76,6 +80,15 @@ impl ActionSlots {
 pub struct Economy {
     pub treasury: AxisId,
     pub flows: Vec<(AxisId, Fx)>,
+}
+
+impl Economy {
+    /// What the treasury gains in a year.
+    pub fn yearly_income(&self, w: &World) -> Fx {
+        let crown = w.provinces.values().filter(|p| p.holder == Holder::Crown);
+        let income = crown.fold(Fx(0), |sum, p| sum + p.income);
+        (self.flows.iter()).fold(income, |sum, (a, k)| sum + w.axes[a] * *k)
+    }
 }
 
 /// Per year, faction axes move by `step` toward their default, province loyalty toward
@@ -259,6 +272,9 @@ pub struct AxisDef {
     pub min: Fx,
     pub max: Fx,
     pub default: Fx,
+    /// Display name; the UI shows the id when it is empty.
+    #[serde(default)]
+    pub name: String,
 }
 
 /// Coefficients of `World::recompute_crown_power`.
@@ -407,6 +423,13 @@ pub struct SimTexts {
     pub crowned: (String, String),
     pub province_lost: (String, String),
     pub province_gained: (String, String),
+    /// Display text per reign end cause (`Game.ended`: a `RulerDies` cause or the
+    /// abdication event id).
+    #[serde(default)]
+    pub reign_ends: BTreeMap<String, String>,
+    /// Display text per fall reason.
+    #[serde(default)]
+    pub falls: Vec<(FallReason, String)>,
 }
 
 #[derive(Debug)]

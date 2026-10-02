@@ -14,8 +14,20 @@ pub const FG: Color32 = Color32::from_rgb(0x1b, 0x22, 0x30);
 pub const FG2: Color32 = Color32::from_rgb(0x52, 0x5b, 0x6b);
 pub const RUBRIC: Color32 = Color32::from_rgb(0xb1, 0x36, 0x2c);
 pub const CROWN: Color32 = Color32::from_rgb(0xc4, 0x9a, 0x3c);
-pub const VASSAL: Color32 = Color32::from_rgb(0x7f, 0x98, 0xb8);
-pub const FOREIGN: Color32 = Color32::from_rgb(0xb5, 0xb9, 0xc2);
+/// Vassal houses and foreign states by their order in the world.
+const VASSALS: [Color32; 3] = [
+    Color32::from_rgb(0x7f, 0x98, 0xb8),
+    Color32::from_rgb(0x8f, 0xad, 0x9a),
+    Color32::from_rgb(0xa8, 0x93, 0xb8),
+];
+const FOREIGN: [Color32; 4] = [
+    Color32::from_rgb(0xb5, 0xb9, 0xc2),
+    Color32::from_rgb(0xc9, 0xb8, 0xa8),
+    Color32::from_rgb(0xa9, 0xbf, 0xbb),
+    Color32::from_rgb(0xc2, 0xb0, 0xc0),
+];
+/// The outer border of every holder's land.
+pub const BORDER: Color32 = Color32::from_rgb(0x3a, 0x40, 0x4c);
 pub const UNREST: Color32 = Color32::from_rgb(0xd9, 0x64, 0x4f);
 pub const GOOD: Color32 = Color32::from_rgb(0x3f, 0x8f, 0x5e);
 pub const WARN: Color32 = Color32::from_rgb(0xc4, 0x8a, 0x2a);
@@ -26,6 +38,8 @@ pub struct MapView {
     /// Outline in map coordinates and its triangles.
     shapes: BTreeMap<ProvinceId, (Vec<Pos2>, Vec<u32>)>,
     bounds: Rect,
+    /// Every outline edge once, with the provinces on its sides (one for the map's edge).
+    edges: Vec<(Pos2, Pos2, ProvinceId, Option<ProvinceId>)>,
     /// Where the last frame painted the map; clicks and tests read it.
     rect: Cell<Rect>,
 }
@@ -40,9 +54,25 @@ impl MapView {
             })
             .collect();
         let all: Vec<Pos2> = shapes.values().flat_map(|(p, _)| p.clone()).collect();
+        // Neighbouring outlines share their vertices, so a shared edge is the same pair.
+        let mut sides: BTreeMap<[(i32, i32); 2], Vec<ProvinceId>> = BTreeMap::new();
+        for (id, pts) in polygons {
+            for (i, &a) in pts.iter().enumerate() {
+                let b = pts[(i + 1) % pts.len()];
+                sides
+                    .entry([a.min(b), a.max(b)])
+                    .or_default()
+                    .push(id.clone());
+            }
+        }
+        let at = |(x, y): (i32, i32)| pos2(x as f32, y as f32);
+        let edges = (sides.into_iter())
+            .map(|([a, b], ids)| (at(a), at(b), ids[0].clone(), ids.get(1).cloned()))
+            .collect();
         MapView {
             shapes,
             bounds: Rect::from_points(&all),
+            edges,
             rect: Cell::new(Rect::NOTHING),
         }
     }
@@ -56,8 +86,12 @@ impl MapView {
         self.rect.get().center() + (p - self.bounds.center()) * self.scale()
     }
 
+    pub fn to_map(&self, screen: Pos2) -> Pos2 {
+        self.bounds.center() + (screen - self.rect.get().center()) / self.scale()
+    }
+
     pub fn province_at(&self, screen: Pos2) -> Option<&ProvinceId> {
-        let p = self.bounds.center() + (screen - self.rect.get().center()) / self.scale();
+        let p = self.to_map(screen);
         let mut hit = self
             .shapes
             .iter()
@@ -109,11 +143,7 @@ impl MapView {
                 continue;
             };
             let own = !matches!(p.holder, Holder::Foreign(_));
-            let fill = match p.holder {
-                Holder::Crown => CROWN,
-                Holder::Vassal(_) => VASSAL,
-                Holder::Foreign(_) => FOREIGN,
-            };
+            let fill = holder_color(w, &p.holder);
             let fill = match own && p.crown_power < reach {
                 true => fill.gamma_multiply(WEAK_ALPHA),
                 false => fill,
@@ -137,8 +167,30 @@ impl MapView {
         }
         painter.add(mesh);
         painter.extend(base);
+        let holder = |id: &ProvinceId| w.provinces.get(id).map(|p| &p.holder);
+        for (a, b, one, other) in &self.edges {
+            if other.as_ref().is_none_or(|o| holder(o) != holder(one)) {
+                let line = [self.to_screen(*a), self.to_screen(*b)];
+                painter.line_segment(line, Stroke::new(2.5, BORDER));
+            }
+        }
         painter.extend(top);
         let size = (6.0 * self.scale()).clamp(10.0, 15.0);
+        // Each state's name in the middle of its land, under the province names.
+        for n in w.neighbours.values() {
+            let theirs = (w.provinces.values())
+                .filter(|p| p.holder == Holder::Foreign(n.id.clone()))
+                .filter_map(|p| self.centre(&p.id));
+            let (sum, count) = theirs.fold((vec2(0.0, 0.0), 0.0), |(s, c), p| {
+                (s + p.to_vec2(), c + 1.0)
+            });
+            if count > 0.0 {
+                let at = self.to_screen((sum / count).to_pos2()) + vec2(0.0, size * 1.2);
+                let font = eframe::egui::FontId::proportional(size * 0.9);
+                let name = n.name.to_uppercase();
+                painter.text(at, eframe::egui::Align2::CENTER_CENTER, name, font, BORDER);
+            }
+        }
         for (id, p) in &w.provinces {
             let Some(c) = self.centre(id) else { continue };
             let color = if matches!(p.holder, Holder::Foreign(_)) {
@@ -164,17 +216,8 @@ impl MapView {
         let hovered = resp.hover_pos().and_then(|pos| self.province_at(pos));
         if let Some(p) = hovered.and_then(|id| w.provinces.get(id)) {
             resp.on_hover_ui_at_pointer(|ui| {
-                let holder = match &p.holder {
-                    Holder::Crown => "корона".to_string(),
-                    Holder::Vassal(v) => {
-                        format!("вассал {}", w.vassals.get(v).map_or(&v.0, |v| &v.name))
-                    }
-                    Holder::Foreign(n) => {
-                        w.neighbours.get(n).map_or(n.0.clone(), |n| n.name.clone())
-                    }
-                };
                 ui.strong(&p.name);
-                ui.label(holder);
+                ui.label(holder_name(w, &p.holder));
                 ui.label(format!("Лояльность {}", round(p.loyalty)));
                 ui.label(format!("Сила короны {}", round(p.crown_power)));
                 ui.label(format!("Доход {}", round(p.income)));
@@ -184,17 +227,43 @@ impl MapView {
     }
 }
 
-/// Swatches with captions under the map.
-pub fn legend(ui: &mut Ui) {
-    ui.horizontal(|ui| {
-        let items = [
-            (CROWN, "корона"),
-            (CROWN.gamma_multiply(WEAK_ALPHA), "корона, слабая"),
-            (VASSAL, "вассал"),
-            (FOREIGN, "соседи"),
-            (UNREST, "волнения"),
-            (FG, "стройка пунктиром"),
+/// «корона», «вассал Вейр», «Нордмарк».
+pub fn holder_name(w: &World, h: &Holder) -> String {
+    match h {
+        Holder::Crown => "корона".into(),
+        Holder::Vassal(v) => format!("вассал {}", w.vassals.get(v).map_or(&v.0, |v| &v.name)),
+        Holder::Foreign(n) => w.neighbours.get(n).map_or(n.0.clone(), |n| n.name.clone()),
+    }
+}
+
+/// Crown gold; each vassal house and each foreign state a colour of its own by its order.
+fn holder_color(w: &World, h: &Holder) -> Color32 {
+    match h {
+        Holder::Crown => CROWN,
+        Holder::Vassal(v) => {
+            VASSALS[w.vassals.keys().position(|x| x == v).unwrap_or(0) % VASSALS.len()]
+        }
+        Holder::Foreign(n) => {
+            FOREIGN[w.neighbours.keys().position(|x| x == n).unwrap_or(0) % FOREIGN.len()]
+        }
+    }
+}
+
+/// Swatches with captions under the map: the crown, every vassal house, every state.
+pub fn legend(ui: &mut Ui, w: &World) {
+    ui.horizontal_wrapped(|ui| {
+        let holders = (w.vassals.keys().map(|v| Holder::Vassal(v.clone())))
+            .chain(w.neighbours.keys().map(|n| Holder::Foreign(n.clone())));
+        let mut items = vec![
+            (CROWN, "корона".to_string()),
+            (CROWN.gamma_multiply(WEAK_ALPHA), "корона, слабая".into()),
         ];
+        items.extend(holders.map(|h| (holder_color(w, &h), holder_name(w, &h))));
+        items.extend([
+            (UNREST, "волнения".into()),
+            (FG, "стройка пунктиром".into()),
+            (BORDER, "граница владений".into()),
+        ]);
         for (color, text) in items {
             let (r, _) = ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
             ui.painter().rect_filled(r, 0.0, color);

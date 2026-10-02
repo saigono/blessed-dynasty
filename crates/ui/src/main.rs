@@ -9,12 +9,14 @@ use bd_core::fx::Fx;
 use bd_core::game::{EventView, Game, GameError, ReignEnd, Step};
 use bd_core::link;
 use bd_core::rng::Rng;
-use bd_core::rules::{ActionTarget, Effect, Target};
+use bd_core::rules::{Action, ActionTarget, Effect, ProvinceField, Target};
 use bd_core::score::{self, Score, ScoreRules};
 use bd_core::sim::{self, Chronicle};
-use bd_core::state::{AxisId, HeirStatus, Holder, NeighbourId, Preset, ProvinceId, World};
+use bd_core::state::{
+    AxisId, Change, HeirStatus, Holder, NeighbourId, Preset, ProvinceId, Stance, World,
+};
 use eframe::egui::{self, Button, Grid, ProgressBar, RichText, Ui};
-use map::{BG, BG2, FG, FG2, GOOD, MapView, RUBRIC, WARN, round};
+use map::{BG, BG2, FG, FG2, GOOD, MapView, RUBRIC, WARN, holder_name, round};
 
 // The web build has no file system, so the data ships inside the binary.
 const RULES: &str = include_str!("../../../data/rules.ron");
@@ -45,6 +47,8 @@ enum Screen {
     Start,
     Reign,
     Event(EventView),
+    /// The reign is over: its summary over the last reign screen, the dynasty simulated.
+    ReignOver,
     /// The entry `App.entry` of the chronicle.
     Chronicle,
     Summary,
@@ -70,7 +74,14 @@ enum Cmd {
     CopyLink,
     /// A new seed, drawn from the last one, and the same preset.
     NewSeed,
+    /// Close the backstory and rule.
+    Begin,
+    /// Open or close the family tree.
+    Tree(bool),
 }
+
+/// A line of the journal or of an effect list; `Some(true)` good, `Some(false)` bad.
+type Line = (String, Option<bool>);
 
 struct App {
     game: Option<Game>,
@@ -95,6 +106,16 @@ struct App {
     /// The address bar holds a `#p=...` link; a new start clears it, so a reload does not
     /// bring the old game back.
     linked: bool,
+    /// The backstory card is up: a new game before its first move.
+    intro: bool,
+    /// The family tree card is up.
+    tree: bool,
+    /// What happened, year by year: the date and its lines, oldest first.
+    journal: Vec<(String, Vec<Line>)>,
+    /// The world when «Подождать год» was pressed, and the choices made since: the year's
+    /// record in the making.
+    year_start: Option<World>,
+    chosen: Vec<Line>,
 }
 
 fn load_data() -> Data {
@@ -152,6 +173,11 @@ impl App {
             note: String::new(),
             frame_ms: None,
             linked: false,
+            intro: false,
+            tree: false,
+            journal: Vec::new(),
+            year_start: None,
+            chosen: Vec::new(),
         }
     }
 
@@ -179,19 +205,38 @@ impl App {
                 self.screen = Screen::Summary;
                 return;
             }
+            Cmd::Begin => {
+                self.intro = false;
+                return;
+            }
+            Cmd::Tree(open) => {
+                self.tree = open;
+                return;
+            }
+            Cmd::Choose(i) => {
+                if let Screen::Event(v) = &self.screen
+                    && let Some(c) = v.choices.get(i)
+                {
+                    self.chosen
+                        .push((format!("«{}»: {}", v.title, c.text), None));
+                }
+            }
             _ => {}
         }
+        let closes_year = matches!(cmd, Cmd::Wait | Cmd::Choose(_));
         let g = self.game.as_mut().expect("only Start runs without a game");
         let res = match cmd {
             Cmd::Wait => {
+                self.year_start.get_or_insert_with(|| g.world.clone());
                 // A year of ticks, up to the first event.
+                let mut res = g.wait();
                 for _ in 1..g.data.time_unit.ticks_per_year {
-                    match g.wait() {
-                        Ok(Step::Idle) => {}
-                        other => return self.step(other),
+                    if res != Ok(Step::Idle) {
+                        break;
                     }
+                    res = g.wait();
                 }
-                g.wait()
+                res
             }
             Cmd::Pick(id, targets) => {
                 self.picking = Some((id, targets));
@@ -216,11 +261,31 @@ impl App {
             | Cmd::NewSeed
             | Cmd::Entry(_)
             | Cmd::Summary
-            | Cmd::CopyLink => {
+            | Cmd::CopyLink
+            | Cmd::Begin
+            | Cmd::Tree(_) => {
                 unreachable!("handled above")
             }
         };
         self.step(res);
+        if closes_year && matches!(self.screen, Screen::Reign) {
+            self.close_year();
+        }
+    }
+
+    /// Puts what happened since «Подождать год» into the journal: the choices made, then
+    /// what changed. A second record of the same date joins the first.
+    fn close_year(&mut self) {
+        let g = self.game.as_ref().expect("in a game");
+        let mut lines = std::mem::take(&mut self.chosen);
+        if let Some(before) = self.year_start.take() {
+            lines.extend(change_lines(g, &before, &g.world));
+        }
+        let date = g.world.tick.date(g.world.time_unit, g.world.start_year);
+        match self.journal.last_mut() {
+            Some((d, l)) if *d == date => l.extend(lines),
+            _ => self.journal.push((date, lines)),
+        }
     }
 
     /// Opens the game of a `#p=...` link, if `url` has one: at the reign, or at the score
@@ -241,6 +306,7 @@ impl App {
         let preset = PRESETS.iter().position(|p| p.0 == l.preset_id);
         self.preset = preset.ok_or(format!("нет пресета {}", l.preset_id))?;
         self.start(l.seed);
+        self.intro = false;
         let g = self.game.as_mut().expect("just started");
         l.play(g)?;
         if let Some(cause) = g.ended.clone() {
@@ -277,6 +343,8 @@ impl App {
         self.game = Some(Game::new(self.data.clone(), p, seed));
         (self.screen, self.picking, self.dynasty) = (Screen::Reign, None, None);
         (self.played, self.seed, self.entry) = (seed, seed.to_string(), 0);
+        (self.intro, self.tree, self.year_start) = (true, false, None);
+        (self.journal, self.chosen) = (Vec::new(), Vec::new());
     }
 
     fn step(&mut self, res: Result<Step, GameError>) {
@@ -289,7 +357,7 @@ impl App {
                 let c = sim::run(end, &g.data, g.rng.clone());
                 let s = score::compute(&c, &g.decisions, &self.score_rules);
                 (self.dynasty, self.entry) = (Some((c, s)), 0);
-                self.screen = Screen::Chronicle;
+                self.screen = Screen::ReignOver;
             }
             Err(e) => {
                 self.note = match e {
@@ -302,13 +370,25 @@ impl App {
     }
 
     fn show(&mut self, ui: &mut Ui) {
+        let ctx = ui.ctx().clone();
         let cmd = match &self.screen {
             Screen::Start => self.start_screen(ui),
+            // The reign screen stays visible under a card; the modal blocks its clicks.
+            Screen::Reign if self.intro => {
+                self.reign(ui);
+                intro(&ctx, &self.presets[self.preset])
+            }
             Screen::Reign => self.reign(ui),
             Screen::Event(v) => {
-                // The reign screen stays visible under the card; the modal blocks its clicks.
                 self.reign(ui);
-                event(ui.ctx(), self.game.as_ref().expect("in a game"), v)
+                event(&ctx, self.game.as_ref().expect("in a game"), v)
+            }
+            Screen::ReignOver => {
+                self.reign(ui);
+                let g = self.game.as_ref().expect("in a game");
+                let start = World::from_preset(&self.data, &self.presets[self.preset]);
+                let dynasty = self.dynasty.as_ref().expect("after the reign");
+                chronicle::reign_over(&ctx, g, &start, dynasty)
             }
             Screen::Chronicle | Screen::Summary => {
                 let g = self.game.as_ref().expect("in a game");
@@ -330,6 +410,16 @@ impl App {
             }
             Some(cmd) => self.apply(cmd),
             None => {}
+        }
+        if self.tree {
+            let g = self.game.as_ref().expect("the tree opens in a game");
+            let (kin, rulers) = match (&self.screen, &self.dynasty) {
+                (Screen::Chronicle | Screen::Summary, Some((c, _))) => (&c.kin, &c.rulers[..]),
+                _ => (&g.world.kin, &[][..]),
+            };
+            if chronicle::tree(&ctx, kin, rulers, g.world.start_year, g.world.time_unit) {
+                self.tree = false;
+            }
         }
     }
 
@@ -367,11 +457,23 @@ impl App {
     fn reign(&self, ui: &mut Ui) -> Option<Cmd> {
         let g = self.game.as_ref().expect("in a game");
         let mut cmd = None;
-        egui::Panel::top("top").show(ui, |ui| ui.horizontal(|ui| self.top_bar(ui, g)));
-        egui::Panel::bottom("actions").show(ui, |ui| cmd = self.actions(ui, g));
+        egui::Panel::top("top").show(ui, |ui| {
+            ui.horizontal(|ui| {
+                if ui.button("Родословная").clicked() {
+                    cmd = Some(Cmd::Tree(true));
+                }
+                self.top_bar(ui, g)
+            })
+        });
+        egui::Panel::bottom("actions").show(ui, |ui| cmd = cmd.take().or(self.actions(ui, g)));
         egui::Panel::right("side").exact_size(300.0).show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| side(ui, g))
         });
+        egui::Panel::left("journal")
+            .exact_size(260.0)
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| journal(ui, &self.journal))
+            });
         egui::CentralPanel::default().show(ui, |ui| {
             let targets = self.picking.as_ref().map_or(&[][..], |(_, t)| t);
             let marked: Vec<ProvinceId> = (targets.iter())
@@ -381,7 +483,7 @@ impl App {
                 })
                 .collect();
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                map::legend(ui);
+                map::legend(ui, &g.world);
                 let clicked = self.map.show(ui, &g.world, &g.data, &marked);
                 if let (Some(id), Some((action, _))) = (clicked, &self.picking)
                     && marked.contains(&id)
@@ -453,7 +555,13 @@ impl App {
             None => {
                 ui.horizontal_wrapped(|ui| {
                     for (id, targets) in g.available_actions() {
-                        if ui.button(action_name(d, &id)).clicked() {
+                        let def = d.actions.iter().find(|a| a.id == id);
+                        let button = ui.button(action_name(d, &id));
+                        let button = match def {
+                            Some(a) => button.on_hover_ui(|ui| action_tip(ui, d, a)),
+                            None => button,
+                        };
+                        if button.clicked() {
                             cmd = Some(match targets.is_empty() {
                                 true => Cmd::Act(id, None),
                                 false => Cmd::Pick(id, targets),
@@ -498,17 +606,7 @@ fn running(g: &Game) -> String {
                 .iter()
                 .find(|x| x.id == a.id)
                 .expect("only known actions run");
-            let target = (a.target.clone()).map(|key| match def.target {
-                ActionTarget::Province(_) => Target::Province(ProvinceId(key)),
-                ActionTarget::Neighbour => Target::Neighbour(NeighbourId(key)),
-                ActionTarget::Heir | ActionTarget::None => {
-                    Target::Heir(key.parse().unwrap_or(u32::MAX))
-                }
-            });
-            let name = match target {
-                Some(t) => format!("{} ({})", def.name, target_name(w, &t)),
-                None => def.name.clone(),
-            };
+            let name = acted(w, def, a.target.as_deref());
             let total = def.duration_years.0 as f32;
             let done = total - a.ends_at.0.saturating_sub(w.tick.0) as f32 / tpy;
             format!("{name}, {} из {} лет", num(done), num(total))
@@ -518,6 +616,147 @@ fn running(g: &Game) -> String {
     match running.is_empty() {
         true => line,
         false => format!("{line}: идёт {}", running.join("; ")),
+    }
+}
+
+/// «Построить крепость (Берг)»: an action with the target of its `ActiveAction` key.
+fn acted(w: &World, def: &Action, key: Option<&str>) -> String {
+    let target = key.map(|key| match def.target {
+        ActionTarget::Province(_) => Target::Province(ProvinceId(key.into())),
+        ActionTarget::Neighbour => Target::Neighbour(NeighbourId(key.into())),
+        ActionTarget::Heir | ActionTarget::None => Target::Heir(key.parse().unwrap_or(u32::MAX)),
+    });
+    match target {
+        Some(t) => format!("{} ({})", def.name, target_name(w, &t)),
+        None => def.name.clone(),
+    }
+}
+
+/// What changed from `before` to `w`, as journal lines.
+fn change_lines(g: &Game, before: &World, w: &World) -> Vec<Line> {
+    let d = &g.data;
+    let province = |id: &ProvinceId| w.provinces.get(id).map_or(id.0.clone(), |p| p.name.clone());
+    (w.changes(before, d).into_iter())
+        .map(|c| match c {
+            Change::Axis(a, v) => signed(axis_name(d, &a), v),
+            Change::Born(name) => (format!("Рождение: {name}"), Some(true)),
+            Change::HeirGone(name) => (format!("Смерть наследника: {name}"), Some(false)),
+            Change::Holder(id, from, to) => {
+                let p = province(&id);
+                match (&from, &to) {
+                    (_, Holder::Foreign(_)) => {
+                        let to = holder_name(w, &to);
+                        (format!("Потеряна земля {p}: теперь {to}"), Some(false))
+                    }
+                    (Holder::Foreign(_), _) => {
+                        let from = holder_name(before, &from);
+                        (format!("Присоединена земля {p}, прежде {from}"), Some(true))
+                    }
+                    (_, Holder::Crown) => (format!("{p} снова под короной"), None),
+                    _ => (format!("{p} отошла: {}", holder_name(w, &to)), None),
+                }
+            }
+            Change::Done(id, key) => {
+                let def = d.actions.iter().find(|a| a.id == id);
+                let what = def.map_or(id.clone(), |a| acted(w, a, key.as_deref()));
+                (format!("Завершено: {what}"), None)
+            }
+        })
+        .collect()
+}
+
+fn tone(up: Option<bool>) -> egui::Color32 {
+    match up {
+        Some(true) => GOOD,
+        Some(false) => RUBRIC,
+        None => FG2,
+    }
+}
+
+/// «Знать +15», good when up.
+fn signed(name: &str, v: Fx) -> Line {
+    let sign = if v > Fx(0) { "+" } else { "" };
+    (format!("{name} {sign}{v}"), Some(v > Fx(0)))
+}
+
+/// The journal, the latest year on top and stressed.
+fn journal(ui: &mut Ui, journal: &[(String, Vec<Line>)]) {
+    heading(ui, "Итоги года");
+    if journal.is_empty() {
+        let hint = "Здесь появится, что случилось за год, после «Подождать год».";
+        ui.small(RichText::new(hint).color(FG2));
+    }
+    for (i, (date, lines)) in journal.iter().rev().enumerate() {
+        if i == 1 {
+            heading(ui, "Прежние годы");
+        }
+        let date = RichText::new(date).strong();
+        ui.label(if i == 0 {
+            date.size(16.0)
+        } else {
+            date.color(FG2)
+        });
+        if lines.is_empty() {
+            ui.small(RichText::new("Тихий год").color(FG2));
+        }
+        for (text, up) in lines {
+            ui.small(RichText::new(text).color(tone(*up)));
+        }
+        ui.add_space(4.0);
+    }
+}
+
+/// The backstory of the preset and how to play, before the first move.
+fn intro(ctx: &egui::Context, p: &Preset) -> Option<Cmd> {
+    let mut cmd = None;
+    egui::Modal::new(egui::Id::new("intro")).show(ctx, |ui| {
+        ui.set_width(560.0);
+        let eyebrow = format!("{} · {} год", p.ruler.name, p.start_year);
+        ui.label(RichText::new(eyebrow).small().color(RUBRIC));
+        ui.label(RichText::new("Предыстория").size(20.0).strong());
+        ui.label(&p.intro);
+        heading(ui, "Как играть");
+        for line in HOW_TO_PLAY {
+            ui.label(format!("· {line}"));
+        }
+        ui.add_space(8.0);
+        let rule = Button::new(RichText::new("Править").color(BG)).fill(FG);
+        if ui.add(rule).clicked() {
+            cmd = Some(Cmd::Begin);
+        }
+    });
+    cmd
+}
+
+const HOW_TO_PLAY: [&str; 4] = [
+    "Цель: оставить потомкам крепкое государство. Вы правите только первым государем, \
+     счёт считается по тому, сколько проживёт династия и чего она достигнет.",
+    "Ход: начните действие внизу экрана и нажмите «Подождать год». За год случаются \
+     события: выберите вариант в окне. Что произошло, видно в итогах года слева.",
+    "Наведите мышь на действие, соседа, закон или провинцию, чтобы узнать подробности.",
+    "Правление кончается смертью государя или отречением. Дальше симуляция разыграет \
+     судьбу династии, а хроника покажет, к чему привели ваши решения.",
+];
+
+/// What an action gives, costs and takes.
+fn action_tip(ui: &mut Ui, d: &Data, a: &Action) {
+    ui.set_max_width(320.0);
+    ui.strong(&a.name);
+    if !a.description.is_empty() {
+        ui.label(&a.description);
+    }
+    let years = a.duration_years.0;
+    let time = match years {
+        0 => "сразу".to_string(),
+        n => format!("{n} {}", plural(n, ["год", "года", "лет"])),
+    };
+    ui.label(RichText::new(format!("Стоимость {} · {time}", round(a.cost))).color(FG2));
+    if a.min_crown_power > Fx(0) {
+        let need = format!("Нужна сила короны от {}", round(a.min_crown_power));
+        ui.label(RichText::new(need).color(FG2));
+    }
+    for (text, up) in effects(d, &a.on_complete) {
+        ui.small(RichText::new(text).color(tone(up)));
     }
 }
 
@@ -544,12 +783,7 @@ fn event(ctx: &egui::Context, g: &Game, v: &EventView) -> Option<Cmd> {
                 );
                 ui.vertical(|ui| {
                     for (text, up) in effects(&g.data, &c.effects) {
-                        let color = match up {
-                            Some(true) => GOOD,
-                            Some(false) => RUBRIC,
-                            None => FG2,
-                        };
-                        ui.small(RichText::new(text).color(color));
+                        ui.small(RichText::new(text).color(tone(up)));
                     }
                 });
                 if r.clicked() {
@@ -601,13 +835,29 @@ fn side(ui: &mut Ui, g: &Game) {
         }
     });
     heading(ui, "Наследники");
+    let first = bd_core::sim::next_heir(w);
+    match d.heirs.law(w) {
+        Some(l) => {
+            let law = ui.label(format!("Закон: {} ⓘ", l.name));
+            law.on_hover_ui(|ui| {
+                ui.set_max_width(320.0);
+                ui.strong(&l.name);
+                ui.label(l.text());
+            });
+        }
+        None => {
+            ui.label("Закона наследования нет");
+        }
+    }
+    let line = first.map_or("никого".into(), |i| w.heirs[i].name.clone());
+    ui.label(format!("Первый в очереди: {line}"));
     if w.heirs.is_empty() {
         ui.label("нет");
     }
     Grid::new("heirs").show(ui, |ui| {
         for (i, h) in w.heirs.iter().enumerate() {
             let status = match &h.status {
-                HeirStatus::Home if i == 0 => RichText::new("наследник").color(FG2),
+                HeirStatus::Home if Some(i) == first => RichText::new("первый").color(FG2),
                 HeirStatus::Home => RichText::new(""),
                 HeirStatus::Studying(place) => RichText::new(format!("учится: {place}")).color(FG2),
                 HeirStatus::Hostage(n) => {
@@ -626,12 +876,49 @@ fn side(ui: &mut Ui, g: &Game) {
         }
     });
     heading(ui, "Соседи");
+    let bonds = g.bonds();
     Grid::new("neighbours").show(ui, |ui| {
         for n in w.neighbours.values() {
             let sign = if n.relation > Fx(0) { "+" } else { "" };
             let value = format!("{sign}{}", round(n.relation));
             let (lo, hi) = (Fx::from_int(-100), Fx::from_int(100));
-            bar(ui, &n.name, n.relation, lo, hi, &value);
+            let ai = &d.neighbour_ai;
+            let mood = match n.relation {
+                r if r > ai.friendly_above => "друг",
+                r if r < ai.hostile_below => "враг",
+                _ => "нейтрален",
+            };
+            let stance = match n.stance {
+                Stance::Expand => "ищет, что захватить",
+                Stance::Defend => "обороняется",
+                Stance::Trade => "торгует",
+                Stance::Wait => "выжидает",
+            };
+            let ties: Vec<String> = (bonds.iter())
+                .filter(|(id, ..)| *id == n.id)
+                .map(|(_, a, t)| format!("{} с {}", a.bond, t.date(w.time_unit, w.start_year)))
+                .collect();
+            let at_war = w.war.as_ref().is_some_and(|x| x.enemy == n.id);
+            let label = match (ties.is_empty(), at_war) {
+                (_, true) => format!("{} ⚔", n.name),
+                (false, _) => format!("{} ♥", n.name),
+                _ => n.name.clone(),
+            };
+            let row = bar(ui, &label, n.relation, lo, hi, &value);
+            row.on_hover_ui(|ui| {
+                ui.strong(&n.name);
+                ui.label(format!("Отношение {value}: {mood}"));
+                ui.label(format!("Сила {}, {stance}", round(n.strength)));
+                for t in &ties {
+                    ui.label(t);
+                }
+                if ties.is_empty() {
+                    ui.label(RichText::new("Союзов и браков нет").color(FG2));
+                }
+                if at_war {
+                    ui.label(RichText::new("Идёт война").color(RUBRIC));
+                }
+            });
         }
     });
 }
@@ -652,18 +939,20 @@ fn key_rtl(ui: &mut Ui, k: &str, v: &str) {
 }
 
 /// A grid row with a labelled bar; the colour goes from bad to good with the share of the range.
-fn bar(ui: &mut Ui, label: &str, v: Fx, min: Fx, max: Fx, value: &str) {
+/// Returns the label's response, for a tooltip.
+fn bar(ui: &mut Ui, label: &str, v: Fx, min: Fx, max: Fx, value: &str) -> egui::Response {
     let share = ((v - min).0 as f32 / (max - min).0.max(1) as f32).clamp(0.0, 1.0);
     let color = match share {
         s if s < 0.35 => RUBRIC,
         s if s < 0.55 => WARN,
         _ => GOOD,
     };
-    ui.small(label);
+    let label = ui.small(label);
     let bar = ProgressBar::new(share).fill(color).desired_width(110.0);
     ui.add(bar.desired_height(6.0));
     ui.small(value);
     ui.end_row();
+    label
 }
 
 /// The axis name from rules.ron, or its id.
@@ -696,37 +985,43 @@ fn target_name(w: &World, t: &Target) -> String {
     name.cloned().unwrap_or_else(|| format!("{t:?}"))
 }
 
-/// Axis effects of a choice with their sign, `("Знать +15", Some(true))`, then without
-/// numbers «риск» for a chance and «провинция» for a province effect (`None`: no sign).
-/// Other effects stay hidden.
-fn effects(d: &Data, effects: &[Effect]) -> Vec<(String, Option<bool>)> {
-    let axes = effects.iter().filter_map(|e| match e {
-        Effect::Axis(a, v) => Some((a, *v)),
-        _ => None,
-    });
-    let mut out: Vec<_> = axes
-        .map(|(a, v)| {
-            let sign = if v > Fx(0) { "+" } else { "" };
-            (format!("{} {sign}{v}", axis_name(d, a)), Some(v > Fx(0)))
-        })
-        .collect();
-    if effects.iter().any(|e| matches!(e, Effect::Chance(_))) {
-        out.push(("риск".into(), None));
-    }
-    let province = |e: &Effect| {
-        matches!(
-            e,
-            Effect::Province(..)
-                | Effect::CrownPower(..)
-                | Effect::Build(..)
-                | Effect::Grant(_)
-                | Effect::Revoke(_)
-                | Effect::TransferProvince(..)
-                | Effect::Secede(_)
-        )
-    };
-    if effects.iter().any(province) {
-        out.push(("провинция".into(), None));
+/// What effects do, with their sign where they have one: axes, province fields, crown
+/// power, relations, holders, war; «риск» once for any chance. Flags and the rest stay hidden.
+fn effects(d: &Data, list: &[Effect]) -> Vec<Line> {
+    let mut out = Vec::new();
+    for e in list {
+        let line = match e {
+            Effect::Axis(a, v) => signed(axis_name(d, a), *v),
+            Effect::Province(_, f, v) => signed(
+                match f {
+                    ProvinceField::Income => "доход провинции",
+                    ProvinceField::Loyalty => "лояльность провинции",
+                    ProvinceField::Population => "население провинции",
+                },
+                *v,
+            ),
+            Effect::Build(_, b) => {
+                let bonus = d.crown_power.buildings.get(b).copied().unwrap_or_default();
+                signed("сила короны в провинции", bonus)
+            }
+            Effect::CrownPower(_, v) => signed("сила короны в провинции", *v),
+            Effect::Relation(_, v) => signed("отношения", *v),
+            Effect::OtherRelations(v) => signed("отношения с другими соседями", *v),
+            Effect::Grant(_) => ("провинция уходит вассалу".into(), None),
+            Effect::Revoke(_) => ("провинция возвращается короне".into(), None),
+            Effect::TransferProvince(..) | Effect::Secede(_) => {
+                ("провинция меняет хозяина".into(), None)
+            }
+            Effect::StartWar(_) => ("война".into(), Some(false)),
+            Effect::IfFriendly(es) => {
+                let friendly = effects(d, es).into_iter();
+                out.extend(friendly.map(|(t, up)| (format!("если сосед — друг: {t}"), up)));
+                continue;
+            }
+            Effect::Chance(_) if !out.iter().any(|(t, _)| t == "риск") => ("риск".into(), None),
+            _ => continue,
+        };
+        out.push(line);
     }
     out
 }
@@ -858,6 +1153,10 @@ mod tests {
         /// Clicks the widget with this label, found by its accessibility node.
         fn click_label(&mut self, label: &str) -> egui::FullOutput {
             self.ctx.enable_accesskit();
+            // A card sizes itself in its first frames and settles in the middle after.
+            for _ in 0..4 {
+                self.frame(vec![]);
+            }
             let out = self.frame(vec![]);
             let tree = out
                 .platform_output
@@ -880,6 +1179,7 @@ mod tests {
     /// targets), choices by the year. Returns the number of events.
     fn play(h: &mut Harness, seed: u64) -> usize {
         h.app.apply(Cmd::Start(seed));
+        h.click_label("Править");
         let mut events = 0;
         for year in 0..200 {
             h.frame(vec![]);
@@ -909,8 +1209,12 @@ mod tests {
                     let last = v.choices.len() - 1;
                     h.app.apply(Cmd::Choose(year % (last + 1)));
                 }
-                Screen::Chronicle => return events,
-                Screen::Start | Screen::Summary => unreachable!(),
+                Screen::ReignOver => {
+                    h.click_label("К хронике ▸");
+                    assert!(matches!(h.app.screen, Screen::Chronicle));
+                    return events;
+                }
+                Screen::Start | Screen::Summary | Screen::Chronicle => unreachable!(),
             }
             assert!(
                 h.app.note.is_empty() || h.app.note.contains("слоты"),
@@ -1010,6 +1314,7 @@ mod tests {
     fn a_link_to_a_reign_in_progress_opens_the_reign() {
         let mut h = Harness::new();
         h.app.apply(Cmd::Start(2));
+        h.app.apply(Cmd::Begin);
         for _ in 0..6 {
             if let Screen::Event(_) = h.app.screen {
                 h.app.apply(Cmd::Choose(0));
@@ -1112,6 +1417,320 @@ mod tests {
         assert_ne!(chronicle::reign_end(&h.app.data, founder), founder);
     }
 
+    /// Seed 1: a road to Берг, the first choice of every event, six years.
+    fn six_years(h: &mut Harness) {
+        h.app.apply(Cmd::Start(1));
+        h.click_label("Править");
+        let berg = Some(Target::Province(ProvinceId("berg".into())));
+        h.app.apply(Cmd::Act("build_road".into(), berg));
+        for _ in 0..6 {
+            h.app.apply(Cmd::Wait);
+            while let Screen::Event(_) = h.app.screen {
+                h.app.apply(Cmd::Choose(0));
+            }
+        }
+    }
+
+    /// After a road and six years of seed 1 the journal holds, year by year, the choices
+    /// made and what changed, and shows the latest year on top.
+    #[test]
+    fn the_year_summary_lists_what_happened() {
+        let mut h = Harness::new();
+        six_years(&mut h);
+        let line = |s: &str, up| (s.to_string(), up);
+        let want = vec![
+            (
+                "1188",
+                vec![
+                    line("«Беда с наследником»: Позвать лучших лекарей", None),
+                    line("Смерть наследника: Конрад", Some(false)),
+                ],
+            ),
+            (
+                "1189",
+                vec![
+                    line("Рождение: Агнесса", Some(true)),
+                    line("Завершено: Проложить дорогу (Берг)", None),
+                ],
+            ),
+            ("1190", vec![line("«Набег: Арден»: Выслать войско", None)]),
+            (
+                "1191",
+                vec![line(
+                    "«Паломники»: Взять паломников под охрану короны",
+                    None,
+                )],
+            ),
+            (
+                "1192",
+                vec![
+                    line("«Заговор»: Схватить всех подозреваемых", None),
+                    line("Знать -7", Some(false)),
+                ],
+            ),
+            (
+                "1193",
+                vec![line("«Гильдии просят хартию»: Даровать хартию", None)],
+            ),
+        ];
+        let got: Vec<_> = (h.app.journal.iter())
+            .map(|(d, l)| (d.as_str(), l.clone()))
+            .collect();
+        assert_eq!(got, want);
+        let texts = texts(&h.frame(vec![]));
+        let (latest, older) = (pos(&texts, "1193"), pos(&texts, "1192"));
+        assert!(latest < older, "the latest year comes first");
+        assert!(texts.iter().any(|t| t == "Смерть наследника: Конрад"));
+        // A quiet year says so; a reign over leaves the journal to the reign's card.
+        let d = &mut h.app.game.as_mut().unwrap().data;
+        (d.quiet_weight, d.heirs.birth) = (1_000_000, vec![]);
+        h.app.apply(Cmd::Wait);
+        assert_eq!(h.app.journal.last().unwrap(), &("1194".to_string(), vec![]));
+        assert!(texts_of(&mut h).contains(&"Тихий год".to_string()));
+    }
+
+    /// Every text painted in the frame, tooltips and cards included.
+    fn texts(out: &egui::FullOutput) -> Vec<String> {
+        fn walk(s: &egui::Shape, out: &mut Vec<String>) {
+            match s {
+                egui::Shape::Text(t) => out.push(t.galley.text().to_string()),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        let mut all = Vec::new();
+        out.shapes.iter().for_each(|c| walk(&c.shape, &mut all));
+        all
+    }
+
+    fn texts_of(h: &mut Harness) -> Vec<String> {
+        texts(&h.frame(vec![]))
+    }
+
+    fn pos(texts: &[String], t: &str) -> usize {
+        texts
+            .iter()
+            .position(|x| x == t)
+            .unwrap_or_else(|| panic!("no «{t}»"))
+    }
+
+    /// The texts on screen with the pointer resting on the widget labelled `label`.
+    fn hover(h: &mut Harness, label: &str) -> Vec<String> {
+        h.ctx
+            .global_style_mut(|s| s.interaction.tooltip_delay = 0.0);
+        h.ctx.enable_accesskit();
+        let out = h.frame(vec![]);
+        let tree = out
+            .platform_output
+            .accesskit_update
+            .expect("accesskit is on");
+        let node = tree
+            .nodes
+            .iter()
+            .find(|(_, n)| n.label() == Some(label) || n.value() == Some(label));
+        let b = node
+            .and_then(|(_, n)| n.bounds())
+            .unwrap_or_else(|| panic!("no «{label}»"));
+        let centre = Pos2::new((b.x0 + b.x1) as f32 / 2.0, (b.y0 + b.y1) as f32 / 2.0);
+        h.frame(vec![Event::PointerMoved(centre)]);
+        for _ in 0..5 {
+            h.frame(vec![]);
+        }
+        texts_of(h)
+    }
+
+    #[test]
+    fn the_backstory_comes_before_the_first_move() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(1));
+        assert!(h.app.intro);
+        let intro = h.app.presets[0].intro.clone();
+        let sentences = intro.matches(". ").count() + 1;
+        assert!((3..=5).contains(&sentences), "{intro}");
+        let shown = texts_of(&mut h);
+        assert!(shown.contains(&intro) && shown.contains(&"Предыстория".to_string()));
+        assert!(shown.iter().any(|t| t.contains("Подождать год")));
+        // The card holds the screen: a click on «Подождать год» does nothing.
+        h.click_label("Подождать год ▸");
+        assert_eq!(h.game().world.tick.0, 0);
+        h.click_label("Править");
+        assert!(!h.app.intro);
+        h.click_label("Подождать год ▸");
+        assert_eq!(h.game().world.tick.0, 1);
+        // A link opens straight into the game.
+        let mut other = Harness::new();
+        other.app.open(&h.app.link());
+        assert!(!other.app.intro && other.game().world.tick.0 == 1);
+    }
+
+    #[test]
+    fn hovering_tells_what_actions_neighbours_and_the_law_do() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(1));
+        h.click_label("Править");
+        let road = hover(&mut h, "Проложить дорогу");
+        for t in [
+            "Стоимость 40 · 2 года",
+            "сила короны в провинции +5",
+            "доход провинции +1",
+            "Нужна сила короны от 20",
+        ] {
+            assert!(road.contains(&t.to_string()), "{t}: {road:?}");
+        }
+        let marriage = hover(&mut h, "Заключить брачный союз");
+        assert!(
+            marriage.contains(&"отношения +30".to_string()),
+            "{marriage:?}"
+        );
+        assert!(
+            marriage
+                .iter()
+                .any(|t| t.starts_with("Брак правящего дома"))
+        );
+
+        let law = hover(&mut h, "Закон: Первородство ⓘ");
+        let text = h.game().data.heirs.laws[0].text();
+        assert!(law.contains(&text) && text.contains("ниже 70"), "{law:?}");
+        assert!(texts_of(&mut h).contains(&"Первый в очереди: Конрад".to_string()));
+
+        let n = hover(&mut h, "Веструм");
+        for t in [
+            "Отношение +40: друг",
+            "Сила 45, торгует",
+            "Союзов и браков нет",
+        ] {
+            assert!(n.contains(&t.to_string()), "{t}: {n:?}");
+        }
+        let vestrum = Target::Neighbour(NeighbourId("vestrum".into()));
+        h.app
+            .apply(Cmd::Act("marry_neighbour".into(), Some(vestrum)));
+        h.app.apply(Cmd::Wait);
+        while let Screen::Event(_) = h.app.screen {
+            h.app.apply(Cmd::Choose(0));
+        }
+        let n = hover(&mut h, "Веструм ♥");
+        assert!(n.contains(&"брачный союз с 1187".to_string()), "{n:?}");
+    }
+
+    #[test]
+    fn the_reign_ends_with_its_summary_then_the_chronicle() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(7));
+        h.app.apply(Cmd::Begin);
+        h.app.apply(Cmd::Act(
+            "grant_province".into(),
+            Some(Target::Province(ProvinceId("gart".into()))),
+        ));
+        while !matches!(h.app.screen, Screen::ReignOver) {
+            match h.app.screen {
+                Screen::Event(_) => h.app.apply(Cmd::Choose(0)),
+                _ => h.app.apply(Cmd::Wait),
+            }
+        }
+        let shown = texts_of(&mut h);
+        let (c, _) = h.app.dynasty.as_ref().unwrap();
+        for t in [
+            "Итог правления",
+            "Ключевые решения",
+            "Земли",
+            "Состояние",
+            "Наследник",
+        ] {
+            assert!(
+                shown.contains(&t.to_uppercase()) || shown.contains(&t.to_string()),
+                "{t}"
+            );
+        }
+        assert!(
+            shown.contains(&"Гарт отошла: вассал Вейр".to_string()),
+            "{shown:?}"
+        );
+        let heir = format!("На престол взошёл {}", c.rulers[1].name);
+        assert!(shown.iter().any(|t| t.starts_with(&heir)), "{heir}");
+        h.click_label("К хронике ▸");
+        assert!(matches!(h.app.screen, Screen::Chronicle) && h.app.entry == 0);
+    }
+
+    #[test]
+    fn the_family_tree_shows_the_dynasty() {
+        let mut h = Harness::new();
+        six_years(&mut h);
+        h.click_label("Родословная");
+        let shown = texts_of(&mut h);
+        for t in [
+            "♔ Ульрих (р. 1155), правил с 1187",
+            "Конрад (1181–1188)",
+            "Агнесса (р. 1189)",
+        ] {
+            assert!(shown.contains(&t.to_string()), "{t}: {shown:?}");
+        }
+        // Children under their parent, deeper.
+        let kin = &h.game().world.kin;
+        assert_eq!(chronicle::family(kin), [(0, 0), (1, 1), (2, 1)]);
+        h.click_label("Закрыть");
+        assert!(!h.app.tree);
+
+        // After the dynasty: every ruler, from the chronicle.
+        play(&mut h, 7);
+        h.click_label("Родословная");
+        let shown = texts_of(&mut h);
+        let c = &h.app.dynasty.as_ref().unwrap().0;
+        for r in &c.rulers {
+            let crowned = format!("♔ {} (", r.name);
+            assert!(shown.iter().any(|t| t.starts_with(&crowned)), "{crowned}");
+        }
+        assert_eq!(chronicle::family(&c.kin).len(), c.kin.len());
+    }
+
+    /// Line segments painted in the holder border colour, in map coordinates.
+    fn borders(h: &Harness, out: &egui::FullOutput) -> Vec<[(i32, i32); 2]> {
+        let map = &h.app.map;
+        (out.shapes.iter())
+            .filter_map(|c| match &c.shape {
+                egui::Shape::LineSegment { points, stroke } if stroke.color == map::BORDER => {
+                    let p = points.map(|p| map.to_map(p));
+                    let mut e = p.map(|p| (p.x.round() as i32, p.y.round() as i32));
+                    e.sort();
+                    Some(e)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_map_outlines_every_realm_and_names_the_states() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(1));
+        h.app.apply(Cmd::Begin);
+        let out = h.frame(vec![]);
+        let lines = borders(&h, &out);
+        // capital–holm: crown against vassal; capital–berg: crown on both sides.
+        assert!(lines.contains(&[(160, 110), (210, 100)]));
+        assert!(!lines.contains(&[(150, 150), (160, 110)]));
+        let shown = texts(&out);
+        for t in [
+            "НОРДМАРК",
+            "ПУРПУЛЯНДИЯ",
+            "ВЕСТРУМ",
+            "вассал Вейр",
+            "вассал Арден",
+            "Нордмарк",
+            "граница владений",
+        ] {
+            assert!(shown.contains(&t.to_string()), "{t}");
+        }
+        // Granted away, capital–berg becomes a border.
+        let g = h.app.game.as_mut().unwrap();
+        g.world
+            .provinces
+            .get_mut(&ProvinceId("berg".into()))
+            .unwrap()
+            .holder = Holder::Vassal(bd_core::state::VassalId("weir".into()));
+        let out = h.frame(vec![]);
+        assert!(borders(&h, &out).contains(&[(150, 150), (160, 110)]));
+    }
+
     #[test]
     fn abdication_ends_the_reign_through_its_event() {
         let mut h = Harness::new();
@@ -1131,7 +1750,7 @@ mod tests {
             .position(|c| c.effects.contains(&Effect::Abdicate))
             .unwrap();
         h.app.apply(Cmd::Choose(confirm));
-        assert!(matches!(h.app.screen, Screen::Chronicle));
+        assert!(matches!(h.app.screen, Screen::ReignOver));
         let c = &h.app.dynasty.as_ref().unwrap().0;
         assert_eq!(c.rulers[0].cause.as_deref(), Some(id.as_str()));
         assert_eq!(chronicle::reign_end(&h.app.data, &id), "отречение");
@@ -1142,6 +1761,7 @@ mod tests {
     fn map_click_picks_the_target() {
         let mut h = Harness::new();
         h.app.apply(Cmd::Start(1));
+        h.app.apply(Cmd::Begin);
         let (id, targets) = (h.game().available_actions().into_iter())
             .find(|(id, _)| id == "build_fort")
             .unwrap();
@@ -1188,6 +1808,7 @@ mod tests {
     fn frame_with_the_map_fits_16_ms() {
         let mut h = Harness::new();
         h.app.apply(Cmd::Start(1));
+        h.app.apply(Cmd::Begin);
         h.app.apply(Cmd::Act(
             "build_road".into(),
             Some(Target::Province(ProvinceId("berg".into()))),
@@ -1245,10 +1866,32 @@ mod tests {
             ("Казна -360", Some(false)),
             ("no_name +1.5", Some(true)),
             ("риск", None),
-            ("провинция", None),
+            ("провинция уходит вассалу", None),
+            ("лояльность провинции +0.001", Some(true)),
         ];
         assert_eq!(shown, want.map(|(s, up)| (s.to_string(), up)));
         assert!(effects(&d, &[Effect::RulerHealth(Fx(1))]).is_empty());
+        // What a road gives: its crown power bonus from rules.ron and its income.
+        let road = d.actions.iter().find(|a| a.id == "build_road").unwrap();
+        let shown = effects(&d, &road.on_complete);
+        let want = [
+            ("сила короны в провинции +5", Some(true)),
+            ("доход провинции +1", Some(true)),
+        ];
+        assert_eq!(shown, want.map(|(s, up)| (s.to_string(), up)));
+        let war = d.actions.iter().find(|a| a.id == "declare_war").unwrap();
+        let shown: Vec<String> = effects(&d, &war.on_complete)
+            .into_iter()
+            .map(|l| l.0)
+            .collect();
+        assert_eq!(
+            shown[..3],
+            [
+                "если сосед — друг: Престиж -15",
+                "если сосед — друг: отношения с другими соседями -10",
+                "война"
+            ]
+        );
     }
 
     /// At the start no own province is in unrest; the threshold is its own, below the crown

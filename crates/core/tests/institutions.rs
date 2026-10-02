@@ -50,8 +50,10 @@ fn edge(d: &Data, w: &World, id: &str) -> Fx {
     parts.into_iter().find(|(j, _)| *j == i).unwrap().1
 }
 
-const X: &str = r#"(id: "law_x", cost: 10, years: 1, anchors: [("serfdom", 40), ("loyalty_nobles", 8)],
-    edges: [("e7", 1), ("e1", 2), ("e4", 1.5)]),"#;
+const X: &str = r#"(id: "law_x", group: "g", cost: 10, years: 2,
+    anchors: [("serfdom", 40), ("loyalty_nobles", 8)], edges: [("e7", 1), ("e1", 2), ("e4", 1.5)],
+    resistance: [("loyalty_people", -10)], treasury: -4, on_complete: [Axis("legitimacy", 5)]),
+    (id: "law_y", group: "g", cost: 20, years: 1),"#;
 
 /// Acceptance: a law in force shifts the anchor of a node, and the node steps toward it.
 #[test]
@@ -141,4 +143,103 @@ fn a_coronation_resets_the_factions_toward_the_anchor_of_the_laws() {
         c.entries[0].snapshot.axes[&ax("loyalty_nobles")],
         Fx::from_int(39)
     );
+}
+
+fn treasury(g: &Game) -> Fx {
+    g.world.axes[&ax("treasury")]
+}
+
+fn wait(g: &mut Game, years: u32) {
+    for _ in 0..years {
+        g.wait().unwrap();
+        g.pending_event = None;
+    }
+}
+
+fn axis_def<'a>(d: &'a Data, a: &str) -> &'a bd_core::data::AxisDef {
+    d.axes.iter().find(|x| x.id.0 == a).unwrap()
+}
+
+/// Acceptance: a law costs its price at the start and comes into force after its years, with
+/// its one-off effects; the tick it came in is kept. Its upkeep is part of the yearly income.
+#[test]
+fn a_law_costs_its_price_and_takes_its_years() {
+    let d = data_with(X);
+    let mut g = game(&d);
+    let (before, legitimacy) = (treasury(&g), g.world.axes[&ax("legitimacy")]);
+    let upkeep = |g: &Game| bd_core::war::income_parts(&g.world, &g.data).1;
+    let idle = upkeep(&g);
+    g.start_action("enact_law_x", None).unwrap();
+    assert_eq!(treasury(&g), before - Fx::from_int(10));
+    wait(&mut g, 1);
+    assert!(!g.world.flags.contains("law_x"));
+    wait(&mut g, 1);
+    assert!(g.world.flags.contains("law_x"));
+    assert_eq!(g.world.laws["law_x"], bd_core::time::Tick(2));
+    assert_eq!(
+        g.world.axes[&ax("legitimacy")],
+        legitimacy + Fx::from_int(5)
+    );
+    assert_eq!(upkeep(&g), idle + Fx::from_int(4));
+    // In force, it is not offered again.
+    let offered: Vec<_> = g
+        .available_actions()
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    assert!(!offered.contains(&"enact_law_x".to_string()));
+    assert!(offered.contains(&"repeal_law_x".to_string()));
+}
+
+/// Acceptance: one law of a group in force: the new one ends the old.
+#[test]
+fn one_law_per_group() {
+    let d = data_with(X);
+    let mut g = game(&d);
+    g.world.axes.insert(ax("treasury"), Fx::from_int(500));
+    g.start_action("enact_law_x", None).unwrap();
+    wait(&mut g, 2);
+    g.start_action("enact_law_y", None).unwrap();
+    wait(&mut g, 1);
+    assert!(g.world.flags.contains("law_y") && !g.world.flags.contains("law_x"));
+    assert!(!g.world.laws.contains_key("law_x"));
+    // The succession laws are a group too.
+    let succession = d.laws.list.iter().filter(|l| l.group == "Наследование");
+    let flags = succession.filter(|l| g.world.flags.contains(&l.id)).count();
+    assert_eq!(flags, 1);
+}
+
+/// Acceptance: while a law is brought in, the faction against it has its anchor lower; once
+/// in force, no more.
+#[test]
+fn resistance_lasts_while_the_law_is_brought_in() {
+    let d = data_with(X);
+    let mut g = game(&d);
+    let people = |g: &Game| graph::anchor(&g.data, &g.world, axis_def(&g.data, "loyalty_people"));
+    assert_eq!(people(&g), Fx::from_int(50));
+    g.start_action("enact_law_x", None).unwrap();
+    assert_eq!(people(&g), Fx::from_int(40));
+    wait(&mut g, 1);
+    assert_eq!(people(&g), Fx::from_int(40));
+    wait(&mut g, 1);
+    assert_eq!(people(&g), Fx::from_int(50));
+}
+
+/// Acceptance: a repeal costs half the price and ends the law; a law to `keep` has none.
+#[test]
+fn a_repeal_costs_half_the_price() {
+    let d = data_with(X);
+    let mut g = game(&d);
+    g.world.axes.insert(ax("treasury"), Fx::from_int(500));
+    g.start_action("enact_law_x", None).unwrap();
+    wait(&mut g, 2);
+    let before = treasury(&g);
+    g.start_action("repeal_law_x", None).unwrap();
+    assert_eq!(treasury(&g), before - Fx::from_int(5));
+    wait(&mut g, 2);
+    assert!(!g.world.flags.contains("law_x") && !g.world.laws.contains_key("law_x"));
+    assert!(d.actions.iter().all(|a| a.id != "repeal_law_salic"));
+    // The simulation's automaton pays it all.
+    let repeal = d.actions.iter().find(|a| a.id == "repeal_law_x").unwrap();
+    assert_eq!(d.auto_cost(repeal), Fx::from_int(10));
 }

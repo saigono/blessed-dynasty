@@ -128,36 +128,43 @@
     // `years` to bring it in, `requires` to start; `resistance`: anchor shifts while it is
     // brought in (a faction against it); in force, `anchors`: anchor shifts, `edges`:
     // multipliers of edges of `influences`, `treasury`: added to the yearly income; done,
-    // `on_complete` once. The succession laws are those of `heirs.laws` by their flag, named
-    // and described there.
+    // `on_complete` once; `keep`: no repeal, only another law of its group replaces it. The
+    // succession laws are those of `heirs.laws` by their flag, named and described there.
+    // Every law gets the actions to enact it and to repeal it (`enact`, `repeal`: their
+    // names), both for `min_crown_power` of the capital; a repeal costs `repeal_share` of the
+    // price, the simulation's automaton pays it all.
     laws: (
+        enact: "Ввести закон «{law}»",
+        repeal: "Отменить закон «{law}»",
+        repeal_share: 0.5,
+        min_crown_power: 40,
         list: [
-            (id: "law_primogeniture", group: "Наследование", cost: 60, years: 3,
+            (id: "law_primogeniture", group: "Наследование", keep: true, cost: 60, years: 3,
                 requires: NotFlag("succession_contested"),
                 resistance: [("loyalty_nobles", -10)],
                 on_complete: [Axis("loyalty_church", 3), Axis("loyalty_nobles", -3)]),
-            (id: "law_male", group: "Наследование", cost: 45, years: 2,
+            (id: "law_male", group: "Наследование", keep: true, cost: 45, years: 2,
                 requires: NotFlag("succession_contested"),
                 resistance: [("loyalty_nobles", -5)],
                 on_complete: [Axis("loyalty_church", 2)]),
-            (id: "law_salic", group: "Наследование", cost: 45, years: 2,
+            (id: "law_salic", group: "Наследование", keep: true, cost: 45, years: 2,
                 requires: NotFlag("succession_contested"),
                 resistance: [("loyalty_church", -10)],
                 on_complete: [Axis("loyalty_nobles", 3), Axis("loyalty_church", -2)]),
             // A grown man on the throne pleases the barons.
-            (id: "law_seniority", group: "Наследование", cost: 60, years: 3,
+            (id: "law_seniority", group: "Наследование", keep: true, cost: 60, years: 3,
                 requires: NotFlag("succession_contested"),
                 resistance: [("loyalty_church", -10)],
                 anchors: [("loyalty_nobles", 3)],
                 on_complete: [Axis("loyalty_nobles", 3), Axis("stability", -3)]),
             // The council of barons pulls toward the corvée.
-            (id: "law_elective", group: "Наследование", cost: 60, years: 3,
+            (id: "law_elective", group: "Наследование", keep: true, cost: 60, years: 3,
                 requires: NotFlag("succession_contested"),
                 resistance: [("loyalty_church", -10)],
                 anchors: [("loyalty_nobles", 5)], edges: [("e4", 1.2)],
                 on_complete: [Axis("loyalty_nobles", 5), Axis("legitimacy", -3)]),
             // More lords, more corvée: with serfdom the gain of П2 nears 0.8.
-            (id: "law_partition", group: "Наследование", cost: 45, years: 2,
+            (id: "law_partition", group: "Наследование", keep: true, cost: 45, years: 2,
                 requires: NotFlag("succession_contested"),
                 resistance: [("loyalty_church", -10)],
                 anchors: [("loyalty_nobles", 8)], edges: [("e4", 1.25), ("e1", 1.2)],

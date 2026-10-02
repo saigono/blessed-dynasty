@@ -438,8 +438,23 @@ impl Law {
 /// Laws-institutions (`rules.ron` `laws`, docs/design/hidden-state.html, section 5).
 #[derive(Debug, Clone, PartialEq, Deserialize, Default)]
 pub struct Laws {
+    /// The names of the actions `load` makes for every law: `ENACT` and `REPEAL` before its
+    /// id; `{law}` is its name.
+    pub enact: String,
+    pub repeal: String,
+    /// The share of the price a repeal costs; the simulation's automaton pays it all
+    /// (`Data::auto_cost`).
+    pub repeal_share: Fx,
+    /// Of the capital, to start either action.
+    pub min_crown_power: Fx,
     pub list: Vec<LawDef>,
 }
+
+/// The prefixes of the ids of the actions that enact and repeal a law, and the cause tag of a
+/// repeal.
+pub const ENACT: &str = "enact_";
+pub const REPEAL: &str = "repeal_";
+pub const REPEALED: &str = "law_repealed";
 
 /// A law is in force while its flag `id` is set; it outlives the ruler. In force, it shifts
 /// the anchors of axes (`graph::anchor`) and scales edges of the graph (`graph::scale`).
@@ -475,6 +490,9 @@ pub struct LawDef {
     /// Applied once, when brought in.
     #[serde(default)]
     pub on_complete: Vec<Effect>,
+    /// No repeal: only another law of its group replaces it.
+    #[serde(default)]
+    pub keep: bool,
 }
 
 fn always() -> Predicate {
@@ -485,6 +503,14 @@ impl Data {
     /// The law of this id.
     pub fn law(&self, id: &str) -> Option<&LawDef> {
         self.laws.list.iter().find(|l| l.id == id)
+    }
+
+    /// What the simulation's automaton pays for an action: a law repealed at its full price.
+    pub fn auto_cost(&self, a: &Action) -> Fx {
+        match a.on_complete.first() {
+            Some(Effect::RepealLaw(id)) => self.law(id).map_or(a.cost, |l| l.cost),
+            _ => a.cost,
+        }
     }
 
     /// The laws in force now, in data order.
@@ -990,7 +1016,48 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
             (l.name, l.description) = (s.name.clone(), s.text());
         }
     }
+    let actions = data
+        .laws
+        .list
+        .iter()
+        .flat_map(|l| law_actions(&data.laws, l));
+    let actions: Vec<Action> = actions.collect();
+    data.actions.extend(actions);
     Ok(data)
+}
+
+/// The actions to enact the law and, unless `keep`, to repeal it.
+fn law_actions(laws: &Laws, l: &LawDef) -> Vec<Action> {
+    let enact = Action {
+        id: format!("{ENACT}{}", l.id),
+        name: laws.enact.replace("{law}", &l.name),
+        duration_years: l.years,
+        cost: l.cost,
+        requires: Predicate::All(vec![Predicate::NotFlag(l.id.clone()), l.requires.clone()]),
+        min_crown_power: laws.min_crown_power,
+        target: ActionTarget::None,
+        on_complete: [Effect::EnactLaw(l.id.clone())]
+            .into_iter()
+            .chain(l.on_complete.clone())
+            .collect(),
+        yearly: vec![],
+        cause_tag: l.id.clone(),
+        description: l.description.clone(),
+        bond: String::new(),
+    };
+    let repeal = Action {
+        id: format!("{REPEAL}{}", l.id),
+        name: laws.repeal.replace("{law}", &l.name),
+        cost: l.cost * laws.repeal_share,
+        requires: Predicate::Flag(l.id.clone()),
+        on_complete: vec![Effect::RepealLaw(l.id.clone())],
+        cause_tag: REPEALED.into(),
+        ..enact.clone()
+    };
+    match l.keep {
+        true => vec![enact],
+        false => vec![enact, repeal],
+    }
 }
 
 #[cfg(test)]

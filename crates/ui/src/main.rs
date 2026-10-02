@@ -694,9 +694,9 @@ impl App {
     }
 }
 
-/// The law an action brings in: the one whose flag its `on_complete` sets.
+/// The law an action brings in: the one its `on_complete` enacts.
 fn law_of<'a>(d: &'a Data, a: &Action) -> Option<&'a Law> {
-    let sets = |f: &String| a.on_complete.contains(&Effect::SetFlag(f.clone()));
+    let sets = |f: &String| a.on_complete.contains(&Effect::EnactLaw(f.clone()));
     d.heirs.laws.iter().find(|l| sets(&l.flag))
 }
 
@@ -732,13 +732,17 @@ fn laws(ctx: &egui::Context, g: &Game) -> Option<Cmd> {
                 price += &format!(" · сила короны от {}", round(a.min_crown_power));
             }
             ui.label(RichText::new(price).color(FG2));
-            // «пока вводят, в год: Церковь -2 · по введении: Знать +3, Церковь -2».
+            // «пока вводят, к цели: Церковь -10 · по введении: Знать +3, Церковь -2».
             let list = |es: &[Effect]| {
                 let lines: Vec<String> = effects(d, es).into_iter().map(|(t, _)| t).collect();
                 lines.join(", ")
             };
+            let against = d.law(&l.flag).map_or(&[][..], |x| &x.resistance);
+            let against: Vec<Effect> = (against.iter())
+                .map(|(a, v)| Effect::Axis(a.clone(), *v))
+                .collect();
             let parts = [
-                ("пока вводят, в год", list(&a.yearly)),
+                ("пока вводят, к цели", list(&against)),
                 ("по введении", list(&a.on_complete)),
             ];
             let parts: Vec<String> = (parts.iter())
@@ -2142,14 +2146,14 @@ mod tests {
         assert!(!list.contains(current), "the law in force is not offered");
         for t in [
             "Стоимость 45 · 2 года · сила короны от 40",
-            "пока вводят, в год: Церковь -2 · по введении: Знать +3, Церковь -2",
+            "пока вводят, к цели: Церковь -10 · по введении: Знать +3, Церковь -2",
         ] {
             assert!(list.iter().any(|x| x.starts_with(t)), "{t}: {list:?}");
         }
         h.click_label("Салический закон");
         assert!(!h.app.laws);
         let running = &h.game().world.active_actions;
-        assert_eq!(running[0].id, "change_succession_law_salic");
+        assert_eq!(running[0].id, "enact_law_salic");
         for _ in 0..2 {
             h.app.apply(Cmd::Wait);
             while let Screen::Event(_) = h.app.screen {

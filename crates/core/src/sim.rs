@@ -1,7 +1,7 @@
 //! The dynasty after the founder: the same `Game` year by year, choices by `AutoChooser`,
 //! until the dynasty falls or `sim.max_years` pass. The result is a `Chronicle`.
 
-use crate::data::{Data, SuccessionRule, TraitRule};
+use crate::data::{Data, LawDef, SuccessionRule, TraitRule};
 use crate::fx::Fx;
 use crate::game::{ActionId, Game, PendingEvent, ReignEnd, Step};
 use crate::rng::Rng;
@@ -677,6 +677,24 @@ fn predicate_keys(p: &Predicate, w: &World, keys: &mut BTreeSet<MarkKey>) {
     }
 }
 
+/// The laws a change brings in (+1) and ends (-1): an enacted law and the laws of its group
+/// in force, a repealed one; nothing for a law already so.
+fn law_changes<'a>(d: &'a Data, w: &'a World, id: &str, enact: bool) -> Vec<(&'a LawDef, Fx)> {
+    let Some(l) = d.law(id).filter(|_| enact != w.flags.contains(id)) else {
+        return vec![];
+    };
+    let one = Fx::from_int(1);
+    let mates = d
+        .laws_in_force(w)
+        .filter(|o| !l.group.is_empty() && o.group == l.group);
+    match enact {
+        true => std::iter::once((l, one))
+            .chain(mates.map(|o| (o, Fx(0) - one)))
+            .collect(),
+        false => vec![(l, Fx(0) - one)],
+    }
+}
+
 /// Chooses for the simulated rulers. An option scores `sum(weights[key] * amount)` over its
 /// effects (see `worth`) plus a roll in `0..=noise`; the best wins, the first on a tie.
 #[derive(Clone, Debug, PartialEq)]
@@ -855,6 +873,13 @@ impl AutoChooser {
                 }
                 Effect::IfFriendly(es) => {
                     sum = sum + self.worth(es, w, data, nb);
+                    continue;
+                }
+                Effect::EnactLaw(id) | Effect::RepealLaw(id) => {
+                    let enact = matches!(e, Effect::EnactLaw(_));
+                    for (l, k) in law_changes(data, w, id, enact) {
+                        sum = sum + self.weight(&l.id) * k;
+                    }
                     continue;
                 }
                 // A bastard to recognize: `recognize`, and an `heir` when there is none.

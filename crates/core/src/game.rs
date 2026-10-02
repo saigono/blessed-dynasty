@@ -787,7 +787,9 @@ fn moves_crown_power(effects: &[Effect]) -> bool {
         | Effect::Tribute(_)
         | Effect::TakeHostage(..)
         | Effect::EndWar(_)
-        | Effect::SetWarStage(_) => false,
+        | Effect::SetWarStage(_)
+        | Effect::EnactLaw(_)
+        | Effect::RepealLaw(_) => false,
         _ => true,
     })
 }

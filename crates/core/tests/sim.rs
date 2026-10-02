@@ -118,6 +118,23 @@ fn texts(c: &Chronicle) -> Vec<(&str, &str, Option<&str>)> {
 fn golden_seed_42_script_a() {
     let (g, end) = script_a(42);
     let c = sim::run(end, &g.data, g.rng.clone());
+    if std::env::var("PEEK").is_ok() {
+        eprintln!("{:?}", (c.years, &c.fall, c.entries.len()));
+        eprintln!("{:#?}", &texts(&c)[..3]);
+        for (i, k) in c.kin.iter().enumerate().take(5) {
+            eprintln!(
+                "{i} {} {} {:?} {:?} {:?}",
+                k.name, k.born, k.parent, k.crowned, k.died
+            );
+        }
+        eprintln!(
+            "{:?}",
+            c.rulers
+                .iter()
+                .map(|r| (&r.name, r.start.0, r.end.0))
+                .collect::<Vec<_>>()
+        );
+    }
     // Stage 12: Конрад does not live to reign (heirs.death), Агнесса does.
     // Stage 14: armies cost by the upkeep curve, the dynasty wars with its own actions.
     // Stage 15: gentler heir deaths, Конрад reigns with children born before; less money;
@@ -131,9 +148,11 @@ fn golden_seed_42_script_a() {
     // Stage 18: the influence graph and a derived stability whose shocks fade; weddings
     // only in war: Конрад reigns 37 years through two «Смута», Вейр and Арден revolt,
     // Кунигунда inherits a shrinking realm and Вейр takes it in the year 82.
+    // Stage 19: laws-institutions, resistance to a law an anchor: Конрад reigns to 1263, three
+    // more rulers after him, the dynasty falls to usurpation in the year 130.
     assert_eq!(
         (c.years, &c.fall, c.entries.len()),
-        (82, &FallReason::Usurped, 23)
+        (130, &FallReason::Usurped, 47)
     );
     let hint = |h: &'static str| Some(h);
     assert_eq!(
@@ -1078,24 +1097,24 @@ fn kin_of_seed_42_script_a() {
     );
     assert_eq!((k[0].crowned, k[0].parent), (Some(1187), None));
     assert_eq!(k[0].died, Some(1187 + c.rulers[0].end.0));
-    // Конрад, 6 at the start, reigned 1225..1262; Генрих, born 1193, died with him; Освальд
-    // 1199 and Рейнхольд 1202 died before him, uncrowned (stage 18).
+    // Конрад, 6 at the start, reigned 1225..1263; Генрих, born 1193, and Освальд 1199 died
+    // before him, Рейнхольд 1202 with him, uncrowned (stage 19).
     assert_eq!(
         (k[1].name.as_str(), k[1].born, k[1].crowned, k[1].died),
-        ("Конрад", 1181, Some(1225), Some(1262))
+        ("Конрад", 1181, Some(1225), Some(1263))
     );
     assert_eq!(
         (k[2].name.as_str(), k[2].born, k[2].parent, k[2].crowned),
         ("Генрих", 1193, Some(0), None)
     );
-    assert_eq!(k[2].died, Some(1262));
+    assert_eq!(k[2].died, Some(1260));
     assert_eq!(
         (k[3].name.as_str(), k[3].born, k[3].parent, k[3].died),
         ("Освальд", 1199, Some(0), Some(1236))
     );
     assert_eq!(
         (k[4].name.as_str(), k[4].born, k[4].parent, k[4].died),
-        ("Рейнхольд", 1202, Some(0), Some(1260))
+        ("Рейнхольд", 1202, Some(0), Some(1263))
     );
     // Every ruler in the chronicle is a crowned kin, in order; children point at a ruler.
     let crowned: Vec<(&str, u32)> = (k.iter())

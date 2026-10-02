@@ -1,7 +1,7 @@
 //! The influence graph (docs/design/hidden-state.html): every axis steps toward its target,
 //! its anchor plus the `Target` edges into it; `Flow` edges add to stocks every year.
 
-use crate::data::{AxisDef, Data, curve};
+use crate::data::{AxisDef, Data, ENACT, curve};
 use crate::fx::Fx;
 use crate::rules::add_axis;
 use crate::state::{AxisId, World};
@@ -131,7 +131,7 @@ pub fn scale(d: &Data, w: &World, i: usize) -> Fx {
 }
 
 /// The anchor of `a` now: its own (`default` without one) plus the shifts of the laws in
-/// force (`LawDef.anchors`).
+/// force (`LawDef.anchors`) and the resistance to those being brought in.
 pub fn anchor(d: &Data, w: &World, a: &AxisDef) -> Fx {
     let mut v = a.anchor.unwrap_or(a.default);
     for l in &d.laws.list {
@@ -139,6 +139,13 @@ pub fn anchor(d: &Data, w: &World, a: &AxisDef) -> Fx {
             if w.flags.contains(&l.id) {
                 v = v + *s;
             }
+        }
+    }
+    for x in &w.active_actions {
+        let law = x.id.strip_prefix(ENACT).and_then(|id| d.law(id));
+        let against = law.into_iter().flat_map(|l| &l.resistance);
+        for (_, s) in against.filter(|(x, _)| *x == a.id) {
+            v = v + *s;
         }
     }
     v

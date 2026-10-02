@@ -220,6 +220,11 @@ pub enum Effect {
         #[serde(default)]
         otherwise: Vec<Effect>,
     },
+    /// The law of `Data.laws` comes into force: its flag is set and the other laws of its
+    /// group go (`World.laws` dates it).
+    EnactLaw(String),
+    /// The law is no longer in force.
+    RepealLaw(String),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -624,6 +629,25 @@ impl Effect {
                 };
                 w.neighbours.insert(id, n);
             }
+            Effect::EnactLaw(id) => {
+                let laws = &ctx.data.laws.list;
+                let group = laws.iter().find(|l| l.id == *id).map(|l| &l.group);
+                let group = group.filter(|g| !g.is_empty());
+                for o in laws
+                    .iter()
+                    .filter(|o| o.id != *id && Some(&o.group) == group)
+                {
+                    w.flags.remove(&o.id);
+                    w.laws.remove(&o.id);
+                }
+                if w.flags.insert(id.clone()) {
+                    w.laws.insert(id.clone(), w.tick);
+                }
+            }
+            Effect::RepealLaw(id) => {
+                w.flags.remove(id);
+                w.laws.remove(id);
+            }
             Effect::Revoke(t) => {
                 let id = t.resolve(w, ctx);
                 if let Some(p) = id.and_then(|id| w.provinces.get_mut(&id))
@@ -653,6 +677,10 @@ impl Effect {
             Effect::Marry { then, otherwise } => {
                 then.iter().chain(otherwise).try_for_each(|e| e.check(data))
             }
+            Effect::EnactLaw(id) | Effect::RepealLaw(id) => match data.law(id) {
+                Some(_) => Ok(()),
+                None => Err(format!("unknown law {id}")),
+            },
             _ => Ok(()),
         }
     }

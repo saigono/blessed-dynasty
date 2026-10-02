@@ -80,6 +80,7 @@ fn runs_hash(dir: &str, data: &Data, n: u64) -> u64 {
         text += &ron::to_string(&end.world).unwrap();
         text += &ron::to_string(&sim::run(end, &g.data, g.rng.clone())).unwrap();
     }
+    std::fs::write(std::env::var("DUMP").unwrap_or("/dev/null".into()), &text).unwrap();
     fnv(text.as_bytes())
 }
 

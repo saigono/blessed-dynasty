@@ -523,8 +523,15 @@ impl Effect {
                 let fresh = names.map(|n| VassalId(n.clone())).find(|id| {
                     !w.vassals.contains_key(id) && w.vassals.values().all(|v| v.name != id.0)
                 });
+                // A house that gets more land grows stronger by `strength`.
+                let grow = |w: &mut World, v: VassalId| {
+                    if let Some(house) = w.vassals.get_mut(&v) {
+                        house.strength = house.strength + g.strength;
+                    }
+                    v
+                };
                 let vassal = match (nearest, fresh) {
-                    (Some((d, v)), _) if d <= g.max_distance => v,
+                    (Some((d, v)), _) if d <= g.max_distance => grow(w, v),
                     (_, Some(id)) => {
                         let v = Vassal {
                             id: id.clone(),
@@ -535,7 +542,7 @@ impl Effect {
                         w.vassals.insert(id.clone(), v);
                         id
                     }
-                    (Some((_, v)), None) => v,
+                    (Some((_, v)), None) => grow(w, v),
                     (None, None) => return,
                 };
                 w.provinces.get_mut(&id).expect("checked above").holder = Holder::Vassal(vassal);
@@ -634,7 +641,8 @@ fn known_axis(data: &Data, a: &AxisId) -> Result<(), String> {
     }
 }
 
-/// Texts may contain `{province}`, `{neighbour}`, `{heir}`, `{ruler}`; `Game` fills them in for display.
+/// Texts may contain `{province}`, `{neighbour}`, `{heir}`, `{ruler}`, `{vassal}`,
+/// `{war_target}`; `Game` fills them in for display.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Event {
     pub id: String,
@@ -958,9 +966,13 @@ mod tests {
         run(&mut w, &data, r#"Build(EventTarget, "market")"#, "berg");
         assert!(w.provinces[&pid("berg")].buildings.contains("market"));
 
-        // Next to holm (weir) at one crossing.
+        // Next to holm (weir) at one crossing; stage 15: the house grows by grant.strength.
+        let weir = |w: &World| w.vassals[&VassalId("weir".into())].strength;
+        let before = weir(&w);
         run(&mut w, &data, "Grant(EventTarget)", "gart");
         assert_eq!(holder(&w, "gart"), vassal("weir"));
+        assert_eq!(weir(&w), before + data.grant.strength);
+        assert!(data.grant.strength > Fx(0));
         // Arden and Weir both border the capital: the smaller id wins the tie.
         run(&mut w, &data, "Grant(ById(\"capital\"))", "gart");
         assert_eq!(holder(&w, "capital"), vassal("arden"));
@@ -1035,6 +1047,10 @@ mod tests {
     #[test]
     fn vassal_ratio_grows_with_the_house() {
         let (_, mut w) = world();
+        // The houses at strength 20, as in the preset before stage 15.
+        w.vassals
+            .values_mut()
+            .for_each(|v| v.strength = Fx::from_int(20));
         let ratio = |w: &World, id: &str| w.vassal_ratio(&w.provinces[&pid(id)]);
         let above = |w: &World, v: &str, id: &str| {
             filter(&format!("(vassal_ratio_above: {v})")).matches(&w.provinces[&pid(id)], w)
@@ -1080,6 +1096,9 @@ mod tests {
     #[test]
     fn secede() {
         let (data, mut w) = world();
+        w.vassals
+            .values_mut()
+            .for_each(|v| v.strength = Fx::from_int(20));
         let mut queue = Vec::new();
         apply(
             &mut w,

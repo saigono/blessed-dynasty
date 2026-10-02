@@ -5,8 +5,9 @@
     // State axes: the world starts with `default`, a preset may override it. `name` is shown
     // in the UI; a change of at least `notable` in a year goes to the year's summary (0: never).
     axes: [
-        (id: "treasury", min: -1000, max: 10000, default: 100, name: "Казна", notable: 100),
-        (id: "income", min: -100, max: 1000, default: 10, name: "Доход", notable: 2),
+        // The treasury has a line of its own in the year's summary (UI): notable 0.
+        (id: "treasury", min: -1000, max: 10000, default: 100, name: "Казна"),
+        (id: "income", min: -100, max: 1000, default: 5, name: "Доход", notable: 2),
         (id: "army", min: 0, max: 1000, default: 50, name: "Армия", notable: 10),
         (id: "legitimacy", min: 0, max: 100, default: 50, name: "Легитимность", notable: 5),
         (id: "stability", min: 0, max: 100, default: 50, name: "Стабильность", notable: 5),
@@ -44,7 +45,8 @@
     ),
 
     // How many actions may run at once: the largest `slots` whose threshold the axis reached.
-    action_slots: (axis: "bureaucracy", steps: [(0, 1), (40, 2), (70, 3)]),
+    // The actions of a war going on (target Enemy) have `war_slots` of their own.
+    action_slots: (axis: "bureaucracy", steps: [(0, 1), (40, 2), (70, 3)], war_slots: 1),
 
     // Per year: treasury += income of crown provinces + sum(axis * coefficient).
     // Negative coefficients are upkeep. The army's upkeep and the war's toll are in `war`.
@@ -125,15 +127,26 @@
     ),
 
     // Direct rule has a limit (yearly): the crown holds at most capital crown power *
-    // per_power provinces itself, the capital included. Beyond that its weakest provinces (by
-    // crown power) lose `loyalty` a year, and one below `grant_below` goes to a vassal as by
-    // Effect Grant: an overgrown realm feeds its vassals.
-    crown_capacity: (per_power: 0.07, loyalty: 3, grant_below: 25),
+    // per_power + sum(axis * k of per_axis) provinces itself, the capital included. Beyond
+    // that, every year: its weakest provinces (by crown power) over the limit lose `loyalty`,
+    // and each of them costs the `penalty` axes and `income` of the yearly income. The land
+    // stays with the crown: only the player gives it away (grant_province), or the automaton,
+    // whose weight `overreach` makes a grant worth more while the crown is over its limit.
+    // Stage 15 (docs/calibration.md): the capital (crown power 90) and bureaucracy 20 give
+    // room for 8 at the start, two conquests above the 6 crown lands; the room grows by one
+    // per 10 bureaucracy.
+    crown_capacity: (
+        per_power: 0.07,
+        per_axis: [("bureaucracy", 0.1)],
+        loyalty: 3,
+        penalty: [("stability", -1)],
+        income: 2,
+    ),
 
     // Effect Grant: the nearest vassal within `max_distance` border crossings gets the
     // province, otherwise a new house named by the next unused name of names.ron `vassals`,
     // with this loyalty and strength; when the names run out, the nearest vassal at any distance.
-    grant: (max_distance: 1, new_loyalty: 60, new_strength: 10),
+    grant: (max_distance: 1, new_loyalty: 60, new_strength: 10, strength: 5),
 
     // Yearly ruler death risk in per mille: the `base` row of the largest age_from <= age,
     // plus (100 - health) * health_k, plus every risk whose `when` holds. A hit spawns the
@@ -147,6 +160,7 @@
             (when: WarStage(Fighting), per_mille: 30, event: "war_wound"),
             (when: Flag("plot"), per_mille: 60, event: "assassination"),
             (when: Flag("plague"), per_mille: 40, event: "illness"),
+            (when: RulerAge(70, 200), per_mille: 150, event: "old_age"),
         ],
     ),
 
@@ -167,6 +181,10 @@
     // `unmarried` without the married flag. The ruler's children (World.line_from) stand
     // first, in birth order, then the collateral line; "eldest" is heirs[0].
     // `death`: yearly risk of every heir in per mille by age, like death.base.
+    // Both tables are steps: the row of the largest age_from <= age holds to the end of life.
+    // Births end at 50; a ruler crowned grown had children before (sim::born_before: the
+    // same table over his adult years, each child past `death`), so few lines die out
+    // (stage 15, docs/calibration.md).
     heirs: (
         adult_age: 16,
         growth_home: 2,
@@ -189,10 +207,10 @@
             (flag: "law_none", eldest: 50, others: 50, ability_k: 0, crisis_claim: 45, dispute_per_heir: 15,
                 name: "Воля государя",
                 description: "Твёрдого закона нет: претензии всех наследников сходятся к {others}, трон получает старший ребёнок. Зато каждый оставшийся наследник — соперник: по {dispute_per_heir}% на каждого, что престол оспорят."),
-        ],        birth: [(0, 0), (16, 25), (35, 20), (45, 15), (55, 10), (65, 5)],
+        ],        birth: [(0, 0), (16, 25), (35, 20), (45, 10), (50, 0)],
         married_flag: "married",
         unmarried: 0.2,
-        death: [(0, 120), (1, 40), (5, 15), (16, 10), (30, 15), (40, 20), (50, 30), (55, 60), (60, 90), (65, 130), (70, 180), (80, 300)],
+        death: [(0, 120), (1, 40), (5, 6), (16, 6), (30, 10), (40, 15), (50, 30), (55, 60), (60, 90), (65, 130), (70, 180), (80, 300)],
     ),
 
     // The dynasty after the founder (sim::run): the same rules year by year, the choices
@@ -235,7 +253,8 @@
         // province_income, province_population, province_loyalty, health, relation,
         // crown_power, heir_ability, heir_claim (by the delta), army_upkeep (by the change in
         // yearly upkeep an army change brings, war.army_upkeep); build, grant, revoke, secede,
-        // war, hostage, death, abdicate (+1); province (+1 gained, -1 given); heir (+1, -1).
+        // war, hostage, death, abdicate (+1); overreach (+1 for a grant while the crown is over
+        // crown_capacity); province (+1 gained, -1 given); heir (+1, -1).
         // Weights of the ruler's traits add to `base`.
         auto: (
             noise: 10,
@@ -248,6 +267,10 @@
                 "build": 3, "grant": -20, "revoke": -3, "secede": -10, "war": -10, "hostage": -10,
                 "death": -500, "abdicate": -500, "province": 20, "heir": 60,
                 "heir_ability": 0.3, "heir_claim": 0.2, "army_upkeep": -0.1,
+                // Beyond the limit a grant is weighed like any other (grant, province); with
+                // overreach 30 the heirs give the conquests away and warmonger dynasties fall
+                // to usurpation (stage 15, docs/calibration.md).
+                "overreach": 0,
                 "usurped": -22, "plot": -20, "plague": -20,
             },
             traits: {
@@ -269,6 +292,7 @@
             // as shown to the player.
             reign_ends: {
                 "illness": "болезнь",
+                "old_age": "старость",
                 "assassination": "убийство",
                 "war_wound": "рана на войне",
                 "abdication": "отречение",

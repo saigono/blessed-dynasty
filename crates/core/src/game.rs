@@ -5,8 +5,7 @@ use crate::fx::Fx;
 use crate::neighbour::neighbour_tick;
 use crate::rng::Rng;
 use crate::rules::{
-    Action, ActionTarget, Choice, Ctx, Effect, Event, EventTarget, ProvinceField, ProvinceTarget,
-    Target, add_axis,
+    Action, ActionTarget, Choice, Ctx, Effect, Event, EventTarget, ProvinceField, Target, add_axis,
 };
 use crate::state::{
     ActiveAction, CauseTag, HeirStatus, Holder, MarkKey, NeighbourId, Preset, ProvinceId, World,
@@ -52,7 +51,7 @@ pub struct PendingEvent {
 }
 
 /// An event with `{province}`, `{neighbour}`, `{ruler}`, `{heir}`, `{vassal}` (the holder of
-/// a target province) filled in.
+/// a target province), `{war_target}` (the province the war going on is fought for) filled in.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EventView {
     pub event_id: String,
@@ -224,10 +223,10 @@ impl Game {
         if !available {
             return Err(GameError::Unavailable);
         }
-        let w = &mut self.world;
-        if w.active_actions.len() as u32 >= self.data.action_slots.slots(w) {
+        if !(self.data.action_slots).free(&self.world, &self.data.actions, action) {
             return Err(GameError::NoSlot);
         }
+        let w = &mut self.world;
         add_axis(
             w,
             &self.data,
@@ -396,6 +395,7 @@ impl Game {
             if w.axes[&d.economy.treasury] < Fx(0) || (w.war.is_none() && income < Fx(0)) {
                 let gone = w.axes[&d.war.army] * d.war.desertion;
                 add_axis(w, d, &d.war.army, Fx(0) - gone);
+                w.deserted += 1;
             }
             w.ruler.age += 1;
             w.heirs.iter_mut().for_each(|h| h.age += 1);
@@ -474,29 +474,19 @@ impl Game {
         }
     }
 
-    /// Yearly, `Data.crown_capacity`: the crown holds at most `capital crown power *
-    /// per_power` provinces directly, the capital included. Its weakest others beyond that
-    /// lose `loyalty`; one below `grant_below` goes to a vassal (`Effect::Grant`).
+    /// Yearly, `Data.crown_capacity`: the crown's provinces beyond its room lose `loyalty`,
+    /// and every one of them costs the `penalty` axes. The land stays with the crown.
     fn overreach(&mut self) {
-        let (c, w) = (&self.data.crown_capacity, &mut self.world);
-        let capital = w.provinces.get(&w.capital.province);
-        let room = (capital.map_or(Fx(0), |p| p.crown_power) * c.per_power).0 / Fx::SCALE;
-        let crown = w.provinces.values().filter(|p| p.holder == Holder::Crown);
-        let over = (crown.count() as i64 - room.max(0)).max(0) as usize;
-        let mut weakest: Vec<(Fx, ProvinceId)> = (w.provinces.values())
-            .filter(|p| p.holder == Holder::Crown && p.id != w.capital.province)
-            .map(|p| (p.crown_power, p.id.clone()))
-            .collect();
-        weakest.sort();
-        let mut grants = Vec::new();
-        for (_, id) in weakest.into_iter().take(over) {
-            let p = w.provinces.get_mut(&id).expect("listed above");
+        let (d, w) = (&self.data, &mut self.world);
+        let c = &d.crown_capacity;
+        let over: Vec<ProvinceId> = c.over(w).iter().map(|p| p.id.clone()).collect();
+        for id in &over {
+            let p = w.provinces.get_mut(id).expect("listed above");
             p.loyalty = (p.loyalty - c.loyalty).max(Fx(0));
-            if p.loyalty < c.grant_below {
-                grants.push(Effect::Grant(ProvinceTarget::ById(id)));
-            }
         }
-        self.apply(&grants, None, None);
+        for (a, k) in &c.penalty {
+            add_axis(w, d, a, *k * Fx::from_int(over.len() as i64));
+        }
     }
 
     /// A neighbour with no province left leaves the world: a war with it ends, the heirs it
@@ -656,11 +646,15 @@ impl Game {
             },
             _ => None,
         };
+        let war_target = (w.war.as_ref())
+            .and_then(|x| x.target.as_ref())
+            .and_then(|id| w.provinces.get(id));
         let names = [
             Some(("{ruler}", &w.ruler.name)),
             name,
             behind.map(|n| ("{neighbour}", &n.name)),
             vassal.map(|v| ("{vassal}", &v.name)),
+            war_target.map(|p| ("{war_target}", &p.name)),
         ];
         let fill = |s: &str| {
             names
@@ -727,13 +721,7 @@ fn heirs_year(d: &Data, w: &mut World, rng: &mut Rng) {
         }
         h.claim = pct(h.claim + claim);
     }
-    let married = w.flags.contains(&r.married_flag);
-    let factor = if married {
-        Fx::from_int(1)
-    } else {
-        r.unmarried
-    };
-    let chance = by_age(&r.birth, w.ruler.age) * factor;
+    let chance = r.birth_chance(w, w.ruler.age);
     if rng.range(0, Fx::from_int(100).0) < chance.0 {
         w.add_heir(d.newborn(w.next_heir_id));
     }
@@ -1029,34 +1017,83 @@ mod tests {
         assert_eq!(ids, ["other"]);
     }
 
+    /// Stage 15: land over the crown's room stays with the crown and costs it every year
+    /// (the weakest lands' loyalty, stability, income) until the player grants it away.
     #[test]
-    fn an_overgrown_crown_loses_its_weakest_lands() {
-        let mut data = bare();
-        data.crown_capacity.per_power = Fx(40); // capital crown power 100: room for 4
-        let mut g = game(data, 1);
-        for (id, power, loyalty) in [("capital", 100, 50), ("berg", 10, 26), ("gart", 20, 60)] {
-            let p = g.world.provinces.get_mut(&pid(id)).unwrap();
-            (p.crown_power, p.loyalty) = (Fx::from_int(power), Fx::from_int(loyalty));
-        }
-        for id in ["lugovo", "ostwick", "sol"] {
-            g.world.provinces.get_mut(&pid(id)).unwrap().crown_power = Fx::from_int(50);
-        }
-        let before = g.world.clone();
-        // Six crown provinces, room for four: berg and gart lose 3, berg drops below 25.
-        g.overreach();
-        let p = |g: &Game, id: &str| g.world.provinces[&pid(id)].clone();
-        assert!(matches!(p(&g, "berg").holder, Holder::Vassal(_)));
-        assert_eq!(p(&g, "berg").loyalty, Fx::from_int(23));
+    fn land_over_the_limit_costs_every_year_until_granted() {
+        let mut g = map_game();
+        g.world.axes.insert(ax("bureaucracy"), Fx::from_int(100)); // three slots
+        g.data.crown_capacity.per_power = Fx(50); // capital crown power 90: room for 4 of 6
+        g.data.crown_capacity.per_axis = vec![];
+        let c = g.data.crown_capacity.clone();
         assert_eq!(
-            (p(&g, "gart").holder, p(&g, "gart").loyalty),
-            (Holder::Crown, Fx::from_int(57))
+            (c.penalty.clone(), c.income),
+            (vec![(ax("stability"), Fx::from_int(-1))], Fx::from_int(2))
         );
-        assert_eq!(p(&g, "sol"), before.provinces[&pid("sol")]);
-        // Within capacity nothing happens.
-        g.data.crown_capacity.per_power = Fx(60);
+        let over = |g: &Game| -> Vec<ProvinceId> {
+            g.data
+                .crown_capacity
+                .over(&g.world)
+                .iter()
+                .map(|p| p.id.clone())
+                .collect()
+        };
+        let weakest = over(&g);
+        assert_eq!(weakest.len(), 2);
+        let crown = |g: &Game| {
+            (g.world.provinces.values())
+                .filter(|p| p.holder == Holder::Crown)
+                .count()
+        };
+        let stability = |g: &Game| g.world.axes[&ax("stability")];
+        let income = |g: &Game| crate::war::yearly_income(&g.world, &g.data);
+        let mut free = g.clone();
+        free.data.crown_capacity.per_power = Fx::from_int(1);
+        assert_eq!(income(&g), income(&free) - Fx::from_int(4));
+        for year in 1..=3 {
+            assert_eq!(g.wait().unwrap(), Step::Idle);
+            free.wait().unwrap();
+            assert_eq!(crown(&g), 6, "no land leaves by itself");
+            assert_eq!(stability(&g), Fx::from_int(55 - 2 * year));
+            assert_eq!(stability(&free), Fx::from_int(55));
+            if year == 1 {
+                for id in &weakest {
+                    let loyalty = |g: &Game| g.world.provinces[id].loyalty;
+                    assert_eq!(loyalty(&g), loyalty(&free) - Fx::from_int(3));
+                }
+            }
+        }
+        for id in &weakest {
+            g.start_action("grant_province", Some(Target::Province(id.clone())))
+                .unwrap();
+        }
+        g.wait().unwrap();
+        assert_eq!((crown(&g), over(&g)), (4, vec![]));
+        let before = stability(&g);
+        g.wait().unwrap();
+        assert_eq!(stability(&g), before);
+        let mut room = g.clone();
+        room.data.crown_capacity.per_power = Fx::from_int(1);
+        assert_eq!(income(&g), income(&room));
+    }
+
+    /// Stage 15: within the limit the crown pays nothing. The start realm fits: room 8 for 6
+    /// (capital crown power 90 * 0.07 + bureaucracy 20 * 0.1).
+    #[test]
+    fn within_the_limit_there_is_no_penalty() {
+        let mut g = map_game();
+        assert_eq!(g.data.crown_capacity.room(&g.world), 8);
+        assert!(g.data.crown_capacity.over(&g.world).is_empty());
+        let mut big = g.clone();
+        big.data.crown_capacity.per_power = Fx::from_int(1);
         let before = g.world.clone();
-        g.overreach();
-        assert_eq!(g.world, before);
+        g.wait().unwrap();
+        big.wait().unwrap();
+        assert_eq!(g.world, big.world);
+        assert_eq!(
+            g.world.axes[&ax("stability")],
+            before.axes[&ax("stability")]
+        );
     }
 
     #[test]
@@ -1116,6 +1153,36 @@ mod tests {
         g.world.axes.insert(ax("bureaucracy"), Fx::from_int(40));
         assert_eq!(g.start_action("a", None), Ok(()));
         assert_eq!(g.start_action("b", None), Ok(()));
+    }
+
+    /// Stage 15: the actions of a war run in a slot of their own, next to a peaceful one.
+    #[test]
+    fn war_actions_have_their_own_slot() {
+        let mut data = bare();
+        data.actions = vec![
+            action("build", ActionTarget::None, vec![]),
+            action("plan", ActionTarget::None, vec![]),
+            action("siege", ActionTarget::Enemy, vec![]),
+            action("storm", ActionTarget::Enemy, vec![]),
+        ];
+        assert_eq!(data.action_slots.war_slots, 1);
+        let mut g = game(data, 1);
+        let nordmark = NeighbourId("nordmark".into());
+        g.world.war = Some(crate::war::War {
+            enemy: nordmark.clone(),
+            stage: crate::war::WarStage::Fighting,
+            our_strength: Fx(0),
+            their_strength: Fx(0),
+            war_score: Fx(0),
+            started: Tick(0),
+            target: None,
+            battles: vec![],
+        });
+        let enemy = Some(Target::Neighbour(nordmark));
+        assert_eq!(g.start_action("siege", enemy.clone()), Ok(()));
+        assert_eq!(g.start_action("storm", enemy), Err(GameError::NoSlot));
+        assert_eq!(g.start_action("build", None), Ok(()));
+        assert_eq!(g.start_action("plan", None), Err(GameError::NoSlot));
     }
 
     #[test]
@@ -1200,11 +1267,11 @@ mod tests {
         assert_eq!(g.world.active_actions[0].ends_at, Tick(2));
         g.wait().unwrap();
         assert_eq!(g.world.axes[&ax("legitimacy")], Fx::from_int(45));
-        assert_eq!(g.world.provinces[&pid("holm")].income, Fx::from_int(6));
+        assert_eq!(g.world.provinces[&pid("holm")].income, Fx::from_int(4));
         g.wait().unwrap();
         assert_eq!(g.world.tick, Tick(2));
         assert_eq!(g.world.axes[&ax("legitimacy")], Fx::from_int(50));
-        assert_eq!(g.world.provinces[&pid("holm")].income, Fx::from_int(9));
+        assert_eq!(g.world.provinces[&pid("holm")].income, Fx::from_int(7));
         assert!(g.world.active_actions.is_empty());
     }
 
@@ -1650,7 +1717,7 @@ mod tests {
         data.drift.province_loyalty = Fx::from_int(50);
         let mut g = game(data, 1);
         // The yearly sum below, as the UI shows it.
-        assert_eq!(g.data.economy.yearly_income(&g.world), Fx::from_int(49));
+        assert_eq!(g.data.economy.yearly_income(&g.world), Fx::from_int(27));
         g.world.crown_modifiers.insert(pid("holm"), Fx(500));
         g.wait().unwrap();
         assert_eq!(g.world.crown_modifiers[&pid("holm")], Fx(250));
@@ -1660,9 +1727,9 @@ mod tests {
         assert_eq!(g.world.ruler.age, 32);
         g.wait().unwrap();
         let w = &g.world;
-        // Per year: crown provinces 12 + 7 + 5 + 8 + 6 + 6 + income 10 - army 50 * 0.1 = 49,
+        // Per year: crown provinces 7 + 4 + 3 + 5 + 4 + 4 + income 5 - army 50 * 0.1 = 27,
         // in quarters.
-        assert_eq!(w.axes[&ax("treasury")], Fx::from_int(199));
+        assert_eq!(w.axes[&ax("treasury")], Fx::from_int(177)); // 150 + 27
         assert_eq!((w.ruler.age, w.heirs[0].age), (33, 7));
         // Toward the axis default 50, toward province_loyalty 50, a year's step of 1.
         assert_eq!(w.axes[&ax("loyalty_nobles")], Fx::from_int(41));

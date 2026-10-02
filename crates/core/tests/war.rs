@@ -354,6 +354,9 @@ fn an_unpaid_army_melts() {
         let income = bd_core::war::yearly_income(&g.world, &g.data);
         g.wait().unwrap();
         assert_eq!(g.world.axes[&ax("treasury")], before + income);
+        // Stage 15: the years of desertion are counted.
+        let deserted = g.world.axes[&ax("army")] < Fx::from_int(size);
+        assert_eq!(g.world.deserted, deserted as u32);
         g.world.axes[&ax("army")]
     };
     let kept = Fx::from_int(1) - war_only(1).data.war.desertion;
@@ -449,7 +452,8 @@ fn war_actions_only_at_war() {
 }
 
 /// Stage 14: a siege takes the target if the field army holds the field (score above 0) by
-/// then, whatever the rolls.
+/// then, whatever the rolls. Stage 15: the fall comes as a card naming the target, whose one
+/// choice signs the peace.
 #[test]
 fn a_siege_takes_the_target() {
     let siege = |score: i64| {
@@ -461,15 +465,22 @@ fn a_siege_takes_the_target() {
             .unwrap();
         // Hold the score where the test wants it; the chain's own events wait.
         g.queue.clear();
+        let mut card = None;
         for _ in 0..2 {
             g.world.war.as_mut().unwrap().war_score = Fx::from_int(score);
-            g.wait().unwrap();
+            if let Step::Event(v) = g.wait().unwrap() {
+                card = Some(v.title);
+            }
         }
         let skala = g.world.provinces[&ProvinceId("skala".into())]
             .holder
             .clone();
-        (skala, g.world.war.is_some())
+        if card.is_some() {
+            g.choose(0).unwrap();
+        }
+        (skala, card, g.world.war.is_some())
     };
-    assert_eq!(siege(1), (Holder::Crown, false));
-    assert_eq!(siege(0), (Holder::Foreign(nordmark()), true));
+    let fell = Some("Крепость Скала пала".to_string());
+    assert_eq!(siege(1), (Holder::Crown, fell, false));
+    assert_eq!(siege(0), (Holder::Foreign(nordmark()), None, true));
 }

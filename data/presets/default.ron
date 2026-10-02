@@ -17,8 +17,8 @@
     },
     capital: (province: "capital", crown_bonus: 20),
     vassals: [
-        (id: "weir", name: "Вейр", loyalty: 55, strength: 20),
-        (id: "arden", name: "Арден", loyalty: 50, strength: 20),
+        (id: "weir", name: "Вейр", loyalty: 55, strength: 6),
+        (id: "arden", name: "Арден", loyalty: 50, strength: 4),
     ],
     ruler: (
         name: "Ульрих",

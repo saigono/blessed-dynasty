@@ -82,7 +82,8 @@ fn batch_of_ten_is_deterministic() {
         let out = batch(&args);
         assert_eq!(out, batch(&args));
         let mut lines = out.lines();
-        let header = "seed,reign_years,dynasty_years,score,fall_reason,early_death,army";
+        let header = "seed,reign_years,dynasty_years,score,fall_reason,early_death,army,\
+                      treasury,deserted,treasury_10,treasury_20,treasury_30";
         assert_eq!(lines.next(), Some(header));
         let rows: Vec<_> = lines.clone().filter(|l| !l.starts_with('#')).collect();
         assert_eq!(rows.len(), 10, "{out}");
@@ -185,7 +186,9 @@ fn summary(out: &str) -> (i64, i64, u32, String) {
 }
 
 /// Stage 8b acceptance: the calibration criteria on 1000 games per strategy (the tables of
-/// docs/calibration.md). `cargo test --release -p cli -- --ignored calibration`.
+/// docs/calibration.md). Stage 15 adds: the neutral median treasury at the end of the
+/// dynasty at most 20% of the cap (10000), and warmonger armies desert in at least 10% of
+/// the dynasties. `cargo test --release -p cli -- --ignored calibration`.
 #[test]
 #[ignore = "release only, a few minutes"]
 fn calibration_criteria_hold() {
@@ -200,9 +203,10 @@ fn calibration_criteria_hold() {
                 .unwrap()
         })
         .collect();
-    let s: Vec<_> = (runs.into_iter())
-        .map(|c| summary(&stdout(c.wait_with_output().unwrap())))
+    let outs: Vec<String> = (runs.into_iter())
+        .map(|c| stdout(c.wait_with_output().unwrap()))
         .collect();
+    let s: Vec<_> = outs.iter().map(|o| summary(o)).collect();
     let (_, reign, early, _) = &s[0];
     assert!(*early <= 10, "{s:?}");
     assert!((25..=40).contains(reign), "{s:?}");
@@ -211,4 +215,18 @@ fn calibration_criteria_hold() {
     assert!(scores.windows(2).all(|w| w[1] * 100 >= w[0] * 115), "{s:?}");
     let falls: std::collections::BTreeSet<_> = s[1..].iter().map(|x| &x.3).collect();
     assert_eq!(falls.len(), 3, "{s:?}");
+    let after = |out: &str, prefix: &str| -> String {
+        let l = out.lines().find(|l| l.starts_with(prefix)).unwrap();
+        l[prefix.len()..].to_string()
+    };
+    let treasury: i64 = (after(&outs[0], "#   казна в конце ").split(" / ").nth(1))
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(treasury <= 2000, "{treasury}");
+    let deserted: u32 = (after(&outs[3], "# дезертирство в ").split('%').next())
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(deserted >= 10, "{deserted}");
 }

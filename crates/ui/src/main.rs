@@ -84,6 +84,9 @@ enum Cmd {
 /// A line of the journal or of an effect list; `Some(true)` good, `Some(false)` bad.
 type Line = (String, Option<bool>);
 
+/// The start of the treasury line every year of the journal has.
+const MONEY: &str = "Казна:";
+
 struct App {
     game: Option<Game>,
     screen: Screen,
@@ -117,6 +120,9 @@ struct App {
     /// record in the making.
     year_start: Option<World>,
     chosen: Vec<Line>,
+    /// The treasury before the latest year's tick, that year's income and upkeep
+    /// (`war::income_parts`): its «Казна:» line.
+    money: Option<(Fx, Fx, Fx)>,
 }
 
 fn load_data() -> Data {
@@ -179,6 +185,7 @@ impl App {
             journal: Vec::new(),
             year_start: None,
             chosen: Vec::new(),
+            money: None,
         }
     }
 
@@ -225,10 +232,14 @@ impl App {
             _ => {}
         }
         let closes_year = matches!(cmd, Cmd::Wait | Cmd::Choose(_));
+        let spends = matches!(cmd, Cmd::Act(..));
         let g = self.game.as_mut().expect("only Start runs without a game");
         let res = match cmd {
             Cmd::Wait => {
                 self.year_start.get_or_insert_with(|| g.world.clone());
+                let (income, upkeep) = bd_core::war::income_parts(&g.world, &g.data);
+                let treasury = g.world.axes[&g.data.economy.treasury];
+                self.money = Some((treasury, income, upkeep));
                 // A year of ticks, up to the first event.
                 let mut res = g.wait();
                 for _ in 1..g.data.time_unit.ticks_per_year {
@@ -272,6 +283,38 @@ impl App {
         if closes_year && matches!(self.screen, Screen::Reign) {
             self.close_year();
         }
+        if closes_year || spends {
+            self.money_line();
+        }
+    }
+
+    /// «Казна: +N (доход +X, содержание -Y, траты -Z)» first in the latest year's record: N
+    /// from before its tick to now, траты what the actions and choices since took.
+    fn money_line(&mut self) {
+        let (Some(g), Some((start, income, upkeep))) = (&self.game, self.money) else {
+            return;
+        };
+        let Some((_, lines)) = self.journal.last_mut() else {
+            return;
+        };
+        let now = g.world.axes[&g.data.economy.treasury];
+        let spent = now - start - income + upkeep;
+        let sign = |v: Fx| {
+            if v > Fx(0) {
+                format!("+{}", round(v))
+            } else {
+                round(v)
+            }
+        };
+        let text = format!(
+            "{MONEY} {} (доход {}, содержание {}, траты {})",
+            sign(now - start),
+            sign(income),
+            sign(Fx(0) - upkeep),
+            sign(spent),
+        );
+        lines.retain(|(t, _)| !t.starts_with(MONEY));
+        lines.insert(0, (text, Some(now >= start)));
     }
 
     /// Puts what happened since «Подождать год» into the journal: the choices made, then
@@ -345,7 +388,7 @@ impl App {
         (self.screen, self.picking, self.dynasty) = (Screen::Reign, None, None);
         (self.played, self.seed, self.entry) = (seed, seed.to_string(), 0);
         (self.intro, self.tree, self.year_start) = (true, false, None);
-        (self.journal, self.chosen) = (Vec::new(), Vec::new());
+        (self.journal, self.chosen, self.money) = (Vec::new(), Vec::new(), None);
     }
 
     fn step(&mut self, res: Result<Step, GameError>) {
@@ -548,7 +591,7 @@ impl App {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(format!(
                         "Цель для «{}», на карте или из списка:",
-                        action_name(d, id)
+                        action_name(w, d, id)
                     ));
                     for t in targets {
                         if ui.button(target_name(w, t)).clicked() {
@@ -564,9 +607,9 @@ impl App {
                 ui.horizontal_wrapped(|ui| {
                     for (id, targets) in g.available_actions() {
                         let def = d.actions.iter().find(|a| a.id == id);
-                        let button = ui.button(action_name(d, &id));
+                        let button = ui.button(action_name(w, d, &id));
                         let button = match def {
-                            Some(a) => button.on_hover_ui(|ui| action_tip(ui, d, a)),
+                            Some(a) => button.on_hover_ui(|ui| action_tip(ui, w, d, a)),
                             None => button,
                         };
                         // A war action has one target, the enemy: no choice to make.
@@ -606,7 +649,7 @@ impl App {
     }
 }
 
-/// «Действия k из n: идёт X, t из T лет».
+/// «Действия k из n, военные j из m: идёт X, t из T лет»; the war slots only at war.
 fn running(g: &Game) -> String {
     let (w, d) = (&g.world, &g.data);
     let tpy = w.time_unit.ticks_per_year as f32;
@@ -623,7 +666,18 @@ fn running(g: &Game) -> String {
             format!("{name}, {} из {} лет", num(done), num(total))
         })
         .collect();
-    let line = format!("Действия {} из {}", running.len(), d.action_slots.slots(w));
+    let war = |a: &Action| a.target == ActionTarget::Enemy;
+    let def = |id: &str| d.actions.iter().find(|a| a.id == id);
+    let wars = (w.active_actions.iter()).filter(|a| def(&a.id).is_some_and(war));
+    let wars = wars.count();
+    let mut line = format!(
+        "Действия {} из {}",
+        running.len() - wars,
+        d.action_slots.slots(w)
+    );
+    if w.war.is_some() || wars > 0 {
+        line += &format!(", военные {wars} из {}", d.action_slots.war_slots);
+    }
     match running.is_empty() {
         true => line,
         false => format!("{line}: идёт {}", running.join("; ")),
@@ -638,8 +692,8 @@ fn acted(w: &World, def: &Action, key: Option<&str>) -> String {
         ActionTarget::Heir | ActionTarget::None => Target::Heir(key.parse().unwrap_or(u32::MAX)),
     });
     match target {
-        Some(t) => format!("{} ({})", def.name, target_name(w, &t)),
-        None => def.name.clone(),
+        Some(t) => format!("{} ({})", named(w, &def.name), target_name(w, &t)),
+        None => named(w, &def.name),
     }
 }
 
@@ -707,11 +761,11 @@ fn journal(ui: &mut Ui, journal: &[(String, Vec<Line>)]) {
         } else {
             date.color(FG2)
         });
-        if lines.is_empty() {
-            ui.small(RichText::new("Тихий год").color(FG2));
-        }
         for (text, up) in lines {
             ui.small(RichText::new(text).color(tone(*up)));
+        }
+        if lines.iter().all(|(t, _)| t.starts_with(MONEY)) {
+            ui.small(RichText::new("Тихий год").color(FG2));
         }
         ui.add_space(4.0);
     }
@@ -750,9 +804,9 @@ const HOW_TO_PLAY: [&str; 4] = [
 ];
 
 /// What an action gives, costs and takes.
-fn action_tip(ui: &mut Ui, d: &Data, a: &Action) {
+fn action_tip(ui: &mut Ui, w: &World, d: &Data, a: &Action) {
     ui.set_max_width(320.0);
-    ui.strong(&a.name);
+    ui.strong(named(w, &a.name));
     if !a.description.is_empty() {
         ui.label(&a.description);
     }
@@ -848,6 +902,10 @@ fn side(ui: &mut Ui, g: &Game) {
             bar(ui, axis_name(d, &a.id), v, a.min, a.max, &round(v));
         }
     });
+    if let Some((line, hint)) = overreach(g) {
+        ui.label(RichText::new(line).color(RUBRIC));
+        ui.label(RichText::new(hint).small().color(FG2));
+    }
     heading(ui, "Наследники");
     let first = bd_core::sim::next_heir(w);
     match d.heirs.law(w) {
@@ -935,6 +993,47 @@ fn side(ui: &mut Ui, g: &Game) {
             });
         }
     });
+}
+
+/// «Сверх предела: k земель (…), штраф в год: …» and what to do about it; None within the
+/// limit (`crown_capacity`).
+fn overreach(g: &Game) -> Option<(String, String)> {
+    let (w, d) = (&g.world, &g.data);
+    let c = &d.crown_capacity;
+    let over = c.over(w);
+    if over.is_empty() {
+        return None;
+    }
+    let k = over.len() as u32;
+    let names: Vec<&str> = over.iter().map(|p| p.name.as_str()).collect();
+    let times = Fx::from_int(k as i64);
+    let mut fines: Vec<String> = (c.penalty.iter())
+        .map(|(a, v)| format!("{} {}", axis_name(d, a).to_lowercase(), round(*v * times)))
+        .collect();
+    if c.income != Fx(0) {
+        fines.push(format!("доход -{}", round(c.income * times)));
+    }
+    if c.loyalty != Fx(0) {
+        let these = plural(k, ["этой земли", "этих земель", "этих земель"]);
+        fines.push(format!("лояльность {these} -{}", round(c.loyalty)));
+    }
+    let lands = plural(k, ["земля", "земли", "земель"]);
+    let line = format!(
+        "Сверх предела: {k} {lands} ({}), штраф в год: {}",
+        names.join(", "),
+        fines.join(", ")
+    );
+    let room = c.room(w);
+    let terms =
+        (c.per_axis.iter()).map(|(a, k)| format!(" + {} × {k}", axis_name(d, a).to_lowercase()));
+    let hint = format!(
+        "Корона сама держит не больше {room} {} (сила короны в столице × {}{}). Пожалуйте \
+         лишние земли вассалам или укрепите власть короны в столице.",
+        plural(room as u32, ["земли", "земель", "земель"]),
+        c.per_power,
+        terms.collect::<String>(),
+    );
+    Some((line, hint))
 }
 
 /// The war going on: enemy, target, the score between defeat and victory, forces, years,
@@ -1051,11 +1150,17 @@ pub(crate) fn realm(w: &World) -> String {
     format!("{} · короне {crown}", own.count())
 }
 
-fn action_name<'a>(d: &'a Data, id: &'a str) -> &'a str {
-    d.actions
-        .iter()
-        .find(|a| a.id == id)
-        .map_or(id, |a| &a.name)
+fn action_name(w: &World, d: &Data, id: &str) -> String {
+    let def = d.actions.iter().find(|a| a.id == id);
+    def.map_or(id.into(), |a| named(w, &a.name))
+}
+
+/// An action name with `{war_target}`, the province the war going on is fought for, filled in.
+fn named(w: &World, name: &str) -> String {
+    let target = (w.war.as_ref().and_then(|x| x.target.as_ref()))
+        .and_then(|id| w.provinces.get(id))
+        .map_or("цель войны", |p| &p.name);
+    name.replace("{war_target}", target)
 }
 
 /// A province of a foreign state also names the state: «Фростад, Нордмарк».
@@ -1531,10 +1636,16 @@ mod tests {
         let mut h = Harness::new();
         six_years(&mut h);
         let line = |s: &str, up| (s.to_string(), up);
+        // Every year opens with the treasury, notable or not.
+        let money = line("Казна: +28 (доход +33, содержание -4, траты 0)", Some(true));
         let want = vec![
             (
                 "1188",
                 vec![
+                    line(
+                        "Казна: -13 (доход +32, содержание -5, траты -40)",
+                        Some(false),
+                    ),
                     line("«Беда с наследником»: Позвать лучших лекарей", None),
                     line("Смерть наследника: Конрад", Some(false)),
                 ],
@@ -1542,28 +1653,36 @@ mod tests {
             (
                 "1189",
                 vec![
+                    line("Казна: +28 (доход +33, содержание -5, траты 0)", Some(true)),
                     line("Рождение: Агнесса", Some(true)),
                     line("Завершено: Проложить дорогу (Берг)", None),
                 ],
             ),
-            ("1190", vec![line("«Набег: Арден»: Выслать войско", None)]),
+            (
+                "1190",
+                vec![money.clone(), line("«Набег: Арден»: Выслать войско", None)],
+            ),
             (
                 "1191",
-                vec![line(
-                    "«Паломники»: Взять паломников под охрану короны",
-                    None,
-                )],
+                vec![
+                    money.clone(),
+                    line("«Паломники»: Взять паломников под охрану короны", None),
+                ],
             ),
             (
                 "1192",
                 vec![
+                    money.clone(),
                     line("«Заговор»: Схватить всех подозреваемых", None),
                     line("Знать -7", Some(false)),
                 ],
             ),
             (
                 "1193",
-                vec![line("«Гильдии просят хартию»: Даровать хартию", None)],
+                vec![
+                    money,
+                    line("«Гильдии просят хартию»: Даровать хартию", None),
+                ],
             ),
         ];
         let got: Vec<_> = (h.app.journal.iter())
@@ -1578,8 +1697,42 @@ mod tests {
         let d = &mut h.app.game.as_mut().unwrap().data;
         (d.quiet_weight, d.heirs.birth) = (1_000_000, vec![]);
         h.app.apply(Cmd::Wait);
-        assert_eq!(h.app.journal.last().unwrap(), &("1194".to_string(), vec![]));
+        let quiet = vec![line(
+            "Казна: +30 (доход +35, содержание -4, траты 0)",
+            Some(true),
+        )];
+        assert_eq!(h.app.journal.last().unwrap(), &("1194".to_string(), quiet));
         assert!(texts_of(&mut h).contains(&"Тихий год".to_string()));
+    }
+
+    /// Stage 15: land over the crown's limit shows its yearly penalty and what to do.
+    #[test]
+    fn the_side_panel_tells_the_penalty_over_the_limit() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(1));
+        h.click_label("Править");
+        let over = |t: &[String]| t.iter().any(|t| t.starts_with("Сверх предела"));
+        assert!(!over(&texts_of(&mut h)), "room 8 for 6 at the start");
+        let c = &mut h.app.game.as_mut().unwrap().data.crown_capacity;
+        (c.per_power, c.per_axis) = (Fx(50), vec![]); // room 4 for 6
+        let texts = texts_of(&mut h);
+        let line = texts
+            .iter()
+            .find(|t| t.starts_with("Сверх предела"))
+            .unwrap();
+        assert!(line.starts_with("Сверх предела: 2 земли ("), "{line}");
+        assert!(
+            line.ends_with("штраф в год: стабильность -2, доход -4, лояльность этих земель -3"),
+            "{line}"
+        );
+        let hint = texts
+            .iter()
+            .find(|t| t.starts_with("Корона сама держит"))
+            .unwrap();
+        assert!(
+            hint.contains("не больше 4 земель") && hint.contains("Пожалуйте"),
+            "{hint}"
+        );
     }
 
     /// Every text painted in the frame, tooltips and cards included.
@@ -1663,7 +1816,7 @@ mod tests {
         h.click_label("Править");
         let road = hover(&mut h, "Проложить дорогу");
         for t in [
-            "Стоимость 40 · 2 года",
+            "Стоимость 60 · 2 года",
             "сила короны в провинции +5",
             "доход провинции +1",
             "Нужна сила короны от 20",

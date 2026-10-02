@@ -245,12 +245,14 @@
     ),
     (
         // The child king in the church's care (church_regency, set by regency_council, gone
-        // with the reign: sim.reign_flags) may take the vows the year he comes of age
-        // (sim.regency_age, 16): the reign ends, the next heir is crowned. Both choices end it.
+        // with the reign: sim.reign_flags) may take the vows in his first years of age
+        // (sim.regency_age 16 to 20): the reign ends, the next heir is crowned. Both choices
+        // end it. Stage 15: child kings are rarer (children born before a coronation), so
+        // the window is five years and the church's loyalty above 50, not one year above 60.
         id: "monastery_vows",
         title: "Король ушёл в монастырь",
-        text: "Монахи-опекуны воспитали государя по себе: в год совершеннолетия {ruler} слагает корону и уходит в обитель. Престол переходит к наследнику.",
-        when: All([Flag("church_regency"), RulerAge(16, 16), AxisAbove("loyalty_church", 60), HeirCount(1, 99)]),
+        text: "Монахи-опекуны воспитали государя по себе: едва войдя в возраст, {ruler} слагает корону и уходит в обитель. Престол переходит к наследнику.",
+        when: All([Flag("church_regency"), RulerAge(16, 20), AxisAbove("loyalty_church", 50), HeirCount(1, 99)]),
         weight: 10,
         once: false,
         cooldown_years: 0,

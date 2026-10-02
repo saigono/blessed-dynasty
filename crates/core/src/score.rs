@@ -255,6 +255,7 @@ mod tests {
             rulers: Vec::new(),
             kin: Vec::new(),
             axes: Default::default(),
+            deserted: 0,
         }
     }
 

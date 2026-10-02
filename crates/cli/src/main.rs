@@ -54,6 +54,9 @@ enum Cmd {
         runs: u64,
         #[arg(long, default_value = NEUTRAL)]
         strategy: String,
+        /// Played first, as by `trace`; the strategy goes on from where it ends.
+        #[arg(long)]
+        script: Option<PathBuf>,
         #[arg(long, default_value_t = 0)]
         seed_start: u64,
         #[command(flatten)]
@@ -130,10 +133,10 @@ fn run(cli: Cli) -> Result<(), String> {
             let mut g = load(&files, seed)?;
             let rules = score_rules(&files, &g)?;
             match script {
-                Some(path) => play_script(&mut g, &parse(&read(&path)?)?, false)?,
+                Some(path) => play_script(&mut g, &parse(&read(&path)?)?, false, &mut vec![])?,
                 None => {
                     let auto = chooser(&files, &g, &strategy)?;
-                    play(&mut g, auto.as_ref())?
+                    play(&mut g, auto.as_ref(), &mut vec![])?
                 }
             }
             let (chronicle, score) = dynasty(&g, &rules);
@@ -184,14 +187,19 @@ fn run(cli: Cli) -> Result<(), String> {
         Cmd::Batch {
             runs,
             strategy,
+            script,
             seed_start,
             files,
         } => {
             let start = load(&files, 0)?;
             let rules = score_rules(&files, &start)?;
             let auto = chooser(&files, &start, &strategy)?;
+            let script = match script {
+                Some(path) => parse(&read(&path)?)?,
+                None => vec![],
+            };
             let rows = (seed_start..seed_start + runs)
-                .map(|seed| batch_row(&start, seed, auto.as_ref(), &rules))
+                .map(|seed| batch_row(&start, seed, &script, auto.as_ref(), &rules))
                 .collect::<Result<Vec<_>, _>>()?;
             print!("{}", batch_report(&rows));
             Ok(())
@@ -203,8 +211,8 @@ fn run(cli: Cli) -> Result<(), String> {
         } => {
             let mut g = load(&files, seed)?;
             let rules = score_rules(&files, &g)?;
-            play_script(&mut g, &parse(&read(&script)?)?, true)?;
-            play(&mut g, None)?;
+            play_script(&mut g, &parse(&read(&script)?)?, true, &mut vec![])?;
+            play(&mut g, None, &mut vec![])?;
             let (Some(c), _) = dynasty(&g, &rules) else {
                 return Err("правление не кончилось".into());
             };
@@ -235,8 +243,26 @@ fn chooser(f: &Files, g: &Game, name: &str) -> Result<Option<AutoChooser>, Strin
     Ok(Some(auto))
 }
 
-/// One game of `batch`: (seed, reign years, dynasty years, score, fall, army at the end).
-type Row = (u64, u32, u32, i64, FallReason, i64);
+/// One game of `batch`.
+#[derive(Debug, Default)]
+struct Row {
+    seed: u64,
+    reign: u32,
+    /// Of the dynasty, the founder's reign included.
+    years: u32,
+    score: i64,
+    fall: Option<FallReason>,
+    /// The army and the treasury at the end of the dynasty.
+    army: i64,
+    treasury: i64,
+    /// Years the army deserted for want of pay after the founder.
+    deserted: u32,
+    /// The treasury at the end of each year of the founder's reign.
+    reign_treasury: Vec<i64>,
+}
+
+/// Reign years `batch` reports the treasury at.
+const TREASURY_AT: [usize; 3] = [10, 20, 30];
 
 /// Years before which the founder's death counts as early (DESIGN 4.3).
 const EARLY_YEARS: u32 = 10;
@@ -244,6 +270,7 @@ const EARLY_YEARS: u32 = 10;
 fn batch_row(
     start: &Game,
     seed: u64,
+    script: &[ScriptStep],
     auto: Option<&AutoChooser>,
     rules: &ScoreRules,
 ) -> Result<Row, String> {
@@ -251,7 +278,9 @@ fn batch_row(
         rng: bd_core::rng::Rng::from_seed(seed),
         ..start.clone()
     };
-    play(&mut g, auto)?;
+    let mut log = vec![];
+    play_script(&mut g, script, true, &mut log)?;
+    play(&mut g, auto, &mut log)?;
     let reign = g.world.tick.year(g.world.time_unit);
     let (Some(c), Some(s)) = dynasty(&g, rules) else {
         return Err(format!(
@@ -259,18 +288,42 @@ fn batch_row(
             MAX_YEARS.0
         ));
     };
-    let army = c.axes.get(&g.data.war.army).map_or(0, |a| a.0 / Fx::SCALE);
-    Ok((seed, reign, c.years, s.total, c.fall, army))
+    let axis = |a| c.axes.get(a).map_or(0, |v: &Fx| v.0 / Fx::SCALE);
+    Ok(Row {
+        seed,
+        reign,
+        years: c.years,
+        score: s.total,
+        army: axis(&g.data.war.army),
+        treasury: axis(&g.data.economy.treasury),
+        deserted: c.deserted,
+        fall: Some(c.fall),
+        reign_treasury: log,
+    })
 }
 
-/// The CSV, then `#` lines: quartiles of the dynasty years, score and reign years, the share
-/// of early deaths, the fall reasons by frequency.
+/// The CSV, then `#` lines: quartiles of the dynasty years, score, reign years, army and
+/// treasury at the end, the reign's treasury at `TREASURY_AT`, the share of early deaths and
+/// of dynasties whose army deserted, the fall reasons by frequency.
 fn batch_report(rows: &[Row]) -> String {
-    let mut out =
-        String::from("seed,reign_years,dynasty_years,score,fall_reason,early_death,army\n");
-    for (seed, reign, years, score, fall, army) in rows {
-        let early = *reign < EARLY_YEARS;
-        out += &format!("{seed},{reign},{years},{score},{fall:?},{early},{army}\n");
+    let mut out = String::from(
+        "seed,reign_years,dynasty_years,score,fall_reason,early_death,army,treasury,deserted,\
+         treasury_10,treasury_20,treasury_30\n",
+    );
+    for r in rows {
+        let early = r.reign < EARLY_YEARS;
+        let (seed, reign, years, score, army) = (r.seed, r.reign, r.years, r.score, r.army);
+        let fall = r.fall.as_ref().map_or(String::new(), |f| format!("{f:?}"));
+        out += &format!("{seed},{reign},{years},{score},{fall},{early},{army},");
+        out += &format!("{},{}", r.treasury, r.deserted);
+        for y in TREASURY_AT {
+            let t = r
+                .reign_treasury
+                .get(y - 1)
+                .map_or(String::new(), |t| t.to_string());
+            out += &format!(",{t}");
+        }
+        out += "\n";
     }
     let quartiles = |mut v: Vec<i64>| {
         v.sort();
@@ -278,30 +331,34 @@ fn batch_report(rows: &[Row]) -> String {
         format!("{} / {} / {}", at(1), at(2), at(3))
     };
     out += &format!("# runs {}\n# квартили (25 / 50 / 75%):\n", rows.len());
+    let of = |f: fn(&Row) -> i64| quartiles(rows.iter().map(f).collect());
+    out += &format!("#   лет династии {}\n", of(|r| r.years as i64));
+    out += &format!("#   счёт {}\n", of(|r| r.score));
+    out += &format!("#   лет правления {}\n", of(|r| r.reign as i64));
+    out += &format!("#   армия в конце {}\n", of(|r| r.army));
+    out += &format!("#   казна в конце {}\n", of(|r| r.treasury));
+    for y in TREASURY_AT {
+        let at = rows
+            .iter()
+            .filter_map(|r| r.reign_treasury.get(y - 1).copied());
+        out += &format!(
+            "#   казна к {y}-му году правления {}\n",
+            quartiles(at.collect())
+        );
+    }
+    let early = rows.iter().filter(|r| r.reign < EARLY_YEARS).count();
+    let deserted = rows.iter().filter(|r| r.deserted > 0).count();
+    out += &format!("# ранняя смерть {}%\n", percent(early, rows.len()));
     out += &format!(
-        "#   лет династии {}\n",
-        quartiles(rows.iter().map(|r| r.2 as i64).collect())
+        "# дезертирство в {}% династий\n",
+        percent(deserted, rows.len())
     );
-    out += &format!(
-        "#   счёт {}\n",
-        quartiles(rows.iter().map(|r| r.3).collect())
-    );
-    out += &format!(
-        "#   лет правления {}\n",
-        quartiles(rows.iter().map(|r| r.1 as i64).collect())
-    );
-    out += &format!(
-        "#   армия в конце {}\n",
-        quartiles(rows.iter().map(|r| r.5).collect())
-    );
-    let early = rows.iter().filter(|r| r.1 < EARLY_YEARS).count();
-    out += &format!(
-        "# ранняя смерть {}%\n# причины падения:\n",
-        percent(early, rows.len())
-    );
+    out += "# причины падения:\n";
     let mut falls: BTreeMap<String, usize> = BTreeMap::new();
     for r in rows {
-        *falls.entry(format!("{:?}", r.4)).or_default() += 1;
+        *falls
+            .entry(format!("{:?}", r.fall.as_ref().expect("played")))
+            .or_default() += 1;
     }
     let mut falls: Vec<_> = falls.into_iter().collect();
     falls.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
@@ -430,6 +487,9 @@ fn chronicle_json(c: &sim::Chronicle) -> serde_json::Value {
         "fall": c.fall,
         "years": c.years,
         "rulers": c.rulers,
+        "axes": c.axes.iter().map(|(a, v)| (a.0.clone(), v.0 / Fx::SCALE)).collect::<BTreeMap<_, _>>(),
+        "deserted": c.deserted,
+        "kin": c.kin,
     })
 }
 
@@ -457,8 +517,15 @@ fn print_dynasty(g: &Game, c: &sim::Chronicle, s: &score::Score) {
     }
 }
 
-/// `soft`: a Wait while an event waits takes its middle choice instead of failing.
-fn play_script(g: &mut Game, script: &[ScriptStep], soft: bool) -> Result<(), String> {
+/// `soft`: a Wait while an event waits takes its middle choice instead of failing, and a step
+/// that does not fit the game (a script of another seed) is skipped. `log` gets
+/// the treasury at the end of every year (see `note`).
+fn play_script(
+    g: &mut Game,
+    script: &[ScriptStep],
+    soft: bool,
+    log: &mut Vec<i64>,
+) -> Result<(), String> {
     for (i, step) in script.iter().enumerate() {
         // The rest of the script has no reign to act in.
         if g.ended.is_some() {
@@ -468,7 +535,7 @@ fn play_script(g: &mut Game, script: &[ScriptStep], soft: bool) -> Result<(), St
             ScriptStep::Wait(_) if g.pending_event.is_some() && !soft => {
                 Err("событие ждёт выбора".into())
             }
-            ScriptStep::Wait(n) => wait(g, *n, soft),
+            ScriptStep::Wait(n) => wait(g, *n, soft, log),
             ScriptStep::Action(id, target) => g.start_action(id, target.clone()).map_err(err),
             ScriptStep::Choose(idx) => g.choose(*idx).map_err(err),
             ScriptStep::ChooseByTag(tag) => match pending_choices(g) {
@@ -480,18 +547,21 @@ fn play_script(g: &mut Game, script: &[ScriptStep], soft: bool) -> Result<(), St
             },
             ScriptStep::Abdicate => g.abdicate().map_err(err),
         };
-        res.map_err(|e| format!("шаг {} {step:?}: {e}", i + 1))?;
+        if !soft {
+            res.map_err(|e| format!("шаг {} {step:?}: {e}", i + 1))?;
+        }
     }
     Ok(())
 }
 
 /// Up to n ticks, stopping at an event; `soft` takes the middle choice of a waiting event
 /// first and stops at none.
-fn wait(g: &mut Game, n: u32, soft: bool) -> Result<(), String> {
+fn wait(g: &mut Game, n: u32, soft: bool, log: &mut Vec<i64>) -> Result<(), String> {
     for _ in 0..n {
         if soft && let Some(choices) = pending_choices(g) {
             g.choose((choices.len() - 1) / 2).map_err(err)?;
         }
+        note(g, log);
         match g.wait().map_err(err)? {
             Step::Idle => {}
             Step::Event(_) if soft => {}
@@ -503,9 +573,10 @@ fn wait(g: &mut Game, n: u32, soft: bool) -> Result<(), String> {
 
 /// Until the reign ends (at most `MAX_YEARS`): `auto` starts its best action before every tick
 /// and makes every choice; without it (`neutral`) no actions and the middle choice.
-fn play(g: &mut Game, auto: Option<&AutoChooser>) -> Result<(), String> {
+fn play(g: &mut Game, auto: Option<&AutoChooser>, log: &mut Vec<i64>) -> Result<(), String> {
     let end = MAX_YEARS.ticks(g.world.time_unit);
     while g.world.tick < end && g.ended.is_none() {
+        note(g, log);
         if let Some(a) = auto
             && g.pending_event.is_none()
             && let Some((id, target)) = a.action(g)
@@ -525,6 +596,16 @@ fn play(g: &mut Game, auto: Option<&AutoChooser>) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// The treasury of every year the reign has finished and `log` misses, as it stands now:
+/// called before a tick, it sees the year closed with its choices made.
+fn note(g: &Game, log: &mut Vec<i64>) {
+    let w = &g.world;
+    let treasury = w.axes[&g.data.economy.treasury].0 / Fx::SCALE;
+    while log.len() < w.tick.year(w.time_unit) as usize {
+        log.push(treasury);
+    }
 }
 
 fn pending_choices(g: &Game) -> Option<&[bd_core::rules::Choice]> {
@@ -608,7 +689,7 @@ mod tests {
             "[Action(\"act\", None), Wait(5), ChooseByTag(\"c\"), Wait(1), ChooseByTag(\"x\"), \
              Wait(1), Choose(1)]",
         );
-        play_script(&mut g, &s, false).unwrap();
+        play_script(&mut g, &s, false, &mut vec![]).unwrap();
         // Each Wait stopped at the event of its first tick.
         assert_eq!(g.world.tick, Tick(3));
         assert_eq!(tags(&g), ["act", "c", "a", "b"]);
@@ -625,7 +706,8 @@ mod tests {
 
     #[test]
     fn script_errors() {
-        let fails = |text: &str| play_script(&mut game(), &script(text), false).unwrap_err();
+        let fails =
+            |text: &str| play_script(&mut game(), &script(text), false, &mut vec![]).unwrap_err();
         assert!(fails("[Choose(0)]").contains("NoEvent"));
         assert!(fails("[ChooseByTag(\"a\")]").contains("нет события"));
         assert!(fails("[Wait(1), Wait(1)]").contains("событие ждёт выбора"));
@@ -638,8 +720,10 @@ mod tests {
     #[test]
     fn soft_wait_takes_the_middle_and_goes_on() {
         let mut g = game();
-        play_script(&mut g, &script("[Wait(5), Wait(1)]"), true).unwrap();
-        // An event every tick: each one waiting when the next tick comes takes the middle.
+        let steps = "[Wait(5), Wait(1), Action(\"nope\", None)]";
+        play_script(&mut g, &script(steps), true, &mut vec![]).unwrap();
+        // An event every tick: each one waiting when the next tick comes takes the middle;
+        // the unknown action is skipped.
         assert_eq!(g.world.tick, Tick(6));
         assert_eq!(tags(&g), ["b"; 5]);
         assert!(g.pending_event.is_some());
@@ -647,21 +731,38 @@ mod tests {
 
     #[test]
     fn batch_summary() {
-        let row = |seed, reign, score, fall| (seed, reign, 100, score, fall, reign as i64);
+        let row = |seed, reign: u32, score, fall, deserted| Row {
+            seed,
+            reign,
+            years: 100,
+            score,
+            fall: Some(fall),
+            army: reign as i64,
+            treasury: score * 10,
+            deserted,
+            reign_treasury: (1..=reign as i64).collect(),
+        };
         let rows = [
-            row(0, 5, 10, FallReason::NoHeir),
-            row(1, 30, 30, FallReason::Usurped),
-            row(2, 40, 20, FallReason::Usurped),
-            row(3, 20, 40, FallReason::Alive),
+            row(0, 5, 10, FallReason::NoHeir, 0),
+            row(1, 30, 30, FallReason::Usurped, 2),
+            row(2, 40, 20, FallReason::Usurped, 0),
+            row(3, 20, 40, FallReason::Alive, 0),
         ];
         let out = batch_report(&rows);
         let mut lines = out.lines();
         assert_eq!(
             lines.next(),
-            Some("seed,reign_years,dynasty_years,score,fall_reason,early_death,army")
+            Some(
+                "seed,reign_years,dynasty_years,score,fall_reason,early_death,army,treasury,\
+                 deserted,treasury_10,treasury_20,treasury_30"
+            )
         );
-        assert_eq!(lines.next(), Some("0,5,100,10,NoHeir,true,5"));
-        let summary: Vec<_> = lines.skip(3).collect();
+        assert_eq!(lines.next(), Some("0,5,100,10,NoHeir,true,5,100,0,,,"));
+        assert_eq!(
+            lines.next(),
+            Some("1,30,100,30,Usurped,false,30,300,2,10,20,30")
+        );
+        let summary: Vec<_> = lines.skip(2).collect();
         assert_eq!(
             summary,
             [
@@ -671,7 +772,12 @@ mod tests {
                 "#   счёт 20 / 30 / 40",
                 "#   лет правления 20 / 30 / 40",
                 "#   армия в конце 20 / 30 / 40",
+                "#   казна в конце 200 / 300 / 400",
+                "#   казна к 10-му году правления 10 / 10 / 10",
+                "#   казна к 20-му году правления 20 / 20 / 20",
+                "#   казна к 30-му году правления 30 / 30 / 30",
                 "# ранняя смерть 25%",
+                "# дезертирство в 25% династий",
                 "# причины падения:",
                 "#   Usurped 50%",
                 "#   Alive 25%",
@@ -683,7 +789,7 @@ mod tests {
     #[test]
     fn neutral_takes_the_middle_and_no_actions() {
         let mut g = game();
-        play(&mut g, None).unwrap();
+        play(&mut g, None, &mut vec![]).unwrap();
         assert_eq!(g.world.tick, MAX_YEARS.ticks(g.world.time_unit));
         assert_eq!(g.decisions.len(), MAX_YEARS.0 as usize);
         assert!(tags(&g).iter().all(|t| *t == "b"));
@@ -693,7 +799,7 @@ mod tests {
     fn replay_matches_the_game() {
         let mut g = game();
         let s = script("[Action(\"act\", None), Wait(1), Choose(2), Wait(1), Choose(0), Wait(1)]");
-        play_script(&mut g, &s, false).unwrap();
+        play_script(&mut g, &s, false, &mut vec![]).unwrap();
         let mut r = game();
         replay(&mut r, &g.decisions, g.world.tick).unwrap();
         assert_eq!(r.world, g.world);

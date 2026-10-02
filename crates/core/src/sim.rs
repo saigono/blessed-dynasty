@@ -27,6 +27,9 @@ pub struct Chronicle {
     /// The axes at the end, e.g. the army a dynasty fell or lived on with.
     #[serde(default)]
     pub axes: Axes,
+    /// Years the army deserted for want of pay after the founder (`World.deserted`).
+    #[serde(default)]
+    pub deserted: u32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -87,8 +90,10 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
         }],
         kin: Vec::new(),
         axes: Axes::new(),
+        deserted: 0,
     };
     let mut world = reign_end.world;
+    let deserted = world.deserted;
     died(&mut world, &data, c.rulers[0].cause.as_deref());
     let mut g = Game {
         world,
@@ -199,6 +204,7 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
     c.years = w.tick.year(w.time_unit);
     c.kin = w.kin.clone();
     c.axes = w.axes.clone();
+    c.deserted = w.deserted - deserted;
     let last = c.rulers.last_mut().expect("a ruler reigned");
     if last.cause.is_none() {
         last.end = w.tick;
@@ -257,8 +263,9 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     if let Some(k) = w.kin.iter_mut().find(|k| k.heir == Some(heir.id)) {
         (k.name, k.crowned) = (ruler.name.clone(), Some(year));
     }
-    // His brothers and sisters become the collateral line, behind his children to come.
+    // His brothers and sisters become the collateral line, behind his children.
     w.line_from = w.next_heir_id;
+    born_before(d, w, rng, ruler.age);
     if let Some(l) = d.heirs.law(w) {
         // Each heir left is a rival: a chance of dispute per head, rolled only if the law has one.
         let rivals = l.dispute_per_heir * Fx::from_int(w.heirs.len() as i64);
@@ -282,6 +289,27 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     let causes = causes(&g.world, [MarkKey::Heir(heir.id)].into());
     c.entries.push(entry(g, told, g.data.sim.notable, causes));
     true
+}
+
+/// The children a new ruler of `age` had before the coronation: a roll of
+/// `HeirRules::birth_chance` for every adult year, and each child born then a roll of
+/// `heirs.death` for every year of its own; ability grown at home until adulthood.
+fn born_before(d: &Data, w: &mut World, rng: &mut Rng, age: u32) {
+    let r = &d.heirs;
+    for at in r.adult_age..age {
+        if rng.range(0, Fx::from_int(100).0) >= r.birth_chance(w, at).0 {
+            continue;
+        }
+        let years = age - at;
+        let risk = |y| crate::data::by_age(&r.death, y).0;
+        if (0..years).any(|y| rng.range(0, 1000 * Fx::SCALE) < risk(y)) {
+            continue;
+        }
+        let mut h = d.newborn(w.next_heir_id);
+        let grown = r.growth_home * Fx::from_int(years.min(r.adult_age).into());
+        (h.age, h.ability) = (years, (h.ability + grown).min(Fx::from_int(100)));
+        w.add_heir(h);
+    }
 }
 
 /// The reigning ruler's death in the family tree, unless the reign ended by abdication.
@@ -471,18 +499,18 @@ impl AutoChooser {
         self.best(&scores, &mut g.rng)
     }
 
-    /// The best action of `available_actions` (its cost counts as treasury spent), or None
-    /// when no slot is free or doing nothing (score 0) wins.
+    /// The best action of `available_actions` with a free slot of its kind (its cost counts
+    /// as treasury spent), or None when doing nothing (score 0) wins.
     pub fn action(&self, g: &mut Game) -> Option<(ActionId, Option<Target>)> {
-        if g.world.active_actions.len() as u32 >= g.data.action_slots.slots(&g.world) {
-            return None;
-        }
         let mut options = vec![None];
         let mut scores = vec![Fx(0)];
         let treasury = self.weight(&g.data.economy.treasury.0);
         let mut actions = g.available_actions();
         for (k, (id, targets)) in actions.iter().enumerate() {
             let a = g.data.actions.iter().find(|a| a.id == *id).expect("listed");
+            if !g.data.action_slots.free(&g.world, &g.data.actions, a) {
+                continue;
+            }
             let score = self.worth(&a.on_complete, &g.world, &g.data) - treasury * a.cost;
             for t in 0..targets.len().max(1) {
                 options.push(Some((k, t)));
@@ -512,7 +540,8 @@ impl AutoChooser {
     /// Keys: axis ids (by the delta), flag ids (+1 set, -1 cleared), `province_income`,
     /// `province_population`, `province_loyalty`, `health`, `relation`, `crown_power`
     /// (by the delta), `build`, `grant`, `revoke`, `secede`, `war`, `hostage`, `death`,
-    /// `abdicate` (+1 each), `province` (+1 gained, -1 given away), `heir` (+1 born, -1 lost),
+    /// `abdicate` (+1 each), `overreach` (+1 for a grant while the crown holds more than its
+    /// room, `crown_capacity`), `province` (+1 gained, -1 given away), `heir` (+1 born, -1 lost),
     /// `heir_ability`, `heir_claim` (by the delta), `army_upkeep` (by the change in the yearly
     /// upkeep a change of the army brings). A chance weighs both branches by its odds.
     fn worth(&self, effects: &[Effect], w: &World, data: &Data) -> Fx {
@@ -539,7 +568,13 @@ impl AutoChooser {
                 Effect::Relation(_, d) | Effect::OtherRelations(d) => ("relation", *d),
                 Effect::CrownPower(_, d) => ("crown_power", *d),
                 Effect::Build(..) => ("build", one),
-                Effect::Grant(_) => ("grant", one),
+                Effect::Grant(_) => {
+                    // A crown beyond its room is glad to give land away.
+                    if !data.crown_capacity.over(w).is_empty() {
+                        sum = sum + self.weight("overreach");
+                    }
+                    ("grant", one)
+                }
                 Effect::Revoke(_) => ("revoke", one),
                 Effect::Secede(_) => ("secede", one),
                 Effect::StartWar(_) => ("war", one),

@@ -86,15 +86,28 @@ fn batch_of_ten_is_deterministic() {
         assert_eq!(lines.next(), Some(header));
         let rows: Vec<_> = lines.clone().filter(|l| !l.starts_with('#')).collect();
         assert_eq!(rows.len(), 10, "{out}");
-        assert!(rows[0].starts_with("5,") && rows[9].starts_with("14,"), "{out}");
-        assert!(out.contains("# runs 10\n") && out.contains("#   счёт "), "{out}");
-        assert!(out.contains("# ранняя смерть ") && out.contains("# причины падения:"), "{out}");
+        assert!(
+            rows[0].starts_with("5,") && rows[9].starts_with("14,"),
+            "{out}"
+        );
+        assert!(
+            out.contains("# runs 10\n") && out.contains("#   счёт "),
+            "{out}"
+        );
+        assert!(
+            out.contains("# ранняя смерть ") && out.contains("# причины падения:"),
+            "{out}"
+        );
     }
 }
 
 #[test]
 fn every_strategy_plays_and_an_unknown_one_fails() {
-    let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../data/strategies.ron")).unwrap();
+    let text = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../data/strategies.ron"
+    ))
+    .unwrap();
     let all: std::collections::BTreeMap<String, ron::Value> = ron::from_str(&text).unwrap();
     assert_eq!(
         all.keys().collect::<Vec<_>>(),
@@ -120,8 +133,14 @@ fn trace_links_entries_to_decisions() {
     // Every entry: a header line, then its causes or the note that it has none.
     let first = out.lines().next().unwrap();
     assert!(first.ends_with("Новое правление [-]"), "{out}");
-    let chain = out.lines().find(|l| l.starts_with("  решение #")).expect("a cause");
-    assert!(chain.contains("(тик ") && chain.contains(") → метка ("), "{chain}");
+    let chain = out
+        .lines()
+        .find(|l| l.starts_with("  решение #"))
+        .expect("a cause");
+    assert!(
+        chain.contains("(тик ") && chain.contains(") → метка ("),
+        "{chain}"
+    );
     assert!(out.contains("  без решений основателя\n"), "{out}");
 }
 
@@ -145,10 +164,22 @@ fn summary(out: &str) -> (i64, i64, u32, String) {
         l.unwrap_or_else(|| panic!("{prefix}: {out}"))[prefix.len()..].to_string()
     };
     let median = |prefix: &str| line(prefix).split(" / ").nth(1).unwrap().parse().unwrap();
-    let early = line("# ранняя смерть ").trim_end_matches('%').parse().unwrap();
-    let falls = out.lines().skip_while(|l| *l != "# причины падения:").nth(1).unwrap();
+    let early = line("# ранняя смерть ")
+        .trim_end_matches('%')
+        .parse()
+        .unwrap();
+    let falls = out
+        .lines()
+        .skip_while(|l| *l != "# причины падения:")
+        .nth(1)
+        .unwrap();
     let dominant = falls.split_whitespace().nth(1).unwrap().to_string();
-    (median("#   счёт "), median("#   лет правления "), early, dominant)
+    (
+        median("#   счёт "),
+        median("#   лет правления "),
+        early,
+        dominant,
+    )
 }
 
 /// Stage 8b acceptance: the calibration criteria on 1000 games per strategy (the tables of

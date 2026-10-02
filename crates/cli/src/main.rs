@@ -1,9 +1,9 @@
 //! Dev runner: one game from a seed and a script or strategy, and its replay from a journal.
 
+use bd_core::fx::Fx;
 use bd_core::game::{Decision, DecisionKind, Game, ReignEnd, Step};
 use bd_core::rules::Target;
 use bd_core::score::{self, ScoreRules};
-use bd_core::fx::Fx;
 use bd_core::sim::{self, AutoChooser, FallReason};
 use bd_core::state::Preset;
 use bd_core::time::{Tick, Years};
@@ -253,7 +253,10 @@ fn batch_row(
     play(&mut g, auto)?;
     let reign = g.world.tick.year(g.world.time_unit);
     let (Some(c), Some(s)) = dynasty(&g, rules) else {
-        return Err(format!("seed {seed}: правитель жив через {} лет", MAX_YEARS.0));
+        return Err(format!(
+            "seed {seed}: правитель жив через {} лет",
+            MAX_YEARS.0
+        ));
     };
     Ok((seed, reign, c.years, s.total, c.fall))
 }
@@ -272,11 +275,23 @@ fn batch_report(rows: &[Row]) -> String {
         format!("{} / {} / {}", at(1), at(2), at(3))
     };
     out += &format!("# runs {}\n# квартили (25 / 50 / 75%):\n", rows.len());
-    out += &format!("#   лет династии {}\n", quartiles(rows.iter().map(|r| r.2 as i64).collect()));
-    out += &format!("#   счёт {}\n", quartiles(rows.iter().map(|r| r.3).collect()));
-    out += &format!("#   лет правления {}\n", quartiles(rows.iter().map(|r| r.1 as i64).collect()));
+    out += &format!(
+        "#   лет династии {}\n",
+        quartiles(rows.iter().map(|r| r.2 as i64).collect())
+    );
+    out += &format!(
+        "#   счёт {}\n",
+        quartiles(rows.iter().map(|r| r.3).collect())
+    );
+    out += &format!(
+        "#   лет правления {}\n",
+        quartiles(rows.iter().map(|r| r.1 as i64).collect())
+    );
     let early = rows.iter().filter(|r| r.1 < EARLY_YEARS).count();
-    out += &format!("# ранняя смерть {}%\n# причины падения:\n", percent(early, rows.len()));
+    out += &format!(
+        "# ранняя смерть {}%\n# причины падения:\n",
+        percent(early, rows.len())
+    );
     let mut falls: BTreeMap<String, usize> = BTreeMap::new();
     for r in rows {
         *falls.entry(format!("{:?}", r.4)).or_default() += 1;
@@ -671,7 +686,10 @@ mod tests {
         ];
         let out = batch_report(&rows);
         let mut lines = out.lines();
-        assert_eq!(lines.next(), Some("seed,reign_years,dynasty_years,score,fall_reason,early_death"));
+        assert_eq!(
+            lines.next(),
+            Some("seed,reign_years,dynasty_years,score,fall_reason,early_death")
+        );
         assert_eq!(lines.next(), Some("0,5,100,10,NoHeir,true"));
         let summary: Vec<_> = lines.skip(3).collect();
         assert_eq!(

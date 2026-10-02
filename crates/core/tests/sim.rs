@@ -609,4 +609,3 @@ fn the_score_of_a_dynasty_is_deterministic() {
     let c2 = sim::run(end_now(&g), &data, g.rng.clone());
     assert_eq!(bd_core::score::compute(&c2, &g.decisions, &rules), s);
 }
-

@@ -240,7 +240,10 @@ impl World {
     }
 
     /// `foreign_neighbours` without allocating, repeats possible.
-    pub(crate) fn foreign_of<'a>(&'a self, p: &'a Province) -> impl Iterator<Item = &'a NeighbourId> {
+    pub(crate) fn foreign_of<'a>(
+        &'a self,
+        p: &'a Province,
+    ) -> impl Iterator<Item = &'a NeighbourId> {
         let near = p.neighbours.iter().filter_map(|n| self.provinces.get(n));
         near.filter_map(move |q| match &q.holder {
             Holder::Foreign(n) if q.holder != p.holder => Some(n),
@@ -251,8 +254,8 @@ impl World {
     /// The own province on the border with `n` with the weakest crown power, smallest id
     /// on a tie: where that neighbour presses.
     pub fn weakest_border(&self, n: &NeighbourId) -> Option<&Province> {
-        let theirs = (self.provinces.values())
-            .filter(|p| matches!(&p.holder, Holder::Foreign(x) if x == n));
+        let theirs =
+            (self.provinces.values()).filter(|p| matches!(&p.holder, Holder::Foreign(x) if x == n));
         // Borders are symmetric (Preset::load): our side is among the neighbours of theirs.
         // Starting there saves most lookups; this runs for every neighbour every year.
         let near = theirs.flat_map(|p| &p.neighbours);

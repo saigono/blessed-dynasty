@@ -239,7 +239,12 @@ impl Game {
         let mut offers = Vec::new();
         if (self.world.tick.0).is_multiple_of(self.data.time_unit.ticks_per_year) {
             let ids: Vec<_> = self.world.neighbours.keys().cloned().collect();
-            let relations = |w: &World| w.neighbours.values().map(|n| n.relation).collect::<Vec<_>>();
+            let relations = |w: &World| {
+                w.neighbours
+                    .values()
+                    .map(|n| n.relation)
+                    .collect::<Vec<_>>()
+            };
             let before = relations(&self.world);
             for id in ids {
                 offers.extend(neighbour_tick(
@@ -1318,8 +1323,11 @@ mod tests {
 
     #[test]
     fn only_some_effects_move_crown_power() {
-        let moves = |text: &str| moves_crown_power(&crate::data::parse::<Vec<Effect>>(text).unwrap());
-        assert!(!moves(r#"[Axis("army", 5), SetFlag("x"), RulerHealth(-5), Clash, EndWar(Victory)]"#));
+        let moves =
+            |text: &str| moves_crown_power(&crate::data::parse::<Vec<Effect>>(text).unwrap());
+        assert!(!moves(
+            r#"[Axis("army", 5), SetFlag("x"), RulerHealth(-5), Clash, EndWar(Victory)]"#
+        ));
         assert!(!moves("[Province(EventTarget, Income, 1)]"));
         assert!(moves("[Province(EventTarget, Loyalty, -5)]"));
         assert!(moves("[Grant(EventTarget)]"));

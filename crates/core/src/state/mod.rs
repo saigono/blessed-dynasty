@@ -153,6 +153,30 @@ pub struct World {
     /// The id `add_heir` gives next.
     #[serde(default)]
     pub next_heir_id: u32,
+    /// What the player's decisions touched, for the causes of chronicle entries.
+    /// Weights decay yearly by `Data.sim.decay`.
+    #[serde(default)]
+    pub marks: BTreeMap<MarkKey, Vec<CauseTag>>,
+}
+
+/// A part of the world a decision can touch.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum MarkKey {
+    Axis(AxisId),
+    Province(ProvinceId),
+    Flag(String),
+    Neighbour(NeighbourId),
+    /// `Heir.id`.
+    Heir(u32),
+}
+
+/// A link from a chronicle entry back to the player's decision `decision_idx`
+/// (an index into `Game.decisions`), with that decision's `cause_tag`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct CauseTag {
+    pub decision_idx: usize,
+    pub cause_tag: String,
+    pub weight: Fx,
 }
 
 impl World {
@@ -182,6 +206,7 @@ impl World {
             crown_modifiers: BTreeMap::new(),
             war: None,
             next_heir_id: 0,
+            marks: BTreeMap::new(),
         };
         for h in std::mem::take(&mut world.heirs) {
             world.add_heir(h);

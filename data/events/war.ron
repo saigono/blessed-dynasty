@@ -3,7 +3,9 @@
 // Each step waits for its stage (rules.ron `war`): war_declared at Declared, war_clash at
 // Fighting, then war_siege (winning) or war_talks (not winning) at Fighting, then exactly one
 // of war_victory, war_defeat, war_draw at Peace by war_score. The sibling that does not fit
-// is dropped. Nominally four years from the declaration.
+// is dropped. Nominally four years from the declaration. The war actions of actions.ron
+// (battle, talks, siege) can cut it short: talks spawn the outcome by the score at once.
+// Victory takes the province the war is fought for (War.target, ProvinceTarget WarTarget).
 [
     (
         id: "war_declared",
@@ -136,8 +138,8 @@
         target: Neighbour,
         choices: [
             (
-                text: "Взять пограничную провинцию и контрибуцию",
-                effects: [TransferProvince(EnemyBorder, Crown), Tribute(60), Axis("prestige", 15), Axis("legitimacy", 5), Relation(EventTarget, -20), EndWar(Victory)],
+                text: "Взять провинцию, за которую шла война, и контрибуцию",
+                effects: [TransferProvince(WarTarget, Crown), Tribute(60), Axis("prestige", 15), Axis("legitimacy", 5), Relation(EventTarget, -20), EndWar(Victory)],
                 cause_tag: "war_won_land",
                 hint: "Взятая земля долго помнит, чьей была.",
             ),

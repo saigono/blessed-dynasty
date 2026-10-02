@@ -47,10 +47,10 @@
     action_slots: (axis: "bureaucracy", steps: [(0, 1), (40, 2), (70, 3)]),
 
     // Per year: treasury += income of crown provinces + sum(axis * coefficient).
-    // Negative coefficients are upkeep.
+    // Negative coefficients are upkeep. The army's upkeep and the war's toll are in `war`.
     economy: (
         treasury: "treasury",
-        flows: [("income", 1), ("army", -0.1)],
+        flows: [("income", 1)],
     ),
 
     // Per year: faction axes move by `step` toward their default, province loyalty toward
@@ -103,6 +103,10 @@
     // Clash: each side's strength times a roll in `roll`; war_score += (ours - theirs) * score_k,
     // clamped to +-max_score. Tribute(v): treasury += v, the neighbour's strength -= v *
     // tribute_strength. EndWar(outcome): the enemy's strength changes by `end_strength`.
+    // War costs: while at war the crown provinces bring `income_penalty` of their income
+    // less; the army costs `army_upkeep` a year, a curve (army, upkeep) steeper the bigger
+    // the army; every year the treasury is below 0, or a year of peace the income does not
+    // cover the army, `desertion` of the army runs away.
     war: (
         start_event: "war_declared",
         army: "army",
@@ -115,6 +119,9 @@
         max_score: 100,
         tribute_strength: 0.1,
         end_strength: [(Victory, -10), (Draw, 0), (Defeat, 5)],
+        income_penalty: 0.3,
+        army_upkeep: [(0, 0), (50, 5), (100, 15), (150, 35), (200, 70), (300, 170), (1000, 1000)],
+        desertion: 0.2,
     ),
 
     // Direct rule has a limit (yearly): the crown holds at most capital crown power *
@@ -226,7 +233,8 @@
         // AutoChooser: an option scores sum(weight[key] * amount) over its effects, plus a
         // roll in 0..=noise. Keys: axis ids, flag ids (+1 set, -1 cleared) and effect kinds:
         // province_income, province_population, province_loyalty, health, relation,
-        // crown_power, heir_ability, heir_claim (by the delta); build, grant, revoke, secede,
+        // crown_power, heir_ability, heir_claim (by the delta), army_upkeep (by the change in
+        // yearly upkeep an army change brings, war.army_upkeep); build, grant, revoke, secede,
         // war, hostage, death, abdicate (+1); province (+1 gained, -1 given); heir (+1, -1).
         // Weights of the ruler's traits add to `base`.
         auto: (
@@ -239,7 +247,7 @@
                 "health": 0.5, "relation": 0.1, "crown_power": 0.5,
                 "build": 3, "grant": -20, "revoke": -3, "secede": -10, "war": -10, "hostage": -10,
                 "death": -500, "abdicate": -500, "province": 20, "heir": 60,
-                "heir_ability": 0.3, "heir_claim": 0.2,
+                "heir_ability": 0.3, "heir_claim": 0.2, "army_upkeep": -0.1,
                 "usurped": -22, "plot": -20, "plague": -20,
             },
             traits: {

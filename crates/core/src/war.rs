@@ -4,7 +4,7 @@
 use crate::data::Data;
 use crate::fx::Fx;
 use crate::rng::Rng;
-use crate::state::{Holder, NeighbourId, World};
+use crate::state::{Holder, NeighbourId, ProvinceId, World};
 use crate::time::Tick;
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +18,13 @@ pub struct War {
     /// Above 0 we are winning.
     pub war_score: Fx,
     pub started: Tick,
+    /// The enemy province the war is fought for: what victory takes
+    /// (`ProvinceTarget::WarTarget`). Set by `StartWar`.
+    #[serde(default)]
+    pub target: Option<ProvinceId>,
+    /// Every clash so far: its tick and how it moved `war_score`.
+    #[serde(default)]
+    pub battles: Vec<(Tick, Fx)>,
 }
 
 /// Set by `StartWar` (`Declared`), then by `Effect::SetWarStage` from the chain's events,
@@ -68,9 +75,39 @@ pub fn clash(w: &mut World, data: &Data, rng: &mut Rng) {
     let (ours, theirs) = strengths(w, data, &enemy);
     let mut roll = || Fx(rng.range(r.roll.0.0, r.roll.1.0 + 1));
     let delta = (ours * roll() - theirs * roll()) * r.score_k;
+    let tick = w.tick;
     let war = w.war.as_mut().expect("checked above");
+    let before = war.war_score;
     war.war_score = (war.war_score + delta).clamp(Fx(0) - r.max_score, r.max_score);
+    war.battles.push((tick, war.war_score - before));
     (war.our_strength, war.their_strength) = (ours, theirs);
+}
+
+/// `n`'s province next to the kingdom closest to the capital, smallest id on a tie: what a
+/// war on `n` is fought for unless the crown names its target.
+pub fn enemy_border(w: &World, n: &NeighbourId) -> Option<ProvinceId> {
+    let own = |q: &ProvinceId| {
+        (w.provinces.get(q)).is_some_and(|q| !matches!(q.holder, Holder::Foreign(_)))
+    };
+    (w.provinces.values())
+        .filter(|p| p.holder == Holder::Foreign(n.clone()) && p.neighbours.iter().any(own))
+        .min_by_key(|p| p.distance_to_capital)
+        .map(|p| p.id.clone())
+}
+
+/// What the treasury gains in a year: `Economy::yearly_income`, less `income_penalty` of the
+/// crown provinces' income while at war, less `army_upkeep` at the army's size.
+pub fn yearly_income(w: &World, data: &Data) -> Fx {
+    let r = &data.war;
+    let base = data.economy.yearly_income(w);
+    let penalty = match w.war {
+        Some(_) => {
+            let crown = w.provinces.values().filter(|p| p.holder == Holder::Crown);
+            crown.fold(Fx(0), |s, p| s + p.income) * r.income_penalty
+        }
+        None => Fx(0),
+    };
+    base - penalty - crate::data::curve(&r.army_upkeep, w.axes[&r.army])
 }
 
 #[cfg(test)]
@@ -130,6 +167,8 @@ mod tests {
             their_strength: Fx(0),
             war_score: Fx(0),
             started: Tick(0),
+            target: None,
+            battles: vec![],
         });
         // 60 vs 40, rolls in 0.5..=1.5: the score moves by (60a - 40b) * 0.5, within -30..=40.
         let mut scores = vec![];
@@ -144,5 +183,40 @@ mod tests {
         }
         // The stronger side drives the score up to the cap, never past it.
         assert_eq!(scores.iter().max(), Some(&data.war.max_score));
+        // Every clash is on record with what it moved; the score is their sum.
+        let war = w.war.as_ref().unwrap();
+        assert_eq!(war.battles.len(), 50);
+        let sum = war.battles.iter().fold(Fx(0), |s, (_, d)| s + *d);
+        assert_eq!(sum, war.war_score);
+    }
+
+    #[test]
+    fn war_and_a_big_army_cost_income() {
+        let (data, mut w) = setup();
+        let ax = |s: &str| AxisId(s.into());
+        let base = data.economy.yearly_income(&w);
+        let upkeep = |army: i64| crate::data::curve(&data.war.army_upkeep, Fx::from_int(army));
+        assert_eq!(yearly_income(&w, &data), base - upkeep(50));
+        // At war the crown provinces (12 + 7 + 5 + 8 + 6 + 6) bring income_penalty less.
+        w.war = Some(War {
+            enemy: nordmark(),
+            stage: WarStage::Fighting,
+            our_strength: Fx(0),
+            their_strength: Fx(0),
+            war_score: Fx(0),
+            started: Tick(0),
+            target: None,
+            battles: vec![],
+        });
+        let penalty = Fx::from_int(44) * data.war.income_penalty;
+        assert!(penalty > Fx(0));
+        assert_eq!(yearly_income(&w, &data), base - upkeep(50) - penalty);
+        // Upkeep grows faster than the army: twice the army costs more than twice as much.
+        for (a, b) in [(50, 100), (100, 200)] {
+            assert!(upkeep(b) > upkeep(a) * Fx::from_int(2), "{a} -> {b}");
+        }
+        w.axes.insert(ax("army"), Fx::from_int(200));
+        let base = data.economy.yearly_income(&w);
+        assert_eq!(yearly_income(&w, &data), base - upkeep(200) - penalty);
     }
 }

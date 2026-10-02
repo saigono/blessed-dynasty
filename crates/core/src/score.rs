@@ -254,6 +254,7 @@ mod tests {
             years,
             rulers: Vec::new(),
             kin: Vec::new(),
+            axes: Default::default(),
         }
     }
 

@@ -1,10 +1,11 @@
 //! The dynasty after the founder: the same `Game` year by year, choices by `AutoChooser`,
 //! until the dynasty falls or `sim.max_years` pass. The result is a `Chronicle`.
 
-use crate::data::{Data, SuccessionRule};
+use crate::data::{Data, SuccessionRule, TraitRule};
 use crate::fx::Fx;
 use crate::game::{ActionId, Game, PendingEvent, ReignEnd, Step};
 use crate::rng::Rng;
+use crate::rules::add_axis;
 use crate::rules::{Choice, Effect, Event, HeirOp, NewHolder, Predicate, ProvinceField, Target};
 use crate::state::{
     Axes, CauseTag, HeirStatus, Holder, Kin, MarkKey, ProvinceId, Ruler, Sex, Vassal, VassalId,
@@ -323,9 +324,13 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     if ruler.age < d.sim.regency_age {
         w.flags.insert(d.sim.regency_flag.clone());
     }
+    let cheer = coronation(w, d, heir.claim, &ruler);
     let (title, text) = &d.sim.texts.crowned;
     let fill = |s: &String| s.replace("{ruler}", &ruler.name);
-    let told = (fill(title), fill(text));
+    let mut told = (fill(title), fill(text));
+    if let Some(cheer) = cheer {
+        told.1 = format!("{} {cheer}", told.1);
+    }
     c.rulers.push(record(&ruler));
     w.ruler = ruler;
     (g.ended, g.reported) = (None, false);
@@ -337,6 +342,45 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
         c.entries.push(entry(g, told, g.data.sim.notable, vec![]));
     }
     true
+}
+
+/// The axes at a coronation (`Data.coronation`, see `CoronationRules`) for a new ruler of
+/// `claim`. Returns how the chronicle tells the trait that moved an axis most, if it is told.
+fn coronation(w: &mut World, d: &Data, claim: Fx, ruler: &Ruler) -> Option<String> {
+    let c = &d.coronation;
+    for f in &d.factions {
+        let def = d
+            .axes
+            .iter()
+            .find(|a| a.id == f.axis)
+            .expect("checked on load");
+        let back = (def.default - w.axes[&f.axis]) * c.reset;
+        add_axis(w, d, &f.axis, back);
+    }
+    if let Some((a, k)) = &c.legitimacy_from_claim {
+        let toward = (claim - w.axes[a]) * *k;
+        add_axis(w, d, a, toward);
+    }
+    let contested = w.flags.contains(&d.abdication.contested_flag);
+    let law = d.heirs.law(w).map_or(&[][..], |l| &l.coronation);
+    for (a, v) in c.contested.iter().filter(|_| contested).chain(law) {
+        add_axis(w, d, a, *v);
+    }
+    let traits = d.sim.traits.iter().filter(|t| ruler.traits.contains(&t.id));
+    let mut most: Option<(Fx, &TraitRule)> = None;
+    for t in traits {
+        for (a, v) in &t.axes {
+            add_axis(w, d, a, *v);
+        }
+        let shift = t.axes.iter().map(|(_, v)| Fx(v.0.abs())).max();
+        if let Some(shift) = shift.filter(|s| most.is_none_or(|(m, _)| *s > m)) {
+            most = Some((shift, t));
+        }
+    }
+    w.recompute_loyalty(d);
+    let (king, queen) = &most?.1.told;
+    let told = if ruler.sex == Sex::Male { king } else { queen };
+    (!told.is_empty()).then(|| told.clone())
 }
 
 /// `SuccessionRule::Partition`: each son, eldest first, gets the crown province farthest from

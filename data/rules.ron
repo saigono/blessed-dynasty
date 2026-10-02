@@ -230,6 +230,17 @@
         death: [(0, 120), (1, 40), (5, 6), (16, 6), (30, 10), (40, 15), (50, 30), (55, 60), (60, 90), (65, 130), (70, 180), (80, 300)],
     ),
 
+    // Every coronation in the simulation (sim::crown), in this order: each faction axis moves
+    // `reset` of the way back to its default (a new page); the axis of legitimacy_from_claim
+    // moves its share of the way toward the new ruler's claim (0.5: the mean of the two);
+    // a contested succession (abdication.contested_flag) adds `contested`; then the law's
+    // `coronation`, then the `axes` of the ruler's traits (sim.traits).
+    coronation: (
+        reset: 0.3,
+        legitimacy_from_claim: ("legitimacy", 0.5),
+        contested: [("legitimacy", -10), ("loyalty_nobles", -10)],
+    ),
+
     // The dynasty after the founder (sim::run): the same rules year by year, the choices
     // made by sim::AutoChooser, until a fall or `max_years` from tick 0.
     // Falls: no heir, the capital not held by the crown, `usurped_flag`, no crown province.
@@ -259,11 +270,21 @@
         secession_relation: -50,
         // Trait chance of a new ruler in percent: percent + ability * ability_k, plus
         // `studying` or `hostage` by the heir's status.
+        // `axes`: shifts once, at the coronation; `told`: (of a king, of a queen), added to the
+        // coronation entry for the trait with the largest shift.
         traits: [
-            (id: "greedy", percent: 35, ability_k: -0.3, studying: 0, hostage: 10),
-            (id: "cautious", percent: 10, ability_k: 0.3, studying: 10, hostage: 15),
-            (id: "warlike", percent: 30, ability_k: 0, studying: -15, hostage: 10),
-            (id: "pious", percent: 10, ability_k: 0, studying: 35, hostage: -5),
+            (id: "greedy", percent: 35, ability_k: -0.3, studying: 0, hostage: 10,
+                axes: [("loyalty_people", -10)],
+                told: ("Народ ропщет: на троне жадный король.", "Народ ропщет: на троне жадная королева.")),
+            (id: "cautious", percent: 10, ability_k: 0.3, studying: 10, hostage: 15,
+                axes: [("stability", 5)],
+                told: ("Страна спокойна: на троне осторожный король.", "Страна спокойна: на троне осторожная королева.")),
+            (id: "warlike", percent: 30, ability_k: 0, studying: -15, hostage: 10,
+                axes: [("loyalty_nobles", 10)],
+                told: ("Знать ликует: на троне воинственный король.", "Знать ликует: на троне воинственная королева.")),
+            (id: "pious", percent: 10, ability_k: 0, studying: 35, hostage: -5,
+                axes: [("loyalty_church", 10)],
+                told: ("Церковь ликует: на троне набожный король.", "Церковь ликует: на троне набожная королева.")),
         ],
         // AutoChooser: an option scores sum(weight[key] * amount) over its effects, plus a
         // roll in 0..=noise. Keys: axis ids, flag ids (+1 set, -1 cleared; only a change

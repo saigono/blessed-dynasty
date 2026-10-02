@@ -378,3 +378,142 @@ fn the_automaton_changes_the_law_by_its_weights() {
     );
     assert!(e.snapshot.flags.contains("law_salic"));
 }
+
+/// The coronation entry for an heir of `sex` and `claim` under absolute primogeniture with
+/// these axes; no trait rolls unless `data` has some, no births before.
+fn crowned(data: &Data, sex: Sex, claim: i64, axes: &[(&str, i64)]) -> sim::ChronicleEntry {
+    let mut data = data.clone();
+    (data.heirs.birth, data.sim.max_years) = (vec![], 1);
+    let mut g = game(&data, "law_primogeniture", &[(sex, 30, true, 50)]);
+    g.world.heirs[0].claim = Fx::from_int(claim);
+    for (a, v) in axes {
+        g.world.axes.insert(AxisId((*a).into()), Fx::from_int(*v));
+    }
+    let end = ReignEnd {
+        cause: "illness".into(),
+        tick: g.world.tick,
+        world: g.world.clone(),
+    };
+    sim::run(end, &data, Rng::from_seed(1)).entries.remove(0)
+}
+
+/// `data` with only the coronation step under test and no traits.
+fn plain(f: impl FnOnce(&mut bd_core::data::CoronationRules)) -> Data {
+    let mut data = data();
+    data.sim.traits.clear();
+    data.coronation = Default::default();
+    f(&mut data.coronation);
+    data
+}
+
+fn at(e: &sim::ChronicleEntry, a: &str) -> i64 {
+    e.snapshot.axes[&AxisId(a.into())].0 / Fx::SCALE
+}
+
+/// Acceptance: every faction axis moves `reset` of the way back to its default (50).
+#[test]
+fn the_coronation_moves_the_factions_toward_their_defaults() {
+    let data = plain(|c| c.reset = Fx(300));
+    let e = crowned(
+        &data,
+        M,
+        80,
+        &[("loyalty_nobles", 90), ("loyalty_church", 20)],
+    );
+    assert_eq!(
+        (at(&e, "loyalty_nobles"), at(&e, "loyalty_church")),
+        (78, 29)
+    );
+    // Not a faction: stability stays.
+    let e = crowned(&data, M, 80, &[("stability", 90)]);
+    assert_eq!(at(&e, "stability"), 90);
+    // The loyalty axis follows its factions: (78 * 2 + 50 + 50) / 4.
+    let factions = [
+        ("loyalty_nobles", 90),
+        ("loyalty_church", 50),
+        ("loyalty_people", 50),
+    ];
+    let e = crowned(&data, M, 80, &factions);
+    assert_eq!(at(&e, "loyalty"), 64);
+}
+
+/// Acceptance: legitimacy moves its share of the way toward the new ruler's claim.
+#[test]
+fn the_coronation_takes_legitimacy_from_the_claim() {
+    let data = plain(|c| c.legitimacy_from_claim = Some((AxisId("legitimacy".into()), Fx(500))));
+    let e = crowned(&data, M, 80, &[("legitimacy", 40)]);
+    assert_eq!(at(&e, "legitimacy"), 60);
+    let e = crowned(&data, M, 70, &[("legitimacy", 90)]);
+    assert_eq!(at(&e, "legitimacy"), 80);
+}
+
+/// Acceptance: a contested succession (a claim below the law's crisis_claim, 70) costs
+/// legitimacy and the nobles' loyalty.
+#[test]
+fn a_contested_coronation_costs_legitimacy_and_the_nobles() {
+    let ax = |a: &str| AxisId(a.into());
+    let data = plain(|c| {
+        c.contested = vec![
+            (ax("legitimacy"), Fx::from_int(-10)),
+            (ax("loyalty_nobles"), Fx::from_int(-10)),
+        ]
+    });
+    let axes = [("legitimacy", 50), ("loyalty_nobles", 50)];
+    let firm = crowned(&data, M, 80, &axes);
+    let contested = crowned(&data, M, 50, &axes);
+    assert!(contested.snapshot.flags.contains("succession_contested"));
+    assert!(!firm.snapshot.flags.contains("succession_contested"));
+    assert_eq!(
+        (at(&firm, "legitimacy"), at(&firm, "loyalty_nobles")),
+        (50, 50)
+    );
+    assert_eq!(
+        (
+            at(&contested, "legitimacy"),
+            at(&contested, "loyalty_nobles")
+        ),
+        (40, 40)
+    );
+}
+
+const FACTIONS: [(&str, i64); 3] = [
+    ("loyalty_nobles", 50),
+    ("loyalty_church", 50),
+    ("loyalty_people", 50),
+];
+
+/// Acceptance: the traits of the new ruler shift the axes once; the chronicle tells the
+/// largest shift, of a king or of a queen.
+#[test]
+fn the_traits_of_a_new_ruler_shift_the_axes() {
+    let mut data = plain(|_| {});
+    data.sim.traits = self::data().sim.traits;
+    // Pious and warlike for sure, the other two never.
+    for t in &mut data.sim.traits {
+        let sure = t.id == "pious" || t.id == "warlike";
+        (t.percent, t.ability_k, t.studying) =
+            (Fx::from_int(if sure { 100 } else { 0 }), Fx(0), Fx(0));
+    }
+    data.sim
+        .traits
+        .iter_mut()
+        .find(|t| t.id == "pious")
+        .unwrap()
+        .axes[0]
+        .1 = Fx::from_int(15);
+    let e = crowned(&data, M, 80, &FACTIONS);
+    assert_eq!(
+        (at(&e, "loyalty_church"), at(&e, "loyalty_nobles")),
+        (65, 60)
+    );
+    assert_eq!(at(&e, "loyalty_people"), 50);
+    assert_eq!(
+        e.text,
+        "Престол наследует p0. Церковь ликует: на троне набожный король."
+    );
+    let e = crowned(&data, F, 80, &FACTIONS);
+    assert_eq!(
+        e.text,
+        "Престол наследует p0. Церковь ликует: на троне набожная королева."
+    );
+}

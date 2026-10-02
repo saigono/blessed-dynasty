@@ -36,6 +36,8 @@ pub struct Data {
     pub grant: GrantRules,
     pub war: WarRules,
     pub sim: SimRules,
+    #[serde(default)]
+    pub coronation: CoronationRules,
     /// From `add_events`, not from `rules.ron`.
     #[serde(default)]
     pub events: Vec<Event>,
@@ -628,6 +630,28 @@ pub struct TraitRule {
     pub ability_k: Fx,
     pub studying: Fx,
     pub hostage: Fx,
+    /// Axis shifts once, at the coronation of a ruler with the trait.
+    #[serde(default)]
+    pub axes: Vec<(AxisId, Fx)>,
+    /// How the chronicle tells the trait at the coronation, (of a king, of a queen); empty:
+    /// not told.
+    #[serde(default)]
+    pub told: (String, String),
+}
+
+/// What every coronation in the simulation does to the axes, in this order: each faction
+/// axis moves `reset` of the way toward its default (a new page), the axis of
+/// `legitimacy_from_claim` moves its share of the way toward the new ruler's claim, a
+/// contested succession (`abdication.contested_flag`) adds `contested`, then the law's
+/// `coronation`, then the `axes` of the ruler's traits.
+#[derive(Debug, Clone, PartialEq, Deserialize, Default)]
+pub struct CoronationRules {
+    #[serde(default)]
+    pub reset: Fx,
+    #[serde(default)]
+    pub legitimacy_from_claim: Option<(AxisId, Fx)>,
+    #[serde(default)]
+    pub contested: Vec<(AxisId, Fx)>,
 }
 
 /// Weights of `sim::AutoChooser`: `base` plus `traits[t]` of every trait of the ruler.
@@ -711,6 +735,9 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
         .laws
         .iter()
         .flat_map(|l| &l.coronation)
+        .chain(data.sim.traits.iter().flat_map(|t| &t.axes))
+        .chain(&data.coronation.contested)
+        .chain(&data.coronation.legitimacy_from_claim)
         .map(|(a, _)| a);
     for a in [
         &data.action_slots.axis,

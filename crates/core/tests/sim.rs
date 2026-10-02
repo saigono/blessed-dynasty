@@ -123,14 +123,15 @@ fn golden_seed_42_script_a() {
     // Stage 15: gentler heir deaths, Конрад reigns with children born before; less money;
     // Вейр, grown by the three grants, revolts and takes the land bit by bit.
     // Stage 16: sons and daughters; Конрад dies before his father, his brother Генрих reigns.
-    assert_eq!((c.years, &c.fall), (46, &FallReason::Usurped));
+    // The coronation resets the factions and tells his trait; he reigns 50 years.
+    assert_eq!((c.years, &c.fall), (96, &FallReason::Usurped));
     let hint = |h: &'static str| Some(h);
     assert_eq!(
         texts(&c)[..4],
         [
             (
                 "Новое правление",
-                "Престол наследует Генрих.",
+                "Престол наследует Генрих. Знать ликует: на троне воинственный король.",
                 hint("Наследник основателя учился власти в королевском совете."),
             ),
             (
@@ -541,6 +542,8 @@ fn a_grown_king_takes_the_vows_with_a_loyal_church() {
     let mut data = only(&["monastery_late"]);
     data.sim_events[0].weight = 1_000_000;
     data.sim.max_years = 3;
+    // The church as given, not half-way back to its default after the coronation.
+    data.coronation = Default::default();
     let c = vows(&data, 30, 80);
     assert_eq!(c.rulers[1].cause.as_deref(), Some("monastery"));
     assert_eq!(vows(&data, 30, 60).rulers.len(), 2);

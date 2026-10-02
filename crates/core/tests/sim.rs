@@ -337,6 +337,68 @@ fn a_child_reigns_under_regency_and_a_weak_claim_is_contested() {
     assert!(!w.flags.contains("regency") && !w.flags.contains("succession_contested"));
 }
 
+/// Stage 12: h0 is crowned; his brother h1 becomes the collateral line, and the child born
+/// to h0 a year later stands before him and takes the eldest's claim target.
+#[test]
+fn the_new_rulers_child_goes_before_his_brother() {
+    let mut data = content();
+    quiet(&mut data);
+    yearly(&mut data, "");
+    data.heirs.birth = vec![(0, Fx::from_int(100))];
+    data.sim.max_years = 4;
+    let g = heirs(
+        &data,
+        &[(30, 80, HeirStatus::Home), (28, 75, HeirStatus::Home)],
+    );
+    let c = sim::run(end_now(&g), &data, Rng::from_seed(1));
+    let line = |i: usize| {
+        let w = &c.entries[i].snapshot;
+        (w.heirs.iter())
+            .map(|h| (h.name.clone(), h.claim))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(line(0), [("h1".into(), Fx::from_int(75))]);
+    let later = line(2);
+    let (child, brother) = (&later[0], later.last().unwrap());
+    assert_eq!(brother.0, "h1");
+    assert!(
+        child.0 != "h1" && child.1 > Fx::from_int(50),
+        "{:?}",
+        line(2)
+    );
+    assert!(brother.1 < Fx::from_int(75), "{:?}", line(2));
+}
+
+/// Stage 12: the first in line dies of age risk (heirs.death): an entry tells it.
+#[test]
+fn the_death_of_the_first_heir_is_told() {
+    let mut data = content();
+    quiet(&mut data);
+    data.heirs.death = vec![(0, Fx(0)), (12, Fx::from_int(1000))];
+    data.sim.max_years = 5;
+    let g = heirs(
+        &data,
+        &[(30, 80, HeirStatus::Home), (10, 75, HeirStatus::Home)],
+    );
+    let c = sim::run(end_now(&g), &data, Rng::from_seed(1));
+    let told: Vec<_> = (c.entries.iter())
+        .map(|e| (e.tick.0 - g.world.tick.0, e.title.as_str(), e.text.as_str()))
+        .collect();
+    assert_eq!(
+        told,
+        [
+            (0, "Новое правление", "Престол наследует h0."),
+            (
+                2,
+                "Смерть наследника",
+                "Не стало первого в очереди на престол: h1."
+            ),
+        ]
+    );
+    assert_eq!(c.entries[1].importance, data.sim.notable);
+    assert!(c.entries[1].snapshot.heirs.is_empty());
+}
+
 #[test]
 fn falls() {
     let mut data = content();
@@ -422,7 +484,10 @@ fn decisions_mark_what_they_touch_and_marks_fade() {
     let count = |w: &bd_core::state::World| w.marks.values().flatten().count();
     // Any long enough dynasty: heirs die and child rulers fall, so not every seed has one.
     let long = (0..20).map(|seed| sim::run(end_now(&g), &data, Rng::from_seed(seed)));
-    let c = long.into_iter().find(|c| c.entries.len() > 10).expect("a long dynasty");
+    let c = long
+        .into_iter()
+        .find(|c| c.entries.len() > 10)
+        .expect("a long dynasty");
     let counts: Vec<usize> = c.entries.iter().map(|e| count(&e.snapshot)).collect();
     assert!(counts[0] > 0 && counts[0] <= count(&g.world));
     assert!(counts.windows(2).all(|w| w[1] <= w[0]), "{counts:?}");

@@ -337,6 +337,21 @@ fn births(married: bool) -> usize {
     g.world.heirs.len() - 1
 }
 
+/// Stage 12: Конрад (6) under a yearly heir death risk of 0 per mille until 8, 1000 from 8.
+#[test]
+fn heirs_die_by_age() {
+    let mut data = bare();
+    data.heirs.birth = vec![];
+    data.heirs.death = vec![(0, Fx(0)), (8, Fx::from_int(1000))];
+    let mut g = game(data, 1);
+    let mut alive = || {
+        g.wait().unwrap();
+        g.world.heirs.len()
+    };
+    assert_eq!(alive(), 1); // 7: risk 0
+    assert_eq!(alive(), 0); // 8: risk 1000
+}
+
 #[test]
 fn births_need_marriage_and_age() {
     assert_eq!(births(true), 5);

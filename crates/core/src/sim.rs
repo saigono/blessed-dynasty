@@ -132,7 +132,10 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
             // Within a tick only the yearly age risk takes an heir; events do on resolve.
             if let Some(h) = first.filter(|h| g.world.heir_index(h.id).is_none()) {
                 let (title, text) = &s.texts.heir_died;
-                let told = (title.replace("{heir}", &h.name), text.replace("{heir}", &h.name));
+                let told = (
+                    title.replace("{heir}", &h.name),
+                    text.replace("{heir}", &h.name),
+                );
                 let causes = causes(&g.world, [MarkKey::Heir(h.id)].into());
                 c.entries.push(entry(&g, told, s.notable, causes));
             }

@@ -127,6 +127,42 @@ mod tests {
     }
 
     #[test]
+    fn strength_recovers_toward_the_start() {
+        let (mut data, _) = setup();
+        let preset = Preset::load_with_map(
+            include_str!("../../../data/presets/default.ron"),
+            include_str!("../../../data/maps/default.ron"),
+            &data,
+        )
+        .unwrap();
+        // Game::new takes the start strengths from the preset.
+        let g = crate::game::Game::new(data.clone(), &preset, 1);
+        assert_eq!(g.data.neighbour_ai.start[&nordmark()], Fx::from_int(60));
+        data.neighbour_ai.start = g.data.neighbour_ai.start;
+        data.neighbour_ai.recover = Fx::from_int(5);
+        let after = |data: &Data, strength: i64| {
+            let (_, mut w) = setup();
+            w.neighbours.get_mut(&nordmark()).unwrap().strength = Fx::from_int(strength);
+            let e = neighbour_tick(&mut w, data, &mut Rng::from_seed(7), nordmark());
+            (w, e)
+        };
+        let strength = |s| after(&data, s).0.neighbours[&nordmark()].strength;
+        let i = Fx::from_int;
+        assert_eq!(strength(50), i(55));
+        assert_eq!(strength(58), i(60)); // not above the start
+        assert_eq!(strength(70), i(65));
+        assert_eq!(strength(62), i(60)); // not below it
+        assert_eq!(strength(60), i(60));
+        // recover 0: the same world and event as without any start strength.
+        data.neighbour_ai.recover = Fx(0);
+        let mut none = data.clone();
+        none.neighbour_ai.start.clear();
+        for s in [20, 60, 100] {
+            assert_eq!(after(&data, s), after(&none, s), "{s}");
+        }
+    }
+
+    #[test]
     fn stance_moves_relation() {
         let relation = |r, s| run(r, s, 1).0.neighbours[&nordmark()].relation;
         // The stance's change, then the drift toward 0.

@@ -330,8 +330,8 @@ fn law_actions_switch_the_flag() {
         .into_iter()
         .map(|(id, _)| id)
         .collect();
-    assert!(!ids.contains(&"change_succession_law_primogeniture".to_string()));
-    g.start_action("change_succession_law_male", None).unwrap();
+    assert!(!ids.contains(&"enact_law_primogeniture".to_string()));
+    g.start_action("enact_law_male", None).unwrap();
     g.wait().unwrap();
     g.wait().unwrap();
     let laws: Vec<_> = g

@@ -90,14 +90,14 @@
         (id: "e1", from: "serfdom", to: "strata", k: 0.5, rest: 30, delay: 10),
         // Flat above 85.
         (id: "e2", from: "strata", to: "mobility", rest: 40, delay: 5, curve: [(0, 30), (40, 0), (85, -33.75)]),
-        (id: "e3", from: "mobility", to: "strata", k: -0.8, rest: 40, delay: 10),
+        (id: "e3", from: "mobility", to: "strata", k: -0.6, rest: 40, delay: 10),
         // 0.8 above nobles 50, nothing below.
         (id: "e4", from: "loyalty_nobles", to: "serfdom", rest: 50, delay: 5, curve: [(50, 0), (100, 40)]),
         (id: "e5", from: "serfdom", to: "loyalty_nobles", k: 0.4, rest: 30),
         // -0.6 up to 60, -1.0 above, flat above 85.
         (id: "e6", from: "strata", to: "loyalty_people", rest: 40, curve: [(0, 24), (40, 0), (60, -12), (85, -37)]),
-        // Off until the law «Городские вольности» (stage 19): k 0.4.
-        (id: "e7", from: "strata", to: "liberties", k: 0, rest: 50, delay: 10),
+        // Only under the law «Городские вольности» (`off`: counts while a law names it).
+        (id: "e7", from: "strata", to: "liberties", k: 0.4, rest: 50, delay: 10, off: true),
         (id: "e8", from: "liberties", to: "mobility", k: 0.5, rest: 15, delay: 10),
         (id: "e9", from: "liberties", to: "trade", k: 0.6, rest: 15, delay: 5),
         (id: "e10", from: "trade", to: "grain", k: 0.4, rest: 30),
@@ -122,6 +122,113 @@
         ("С1 Хлеб и цена", ["e11", "e10"]),
         ("С2 Вольный город", ["e7", "e8", "e3"]),
     ],
+
+    // Laws-institutions (docs/design/hidden-state.html, section 5). A law is in force while
+    // its flag `id` is set and outlives the ruler; one law of a `group` at a time. `cost` and
+    // `years` to bring it in, `requires` to start; `resistance`: anchor shifts while it is
+    // brought in (a faction against it); in force, `anchors`: anchor shifts, `edges`:
+    // multipliers of edges of `influences`, `treasury`: added to the yearly income; done,
+    // `on_complete` once; `keep`: no repeal, only another law of its group replaces it. The
+    // succession laws are those of `heirs.laws` by their flag, named and described there.
+    // Every law gets the actions to enact it and to repeal it (`enact`, `repeal`: their
+    // names), both for `min_crown_power` of the capital; a repeal costs `repeal_share` of the
+    // price, the simulation's automaton pays it all.
+    laws: (
+        enact: "Ввести закон «{law}»",
+        repeal: "Отменить закон «{law}»",
+        repeal_share: 0.5,
+        min_crown_power: 40,
+        // A faction above 70 presses the automaton for the laws that raise its anchor and
+        // against those that lower it or that it resists, one below 30 only against (the
+        // weight `pressure` of sim.auto, per point); only so pressed does it repeal a law, at
+        // the full price.
+        pressure: (30, 70),
+        list: [
+            (id: "law_primogeniture", group: "Наследование", keep: true, cost: 60, years: 3,
+                requires: NotFlag("succession_contested"),
+                resistance: [("loyalty_nobles", -10)],
+                on_complete: [Axis("loyalty_church", 3), Axis("loyalty_nobles", -3)]),
+            (id: "law_male", group: "Наследование", keep: true, cost: 45, years: 2,
+                requires: NotFlag("succession_contested"),
+                resistance: [("loyalty_nobles", -5)],
+                on_complete: [Axis("loyalty_church", 2)]),
+            (id: "law_salic", group: "Наследование", keep: true, cost: 45, years: 2,
+                requires: NotFlag("succession_contested"),
+                resistance: [("loyalty_church", -10)],
+                on_complete: [Axis("loyalty_nobles", 3), Axis("loyalty_church", -2)]),
+            // A grown man on the throne pleases the barons.
+            (id: "law_seniority", group: "Наследование", keep: true, cost: 60, years: 3,
+                requires: NotFlag("succession_contested"),
+                resistance: [("loyalty_church", -10)],
+                anchors: [("loyalty_nobles", 3)],
+                on_complete: [Axis("loyalty_nobles", 3), Axis("stability", -3)]),
+            // The council of barons pulls toward the corvée.
+            (id: "law_elective", group: "Наследование", keep: true, cost: 60, years: 3,
+                requires: NotFlag("succession_contested"),
+                resistance: [("loyalty_church", -10)],
+                anchors: [("loyalty_nobles", 5)], edges: [("e4", 1.2)],
+                on_complete: [Axis("loyalty_nobles", 5), Axis("legitimacy", -3)]),
+            // More lords, more corvée: with serfdom the gain of П2 nears 0.8.
+            (id: "law_partition", group: "Наследование", keep: true, cost: 45, years: 2,
+                requires: NotFlag("succession_contested"),
+                resistance: [("loyalty_church", -10)],
+                anchors: [("loyalty_nobles", 8)], edges: [("e4", 1.25), ("e1", 1.2)],
+                on_complete: [Axis("loyalty_nobles", 5), Axis("stability", -3)]),
+            // The ten laws of section 5. Peasants: serfdom or free peasants (custom: neither).
+            (id: "law_serfdom", group: "Крестьяне", cost: 60, years: 3,
+                name: "Крепостное право",
+                description: "Крестьян прикрепляют к земле господина. Сразу знать довольна, барщина даёт казне 3 в год, ополчение пополняет армию. Закон держит крестьян в крепости, а знать — у барщины: довольные бароны требуют новых повинностей, гнёт растёт и запирает простолюдина в его сословии. Через два-три поколения народ ожесточается, начинаются мужицкие войны.",
+                resistance: [("loyalty_people", -10)],
+                anchors: [("serfdom", 30), ("loyalty_nobles", 8)], edges: [("e4", 1.5)],
+                treasury: 3, on_complete: [Axis("army", 10)]),
+            (id: "law_free_peasants", group: "Крестьяне", cost: 90, years: 4,
+                name: "Вольные крестьяне",
+                description: "Барщину отменяют, крестьянин волен уйти с земли. Знать теряет даровой труд и ропщет, вассалы смелеют. Закон держит крепость низкой и глушит союз знати и барщины; сословия расслаиваются меньше, люди выбиваются в цеха и писцы, торговля оживает.",
+                resistance: [("loyalty_nobles", -10)],
+                anchors: [("serfdom", -20), ("loyalty_nobles", -8), ("trade", 5)], edges: [("e4", 0)]),
+            // Faith: one faith or tolerance (custom: neither).
+            (id: "law_one_faith", group: "Вера", cost: 45, years: 2,
+                name: "Единоверие",
+                description: "Одна вера на всё королевство, инакомыслие под запретом. Церковь довольна, ересь отступает. Закон держит единство веры и отодвигает раскол, но если ересь всё же пустит корни, она бьёт по стабильности в полтора раза сильнее.",
+                resistance: [("loyalty_people", -5)],
+                anchors: [("faith", 10), ("loyalty_church", 5)], edges: [("st_heresy", 1.5)]),
+            (id: "law_tolerance", group: "Вера", cost: 45, years: 2,
+                name: "Терпимость",
+                description: "Иноверцев и сектантов не преследуют. Церковь недовольна и долго помнит обиду, зато купцы едут охотнее. Ересь растёт, но почти не колеблет стабильность: раскола не будет.",
+                resistance: [("loyalty_church", -10)],
+                anchors: [("loyalty_church", -10), ("trade", 5)], edges: [("st_heresy", 0.3)]),
+            (id: "law_tithe", cost: 30, years: 1,
+                name: "Десятина",
+                description: "Десятая доля урожая идёт церкви. Церковь довольна, вера крепче, казна теряет 2 в год. Закон держит церковь сытой, но медленно подпитывает гнёт: тяглецу платить и господину, и клиру.",
+                resistance: [("loyalty_people", -10)],
+                anchors: [("loyalty_church", 10), ("faith", 5), ("strata", 5)], treasury: -2),
+            (id: "law_schools", cost: 60, years: 3,
+                name: "Монастырские школы",
+                description: "При монастырях учат грамоте детей всех сословий. Дорого, 6 в год, и при правлении основателя отдачи не видно. Через поколения грамотных становится много: они идут в писцы и укрепляют канцелярию, сословные стены тоньше, а книжность под присмотром монахов не рождает ереси.",
+                anchors: [("literacy", 20)], edges: [("e14", 0.3)], treasury: -6),
+            (id: "law_charters", cost: 60, years: 2,
+                name: "Городские вольности",
+                description: "Города получают хартии, свой суд и цеха. Торговля и казна растут за десять-двадцать лет. Вольный город принимает беглых и гасит гнёт деревни, но городская грамотность без школ через пару веков готовит ересь книжников. Знать теряет власть над городами.",
+                resistance: [("loyalty_nobles", -10)],
+                anchors: [("liberties", 35), ("literacy", 15), ("loyalty_nobles", -5)], edges: [("e7", 1)]),
+            (id: "law_code", cost: 120, years: 4, requires: AxisAbove("bureaucracy", 39.999),
+                name: "Свод законов",
+                description: "Единый королевский суд вместо вотчинного. Нужна бюрократия от 40. Дорого и долго, знать ворчит: она теряет суд над своими людьми. Закон держит гнёт в узде: расслоение не душит подвижность и меньше бьёт по народу. Легитимность растёт сразу.",
+                resistance: [("loyalty_nobles", -10)],
+                anchors: [("loyalty_nobles", -3)], edges: [("e2", 0.7), ("e6", 0.7)],
+                on_complete: [Axis("legitimacy", 5)]),
+            (id: "law_granaries", cost: 90, years: 3,
+                name: "Королевские житницы",
+                description: "Корона держит запас хлеба на чёрный день, 4 в год. При хорошем урожае незаметно. Закон держит амбары полными: великий голод редок, народ сыт и спокоен. Купцам дорогого хлеба не видать, торговля ниже.",
+                resistance: [("trade", -5)],
+                anchors: [("grain", 15), ("trade", -5)], treasury: -4),
+            (id: "law_fairs", cost: 45, years: 2,
+                name: "Ярмарочное право",
+                description: "Ярмарки свободны от мыта баронов. Торговля растёт, казна получает 2-3 в год. Купцы богатеют, города крепнут, но богатство копится у немногих: расслоение растёт и слабо подогревает гнёт. Знать теряет мыто.",
+                resistance: [("loyalty_nobles", -10)],
+                anchors: [("trade", 15), ("liberties", 5), ("strata", 5)]),
+        ],
+    ),
 
     // Per year: faction axes move by `step` toward their default, province loyalty toward
     // `province_loyalty`, crown power modifiers from effects toward 0.
@@ -197,7 +304,8 @@
     // Direct rule has a limit (yearly): the crown holds at most capital crown power *
     // per_power + sum(axis * k of per_axis) provinces itself, the capital included. Beyond
     // that, every year: its weakest provinces (by crown power) over the limit lose `loyalty`,
-    // and each of them costs the `penalty` axes and `income` of the yearly income. The land
+    // and each of them costs the `penalty` axes and `income` of the yearly income and, while
+    // over, lowers the anchors of the `pressure` axes. The land
     // stays with the crown: only the player gives it away (grant_province), or the automaton,
     // whose weight `overreach` makes a grant worth more while the crown is over its limit.
     // Stage 15 (docs/calibration.md): the capital (crown power 90) and bureaucracy 20 give
@@ -207,8 +315,10 @@
         per_power: 0.07,
         per_axis: [("bureaucracy", 0.1)],
         loyalty: 3,
-        penalty: [("stability", -1)],
         income: 2,
+        // While over the room, per province over: the anchor of stability lower (stage 19; the
+        // yearly `penalty` of stage 15 piled up in the shocks and held them at -100).
+        pressure: [("stability", -2)],
     ),
 
     // Effect Grant: the nearest vassal within `max_distance` border crossings gets the
@@ -329,7 +439,7 @@
     ),
 
     // Every coronation in the simulation (sim::crown), in this order: each faction axis moves
-    // `reset` of the way back to its default (a new page); the axis of legitimacy_from_claim
+    // `reset` of the way back to its anchor under the laws in force (a new page); the axis of legitimacy_from_claim
     // moves its share of the way toward the new ruler's claim (0.5: the mean of the two);
     // a contested succession (abdication.contested_flag) adds `contested`; then the law's
     // `coronation`, then the `axes` of the ruler's traits (sim.traits).
@@ -412,12 +522,15 @@
                 // to usurpation (stage 15, docs/calibration.md).
                 "overreach": 0,
                 "usurped": -12, "plot": -20, "plague": -20,
+                // Laws change rarely: `law` for any change, then per point of a law's anchor
+                // shift or resistance on a pressing faction (laws.pressure).
+                "law": -10, "pressure": 2,
             },
             traits: {
                 "greedy": {"treasury": 0.3, "income": 2, "province_income": 2},
-                "cautious": {"war": -20, "army": 0.3, "stability": 1, "health": 1, "law_primogeniture": 8},
-                "warlike": {"war": 25, "army": 0.4, "prestige": 0.7, "province": 20, "law_male": 5},
-                "pious": {"loyalty_church": 1.2, "law_salic": 10},
+                "cautious": {"war": -20, "army": 0.3, "stability": 1, "health": 1, "law_primogeniture": 18},
+                "warlike": {"war": 25, "army": 0.4, "prestige": 0.7, "province": 20, "law_male": 15},
+                "pious": {"loyalty_church": 1.2, "law_salic": 20},
             },
         ),
         // (title, text) of the entries the simulation makes itself. Rulers of either sex:
@@ -430,6 +543,9 @@
             heir_died: ("Смерть наследника", "Не стало первого в очереди на престол: {heir}."),
             // The law in force changed (an action done or a choice); {law} is its name.
             law_changed: ("Новый закон о престоле", "Отныне престол наследуют по закону «{law}»."),
+            // Any other law of `laws` brought in, or repealed with none of its group instead.
+            law_enacted: ("Новый закон", "Введён закон «{law}»."),
+            law_repealed: ("Отмена закона", "Отменён закон «{law}»."),
             partition: ("Земли поделены между братьями", "По закону о разделе младшие сыновья получили уделы: {lands}."),
             // What ended a reign (a RulerDies cause or the abdication event id) and the dynasty,
             // as shown to the player.

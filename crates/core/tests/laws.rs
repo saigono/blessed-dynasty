@@ -304,7 +304,8 @@ fn laws(g: &Game) -> Vec<&String> {
 }
 
 /// Acceptance: a change of law costs its price at the start, takes its years with the
-/// resistance every year, sets the new flag only at the end and is closed during a dispute.
+/// resistance (stage 19: the church's anchor 10 lower), sets the new flag only at the end and
+/// is closed during a dispute.
 #[test]
 fn changing_the_law_costs_money_and_years() {
     let data = data();
@@ -315,29 +316,33 @@ fn changing_the_law_costs_money_and_years() {
             .insert(AxisId("treasury".into()), Fx::from_int(500));
         g
     };
-    let (mut g, mut idle) = (new(), new());
-    let id = "change_succession_law_salic";
+    let mut g = new();
+    let id = "enact_law_salic";
     let a = data.actions.iter().find(|a| a.id == id).unwrap();
     assert_eq!((a.cost, a.duration_years.0), (Fx::from_int(45), 2));
+    let church = |g: &Game| {
+        let def = g.data.axes.iter().find(|a| a.id.0 == "loyalty_church");
+        bd_core::graph::anchor(&g.data, &g.world, def.unwrap())
+    };
+    assert_eq!(church(&g), Fx::from_int(50));
     g.start_action(id, None).unwrap();
     assert_eq!(axis(&g, "treasury"), Fx::from_int(500 - 45));
+    assert_eq!(church(&g), Fx::from_int(40));
     g.wait().unwrap();
-    idle.wait().unwrap();
     assert_eq!(laws(&g), ["law_primogeniture"]);
-    // The church resists: -2 a year against the same year without the change.
-    let church = |g: &Game| axis(g, "loyalty_church");
-    assert_eq!(church(&g), church(&idle) - Fx::from_int(2));
     g.wait().unwrap();
     assert_eq!(laws(&g), ["law_salic"]);
+    assert_eq!(church(&g), Fx::from_int(50));
     // Under a contested succession no change is offered.
     let mut g = new();
     g.world.flags.insert("succession_contested".into());
     let offered = g.available_actions().into_iter();
-    assert!(
-        !offered
-            .map(|(id, _)| id)
-            .any(|id| id.starts_with("change_succession_law"))
-    );
+    assert!(!offered.map(|(id, _)| id).any(|id| {
+        id.starts_with("enact_law_")
+            && data
+                .law(&id["enact_".len()..])
+                .is_some_and(|l| l.group == "Наследование")
+    }));
 }
 
 /// The automaton changes the law by its weights (`law_*` keys: the new law's weight less the
@@ -354,7 +359,7 @@ fn the_automaton_changes_the_law_by_its_weights() {
         noise: Fx(0),
     };
     let picked = auto.action(&mut g).map(|(id, _)| id);
-    assert_eq!(picked.as_deref(), Some("change_succession_law_salic"));
+    assert_eq!(picked.as_deref(), Some("enact_law_salic"));
     // Leaving a law it holds dearer is worth nothing to it.
     auto.weights
         .insert("law_primogeniture".into(), Fx::from_int(200));

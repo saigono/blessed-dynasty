@@ -1,15 +1,15 @@
 //! The dynasty after the founder: the same `Game` year by year, choices by `AutoChooser`,
 //! until the dynasty falls or `sim.max_years` pass. The result is a `Chronicle`.
 
-use crate::data::{Data, SuccessionRule, TraitRule};
+use crate::data::{Data, LawDef, SuccessionRule, TraitRule};
 use crate::fx::Fx;
 use crate::game::{ActionId, Game, PendingEvent, ReignEnd, Step};
 use crate::rng::Rng;
 use crate::rules::add_axis;
 use crate::rules::{Choice, Effect, Event, HeirOp, NewHolder, Predicate, ProvinceField, Target};
 use crate::state::{
-    Axes, CauseTag, HeirStatus, Holder, Kin, MarkKey, NeighbourId, ProvinceId, Ruler, Sex, Vassal,
-    VassalId, World,
+    Axes, AxisId, CauseTag, HeirStatus, Holder, Kin, MarkKey, NeighbourId, ProvinceId, Ruler, Sex,
+    Vassal, VassalId, World,
 };
 use crate::time::Tick;
 use crate::war::WarStage;
@@ -172,6 +172,9 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
                 .collect();
             let first = successor(&g.world, &g.data).map(|i| g.world.heirs[i].clone());
             let law = g.data.heirs.law(&g.world).map(|l| l.flag.clone());
+            let laws: Vec<String> = (g.data.laws_in_force(&g.world))
+                .map(|l| l.id.clone())
+                .collect();
             let step = g.wait().expect("the reign goes on");
             let w = &g.world;
             if !g.data.influences.is_empty() && w.tick.0.is_multiple_of(tpy) {
@@ -230,6 +233,7 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
             }
             province_entries(&g, &holders, &mut c);
             law_entry(&g, law, &mut c);
+            laws_entry(&g, &laws, &mut c);
         }
     };
     let w = &g.world;
@@ -421,7 +425,7 @@ fn coronation(w: &mut World, d: &Data, claim: Fx, ruler: &Ruler) -> Option<Strin
             .iter()
             .find(|a| a.id == f.axis)
             .expect("checked on load");
-        let back = (def.default - w.axes[&f.axis]) * c.reset;
+        let back = (crate::graph::anchor(d, w, def) - w.axes[&f.axis]) * c.reset;
         add_axis(w, d, &f.axis, back);
     }
     if let Some((a, k)) = &c.legitimacy_from_claim {
@@ -587,6 +591,24 @@ fn law_entry(g: &Game, was: Option<String>, c: &mut Chronicle) {
     c.entries.push(entry(g, told, g.data.sim.notable, vec![]));
 }
 
+/// An entry for every law other than of succession that came into force since `was` (the
+/// laws then in force), and for every one repealed with none of its group in its place.
+fn laws_entry(g: &Game, was: &[String], c: &mut Chronicle) {
+    let (d, t) = (&g.data, &g.data.sim.texts);
+    let now: Vec<&LawDef> = d.laws_in_force(&g.world).collect();
+    let succession = |l: &LawDef| d.heirs.laws.iter().any(|h| h.flag == l.id);
+    let new = (now.iter()).filter(|l| !was.contains(&l.id) && !succession(l));
+    let new = new.map(|l| (&t.law_enacted, *l));
+    let gone = (was.iter().filter_map(|id| d.law(id))).filter(|l| {
+        !now.iter()
+            .any(|n| n.id == l.id || !l.group.is_empty() && n.group == l.group)
+    });
+    for ((title, text), l) in new.chain(gone.map(|l| (&t.law_repealed, l))) {
+        let told = (title.clone(), text.replace("{law}", &l.name));
+        c.entries.push(entry(g, told, d.sim.notable, vec![]));
+    }
+}
+
 fn entry(
     g: &Game,
     (title, text): (String, String),
@@ -677,6 +699,40 @@ fn predicate_keys(p: &Predicate, w: &World, keys: &mut BTreeSet<MarkKey>) {
     }
 }
 
+/// The laws a change brings in (+1) and ends (-1): an enacted law and the laws of its group
+/// in force, a repealed one; nothing for a law already so.
+fn law_changes<'a>(d: &'a Data, w: &'a World, id: &str, enact: bool) -> Vec<(&'a LawDef, Fx)> {
+    let Some(l) = d.law(id).filter(|_| enact != w.flags.contains(id)) else {
+        return vec![];
+    };
+    let one = Fx::from_int(1);
+    let mates = (d.laws.list.iter())
+        .filter(|o| !l.group.is_empty() && o.group == l.group && w.flags.contains(&o.id));
+    match enact {
+        true => std::iter::once((l, one))
+            .chain(mates.map(|o| (o, Fx(0) - one)))
+            .collect(),
+        false => vec![(l, Fx(0) - one)],
+    }
+}
+
+/// What the pressing factions (`Laws.pressure`) make of a law in force: the sum of its
+/// anchor shifts and resistance on their axes, of a strong faction (above the band) all of
+/// them, of a weak one (below) only those against it; below 0 they want it gone. None on a
+/// law with no repeal (`keep`): succession is not a matter for the factions.
+fn pressure(l: &LawDef, w: &World, d: &Data) -> Fx {
+    let Some((low, high)) = d.laws.pressure.filter(|_| !l.keep) else {
+        return Fx(0);
+    };
+    let faction = |a: &AxisId| d.factions.iter().any(|f| f.axis == *a);
+    let press = |(a, v): &(AxisId, Fx)| match w.axes[a] {
+        x if !faction(a) || (low..=high).contains(&x) => Fx(0),
+        x if x < low => (*v).min(Fx(0)),
+        _ => *v,
+    };
+    (l.anchors.iter().chain(&l.resistance)).fold(Fx(0), |s, p| s + press(p))
+}
+
 /// Chooses for the simulated rulers. An option scores `sum(weights[key] * amount)` over its
 /// effects (see `worth`) plus a roll in `0..=noise`; the best wins, the first on a tie.
 #[derive(Clone, Debug, PartialEq)]
@@ -732,10 +788,18 @@ impl AutoChooser {
             if !g.data.action_slots.free(&g.world, &g.data.actions, a) {
                 continue;
             }
-            let years = Fx::from_int(a.duration_years.0.max(1) as i64);
             let (w, d) = (&g.world, &g.data);
+            // A repeal only under pressure, and at the full price (`Data::auto_cost`).
+            let cost = d.auto_cost(a);
+            let pressed = |id: &String| d.law(id).is_some_and(|l| pressure(l, w, d) < Fx(0));
+            match a.on_complete.first() {
+                Some(Effect::RepealLaw(id)) if !pressed(id) => continue,
+                _ if cost > w.axes[&d.economy.treasury] => continue,
+                _ => {}
+            }
+            let years = Fx::from_int(a.duration_years.0.max(1) as i64);
             let score = |nb| {
-                self.worth(&a.on_complete, w, d, nb) - treasury * a.cost
+                self.worth(&a.on_complete, w, d, nb) - treasury * cost
                     + self.worth(&a.yearly, w, d, None) * years
             };
             let first = score(None);
@@ -765,6 +829,17 @@ impl AutoChooser {
         best.map_or(0, |(i, _)| i)
     }
 
+    /// A law in force: its own weight (by its id), its anchor shifts by the weights of their
+    /// axes, its yearly treasury by `income`, and `pressure` by `pressure`.
+    fn law_worth(&self, l: &LawDef, w: &World, d: &Data) -> Fx {
+        let anchors = l.anchors.iter();
+        let anchors = anchors.fold(Fx(0), |s, (a, v)| s + self.weight(&a.0) * *v);
+        self.weight(&l.id)
+            + anchors
+            + self.weight("income") * l.treasury
+            + self.weight("pressure") * pressure(l, w, d)
+    }
+
     fn weight(&self, key: &str) -> Fx {
         self.weights.get(key).copied().unwrap_or_default()
     }
@@ -776,7 +851,8 @@ impl AutoChooser {
     /// `abdicate` (+1 each), `overreach` (+1 for a grant while the crown holds more than its
     /// room, `crown_capacity`), `province` (+1 gained, -1 given away), `heir` (+1 born, -1 lost),
     /// `heir_ability`, `heir_claim` (by the delta), `army_upkeep` (by the change in the yearly
-    /// upkeep a change of the army brings). A chance weighs both branches by its odds.
+    /// upkeep a change of the army brings), `law` (+1 for a change of the laws in force, then
+    /// each law brought in or ended by `law_worth`, a law brought in also by its resistance). A chance weighs both branches by its odds.
     fn worth(&self, effects: &[Effect], w: &World, data: &Data, nb: Option<&NeighbourId>) -> Fx {
         let one = Fx::from_int(1);
         let mut sum = Fx(0);
@@ -855,6 +931,23 @@ impl AutoChooser {
                 }
                 Effect::IfFriendly(es) => {
                     sum = sum + self.worth(es, w, data, nb);
+                    continue;
+                }
+                Effect::EnactLaw(id) | Effect::RepealLaw(id) => {
+                    let enact = matches!(e, Effect::EnactLaw(_));
+                    let changes = law_changes(data, w, id, enact);
+                    if !changes.is_empty() {
+                        sum = sum + self.weight("law");
+                    }
+                    // Brought in against a faction: its resistance as a change of its axis.
+                    let against = (data.law(id).filter(|_| enact && !changes.is_empty()))
+                        .map_or(&[][..], |l| &l.resistance);
+                    for (a, v) in against {
+                        sum = sum + self.weight(&a.0) * *v;
+                    }
+                    for (l, k) in changes {
+                        sum = sum + self.law_worth(l, w, data) * k;
+                    }
                     continue;
                 }
                 // A bastard to recognize: `recognize`, and an `heir` when there is none.

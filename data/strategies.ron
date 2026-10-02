@@ -3,12 +3,18 @@
 // own weights (rules.ron sim.auto: base plus his traits) plus the weights below, same keys.
 // The dynasty after him is simulated as always.
 {
-    // Keeps every province: never grants, takes land back from the vassals.
-    "crown_all": {"grant": -100, "revoke": 40, "crown_power": 1},
+    // Keeps every province: never grants, takes land back from the vassals. Its domain is
+    // worked by serfs under one faith (stage 19: the founder's laws).
+    "crown_all": {"grant": -100, "revoke": 40, "crown_power": 1, "law_serfdom": 100, "law_one_faith": 100},
     // Gives every province it can to the vassals, never takes one back.
     "vassal_all": {"grant": 60, "revoke": -100},
-    // Declares wars and fights them for land.
-    "warmonger": {"war": 80, "province": 40, "army": 1, "prestige": 1},
+    // Declares wars and fights them for land; fairs pay for them, the conquered keep their
+    // faith.
+    "warmonger": {"war": 80, "province": 40, "army": 1, "prestige": 1, "law_fairs": 100, "law_tolerance": 100},
     // Builds forts, roads and markets.
     "builder": {"build": 30, "province_income": 5, "grant": -20, "war": -20},
+    // Founder law sets (stage 19, docs/design/hidden-state.html, section 5): the laws only.
+    "serf_lord": {"law_serfdom": 100, "law_one_faith": 100, "law_tithe": 100},
+    "free_towns": {"law_charters": 100, "law_fairs": 100, "law_free_peasants": 100},
+    "scholar": {"law_schools": 100, "law_code": 100, "law_tolerance": 100},
 }

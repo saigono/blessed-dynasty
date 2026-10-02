@@ -80,6 +80,7 @@ fn runs_hash(dir: &str, data: &Data, n: u64) -> u64 {
         text += &ron::to_string(&end.world).unwrap();
         text += &ron::to_string(&sim::run(end, &g.data, g.rng.clone())).unwrap();
     }
+    std::fs::write(std::env::var("DUMP").unwrap_or("/dev/null".into()), &text).unwrap();
     fnv(text.as_bytes())
 }
 
@@ -131,8 +132,9 @@ fn the_graph_of_the_design_is_silent_at_the_start() {
     for i in 1..=18 {
         assert!(d.influences.iter().any(|e| e.id == format!("e{i}")), "e{i}");
     }
+    // e7 only under its law (stage 19).
     let e7 = d.influences.iter().find(|e| e.id == "e7").unwrap();
-    assert_eq!(e7.k, Fx(0));
+    assert!(e7.off && e7.k == Fx(400));
     let w = Game::new(d.clone(), &preset(DATA, &d), 0).world;
     for a in d.axes.iter().filter(|a| graph::step(&d, a) > Fx(0)) {
         assert_eq!(target(&d, &w, &a.id.0), a.default, "{}", a.id.0);

@@ -331,12 +331,18 @@ fn reign_ends_falls_and_axes_have_display_texts() {
 
 /// Stage 18: the loops a law could push into a runaway. A loop's gain is the product of its
 /// edges' k; an edge with a curve is flat beyond its points, so outside the curves it adds 0.
+/// Stage 19: each edge at the largest multiplier a law puts on it (at least 1).
 /// Loops whose gain there is 1.5 or more, with it.
 fn runaway_loops(data: &Data) -> Vec<(String, bd_core::fx::Fx)> {
     use bd_core::fx::Fx;
     let edge = |id: &String| data.influences.iter().find(|e| e.id == *id).unwrap();
+    let most = |e: &bd_core::graph::Influence| {
+        let named = data.laws.list.iter().flat_map(|l| &l.edges);
+        let ks = named.filter(|(id, _)| *id == e.id).map(|(_, k)| *k);
+        ks.fold(Fx::from_int(1), Fx::max)
+    };
     let gain = |e: &bd_core::graph::Influence| match e.curve.is_empty() {
-        true => e.k,
+        true => e.k * most(e),
         false => Fx(0),
     };
     (data.loops.iter())
@@ -359,10 +365,19 @@ fn no_loop_runs_away_outside_its_curves() {
         "{:?}",
         runaway_loops(&data)
     );
-    // П1 with e2 straight and steep: 1.875 * 0.8 = 1.5.
+    // П1 with e2 straight and steep: 2.5 * 0.6 = 1.5.
     let mut steep = data.clone();
     let e2 = steep.influences.iter_mut().find(|e| e.id == "e2").unwrap();
-    (e2.curve, e2.k) = (vec![], bd_core::fx::Fx(-1_875));
+    (e2.curve, e2.k) = (vec![], bd_core::fx::Fx(-2_500));
+    assert_eq!(runaway_loops(&steep).len(), 1);
+    // Or a law scaling e3 of П1 (0.6 * 0.75 at most now) by 3.4.
+    let mut steep = data.clone();
+    let e2 = steep.influences.iter_mut().find(|e| e.id == "e2").unwrap();
+    (e2.curve, e2.k) = (vec![], bd_core::fx::Fx(-750));
+    assert!(runaway_loops(&steep).is_empty());
+    steep.laws.list[0]
+        .edges
+        .push(("e3".into(), bd_core::fx::Fx(3_400)));
     assert_eq!(runaway_loops(&steep).len(), 1);
 }
 

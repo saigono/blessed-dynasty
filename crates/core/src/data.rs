@@ -1,7 +1,7 @@
 use crate::fx::Fx;
 use crate::graph::{Influence, Stability};
 use crate::rng::Rng;
-use crate::rules::{Action, ActionTarget, Event, Predicate};
+use crate::rules::{Action, ActionTarget, Effect, Event, Predicate};
 use crate::sim::FallReason;
 use crate::state::{AxisId, Heir, Holder, NeighbourId, Province, Sex, Stance, World};
 use crate::time::TimeUnit;
@@ -32,6 +32,8 @@ pub struct Data {
     /// Stability derived from the graph; None: a plain axis, written directly.
     #[serde(default)]
     pub stability: Option<Stability>,
+    #[serde(default)]
+    pub laws: Laws,
     /// Weight of "nothing happens" in the random event pick.
     pub quiet_weight: u32,
     /// Province loyalty below this shows as unrest. Display only.
@@ -433,6 +435,96 @@ impl Law {
     }
 }
 
+/// Laws-institutions (`rules.ron` `laws`, docs/design/hidden-state.html, section 5).
+#[derive(Debug, Clone, PartialEq, Deserialize, Default)]
+pub struct Laws {
+    /// The names of the actions `load` makes for every law: `ENACT` and `REPEAL` before its
+    /// id; `{law}` is its name.
+    pub enact: String,
+    pub repeal: String,
+    /// The share of the price a repeal costs; the simulation's automaton pays it all
+    /// (`Data::auto_cost`).
+    pub repeal_share: Fx,
+    /// Of the capital, to start either action.
+    pub min_crown_power: Fx,
+    /// A faction (`Data.factions`) above the second presses the simulation's automaton for
+    /// the laws that raise its anchor and against those that lower it or that it resists, one
+    /// below the first only against (`sim::pressure`); only so pressed does the automaton
+    /// repeal a law. None: no pressure.
+    #[serde(default)]
+    pub pressure: Option<(Fx, Fx)>,
+    pub list: Vec<LawDef>,
+}
+
+/// The prefixes of the ids of the actions that enact and repeal a law, and the cause tag of a
+/// repeal.
+pub const ENACT: &str = "enact_";
+pub const REPEAL: &str = "repeal_";
+pub const REPEALED: &str = "law_repealed";
+
+/// A law is in force while its flag `id` is set; it outlives the ruler. In force, it shifts
+/// the anchors of axes (`graph::anchor`) and scales edges of the graph (`graph::scale`).
+/// The succession laws of `heirs.laws` are laws too, by their flag; their `name` and
+/// `description` default to theirs.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct LawDef {
+    pub id: String,
+    /// One law of a group is in force at a time; empty: no group.
+    #[serde(default)]
+    pub group: String,
+    #[serde(default)]
+    pub name: String,
+    /// What the law holds and what it feeds, in plain words, for the UI.
+    #[serde(default)]
+    pub description: String,
+    pub cost: Fx,
+    pub years: crate::time::Years,
+    #[serde(default = "always")]
+    pub requires: Predicate,
+    /// Anchor shifts while the law is being brought in: a faction against it.
+    #[serde(default)]
+    pub resistance: Vec<(AxisId, Fx)>,
+    /// Anchor shifts while in force.
+    #[serde(default)]
+    pub anchors: Vec<(AxisId, Fx)>,
+    /// Multipliers of edges (`Influence.id`) while in force.
+    #[serde(default)]
+    pub edges: Vec<(String, Fx)>,
+    /// Added to the yearly income while in force (negative: its upkeep).
+    #[serde(default)]
+    pub treasury: Fx,
+    /// Applied once, when brought in.
+    #[serde(default)]
+    pub on_complete: Vec<Effect>,
+    /// No repeal: only another law of its group replaces it.
+    #[serde(default)]
+    pub keep: bool,
+}
+
+fn always() -> Predicate {
+    Predicate::All(vec![])
+}
+
+impl Data {
+    /// The law of this id.
+    pub fn law(&self, id: &str) -> Option<&LawDef> {
+        self.laws.list.iter().find(|l| l.id == id)
+    }
+
+    /// What the simulation's automaton pays for an action: a law repealed at its full price.
+    pub fn auto_cost(&self, a: &Action) -> Fx {
+        match a.on_complete.first() {
+            Some(Effect::RepealLaw(id)) => self.law(id).map_or(a.cost, |l| l.cost),
+            _ => a.cost,
+        }
+    }
+
+    /// The laws in force now, in data order.
+    pub fn laws_in_force<'a>(&'a self, w: &'a World) -> impl Iterator<Item = &'a LawDef> + 'a {
+        self.laws.list.iter().filter(|l| w.flags.contains(&l.id))
+    }
+}
+
 /// The row of the largest `from <= at`; 0 below the first row.
 pub fn by_age(table: &[(u32, Fx)], at: u32) -> Fx {
     let rows = table.iter().filter(|(from, _)| *from <= at);
@@ -571,6 +663,10 @@ pub struct CrownCapacity {
     pub penalty: Vec<(AxisId, Fx)>,
     #[serde(default)]
     pub income: Fx,
+    /// Anchor shifts per province over the room while it is over (`graph::anchor`), unlike
+    /// `penalty`, which adds up every year.
+    #[serde(default)]
+    pub pressure: Vec<(AxisId, Fx)>,
 }
 
 impl CrownCapacity {
@@ -582,11 +678,16 @@ impl CrownCapacity {
         (room.0 / Fx::SCALE).max(0)
     }
 
+    /// How many of the crown's provinces are beyond `room`.
+    pub fn excess(&self, w: &World) -> i64 {
+        let crown = w.provinces.values().filter(|p| p.holder == Holder::Crown);
+        (crown.count() as i64 - self.room(w)).max(0)
+    }
+
     /// The crown's provinces beyond `room`: the weakest by crown power, the capital never;
     /// the smallest id first on a tie.
     pub fn over<'a>(&self, w: &'a World) -> Vec<&'a Province> {
-        let crown = w.provinces.values().filter(|p| p.holder == Holder::Crown);
-        let over = (crown.count() as i64 - self.room(w)).max(0) as usize;
+        let over = self.excess(w) as usize;
         let mut weakest: Vec<&Province> = (w.provinces.values())
             .filter(|p| p.holder == Holder::Crown && p.id != w.capital.province)
             .collect();
@@ -743,8 +844,8 @@ impl MarriageRules {
 }
 
 /// What every coronation in the simulation does to the axes, in this order: each faction
-/// axis moves `reset` of the way toward its default (a new page), the axis of
-/// `legitimacy_from_claim` moves its share of the way toward the new ruler's claim, a
+/// axis moves `reset` of the way toward its anchor (`graph::anchor`, a new page under the
+/// laws in force), the axis of `legitimacy_from_claim` moves its share of the way toward the new ruler's claim, a
 /// contested succession (`abdication.contested_flag`) adds `contested`, then the law's
 /// `coronation`, then the `axes` of the ruler's traits.
 #[derive(Debug, Clone, PartialEq, Deserialize, Default)]
@@ -790,6 +891,12 @@ pub struct SimTexts {
     /// The law in force changed; `{law}`: its name.
     #[serde(default)]
     pub law_changed: (String, String),
+    /// A law of `Data.laws` other than of succession came into force, or was repealed with
+    /// none of its group in its place; `{law}`: its name.
+    #[serde(default)]
+    pub law_enacted: (String, String),
+    #[serde(default)]
+    pub law_repealed: (String, String),
 }
 
 #[derive(Debug)]
@@ -800,7 +907,7 @@ pub enum DataError {
 
 /// Parses `rules.ron` contents. The caller does the file I/O.
 pub fn load(rules: &str) -> Result<Data, DataError> {
-    let data: Data = parse(rules)?;
+    let mut data: Data = parse(rules)?;
     if data.time_unit.ticks_per_year == 0 {
         return Err(DataError::Invalid(
             "time_unit.ticks_per_year must be > 0".into(),
@@ -832,7 +939,7 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
     let flows = data.economy.flows.iter().map(|(a, _)| a);
     let war = data.war.bonus.iter().map(|(a, _)| a);
     let c = &data.crown_capacity;
-    let capacity = c.per_axis.iter().chain(&c.penalty).map(|(a, _)| a);
+    let capacity = (c.per_axis.iter().chain(&c.penalty).chain(&c.pressure)).map(|(a, _)| a);
     let laws = data
         .heirs
         .laws
@@ -906,7 +1013,72 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
             ));
         }
     }
+    unique(data.laws.list.iter().map(|l| l.id.as_str()))?;
+    for l in &data.laws.list {
+        let axes = l.anchors.iter().chain(&l.resistance);
+        let axis = axes
+            .map(|(a, _)| a)
+            .all(|a| is_axis(a) && !data.is_derived(a));
+        let edge = |id: &String| data.influences.iter().any(|e| e.id == *id);
+        if !axis || !l.edges.iter().all(|(e, _)| edge(e)) {
+            return Err(invalid(
+                &l.id,
+                "laws: unknown or derived axis, or no such edge".into(),
+            ));
+        }
+        l.requires.check(&data).map_err(|m| invalid(&l.id, m))?;
+        for e in &l.on_complete {
+            e.check(&data).map_err(|m| invalid(&l.id, m))?;
+        }
+    }
+    let succession = &data.heirs.laws;
+    for l in data.laws.list.iter_mut().filter(|l| l.name.is_empty()) {
+        if let Some(s) = succession.iter().find(|s| s.flag == l.id) {
+            (l.name, l.description) = (s.name.clone(), s.text());
+        }
+    }
+    let actions = data
+        .laws
+        .list
+        .iter()
+        .flat_map(|l| law_actions(&data.laws, l));
+    let actions: Vec<Action> = actions.collect();
+    data.actions.extend(actions);
     Ok(data)
+}
+
+/// The actions to enact the law and, unless `keep`, to repeal it.
+fn law_actions(laws: &Laws, l: &LawDef) -> Vec<Action> {
+    let enact = Action {
+        id: format!("{ENACT}{}", l.id),
+        name: laws.enact.replace("{law}", &l.name),
+        duration_years: l.years,
+        cost: l.cost,
+        requires: Predicate::All(vec![Predicate::NotFlag(l.id.clone()), l.requires.clone()]),
+        min_crown_power: laws.min_crown_power,
+        target: ActionTarget::None,
+        on_complete: [Effect::EnactLaw(l.id.clone())]
+            .into_iter()
+            .chain(l.on_complete.clone())
+            .collect(),
+        yearly: vec![],
+        cause_tag: l.id.clone(),
+        description: l.description.clone(),
+        bond: String::new(),
+    };
+    let repeal = Action {
+        id: format!("{REPEAL}{}", l.id),
+        name: laws.repeal.replace("{law}", &l.name),
+        cost: l.cost * laws.repeal_share,
+        requires: Predicate::Flag(l.id.clone()),
+        on_complete: vec![Effect::RepealLaw(l.id.clone())],
+        cause_tag: REPEALED.into(),
+        ..enact.clone()
+    };
+    match l.keep {
+        true => vec![enact],
+        false => vec![enact, repeal],
+    }
 }
 
 #[cfg(test)]
@@ -1003,7 +1175,8 @@ mod tests {
         data.add_events(NEIGHBOUR_EVENTS).unwrap();
         data.add_actions(ACTIONS).unwrap();
         assert_eq!(data.events.len(), 38);
-        assert_eq!(data.actions.len(), 21);
+        // 15 of actions.ron; to enact 16 laws, to repeal the 10 not of the succession.
+        assert_eq!(data.actions.len(), 15 + 16 + 10);
         // Ids must be unique across files.
         assert!(matches!(
             data.add_events(EVENTS),

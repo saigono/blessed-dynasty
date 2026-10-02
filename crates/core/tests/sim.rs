@@ -131,9 +131,11 @@ fn golden_seed_42_script_a() {
     // Stage 18: the influence graph and a derived stability whose shocks fade; weddings
     // only in war: Конрад reigns 37 years through two «Смута», Вейр and Арден revolt,
     // Кунигунда inherits a shrinking realm and Вейр takes it in the year 82.
+    // Stage 19: the automaton weighs laws by their anchors, upkeep and the pressure of the
+    // factions; the Смута of a split society
     assert_eq!(
         (c.years, &c.fall, c.entries.len()),
-        (82, &FallReason::Usurped, 23)
+        (176, &FallReason::NoCrownLand, 50)
     );
     let hint = |h: &'static str| Some(h);
     assert_eq!(
@@ -145,14 +147,14 @@ fn golden_seed_42_script_a() {
                 hint("Наследника наказали при всём дворе ещё при основателе."),
             ),
             (
-                "Мятеж дома Вейр",
-                "В тот год дом Вейр поднял мятеж в земле Берг и отказался присягать короне.",
-                hint("Монахи, посланные основателем к больным, остались в памяти народа."),
+                "Спор о короне",
+                "Корона сложена до срока. Бароны не признают наследника и называют своих претендентов.",
+                None,
             ),
             (
-                "Смута",
-                "На престоле Конрад, но присягнули не все. Претенденты собирают сторонников, знать выжидает.",
-                hint("Старый основатель заранее готовил преемника."),
+                "Великое бедствие",
+                "В тот год великое наводнение, а за ним мор опустошили землю Сол.",
+                hint("Основатель простил подати голодному краю."),
             ),
         ]
     );
@@ -1078,24 +1080,23 @@ fn kin_of_seed_42_script_a() {
     );
     assert_eq!((k[0].crowned, k[0].parent), (Some(1187), None));
     assert_eq!(k[0].died, Some(1187 + c.rulers[0].end.0));
-    // Конрад, 6 at the start, reigned 1225..1262; Генрих, born 1193, died with him; Освальд
-    // 1199 and Рейнхольд 1202 died before him, uncrowned (stage 18).
+    // Конрад, 6 at the start, reigned 1225..1254; his brothers died uncrowned, as below.
     assert_eq!(
         (k[1].name.as_str(), k[1].born, k[1].crowned, k[1].died),
-        ("Конрад", 1181, Some(1225), Some(1262))
+        ("Конрад", 1181, Some(1225), Some(1257))
     );
     assert_eq!(
         (k[2].name.as_str(), k[2].born, k[2].parent, k[2].crowned),
         ("Генрих", 1193, Some(0), None)
     );
-    assert_eq!(k[2].died, Some(1262));
+    assert_eq!(k[2].died, Some(1270));
     assert_eq!(
         (k[3].name.as_str(), k[3].born, k[3].parent, k[3].died),
-        ("Освальд", 1199, Some(0), Some(1236))
+        ("Освальд", 1199, Some(0), Some(1271))
     );
     assert_eq!(
         (k[4].name.as_str(), k[4].born, k[4].parent, k[4].died),
-        ("Рейнхольд", 1202, Some(0), Some(1260))
+        ("Рейнхольд", 1202, Some(0), Some(1268))
     );
     // Every ruler in the chronicle is a crowned kin, in order; children point at a ruler.
     let crowned: Vec<(&str, u32)> = (k.iter())

@@ -215,6 +215,10 @@ pub struct World {
     /// (`graph::tick`), in their order; filled on the first tick.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lagged: Vec<Fx>,
+    /// The tick each law in force came in (`Effect::EnactLaw`); a law of the preset or set
+    /// by its flag alone is absent: in force since tick 0.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub laws: BTreeMap<String, Tick>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -309,6 +313,7 @@ impl World {
             designated: None,
             bastards: Vec::new(),
             lagged: Vec::new(),
+            laws: BTreeMap::new(),
         };
         let r = &world.ruler;
         let founder = Kin {
@@ -333,6 +338,8 @@ impl World {
             let held = world.provinces.values().filter(|p| p.holder == holder);
             n.per_province = n.strength / Fx::from_int(held.count().max(1) as i64);
         }
+        // Crown power first: land over the room weighs on the anchor of stability.
+        world.recompute_crown_power(data);
         world.recompute_loyalty(data);
         // A preset's stability is where the derived one starts: the gap is a fading shock.
         if let Some(s) = &data.stability

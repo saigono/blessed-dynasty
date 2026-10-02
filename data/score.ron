@@ -15,5 +15,8 @@
     // A crisis: a chronicle entry of a Bad event (the default sign) with importance above this.
     crisis_importance: 3,
     // Institutions: these flags, set at the fall, count for `legacy`.
-    legacy_flags: ["law_elective", "cathedral"],
+    legacy_flags: ["cathedral"],
+    // So does a law of rules.ron `laws` in force at the fall for this many years since it was
+    // brought in; the law the preset starts with was never brought in.
+    legacy_law_years: 100,
 )

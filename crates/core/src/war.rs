@@ -103,8 +103,8 @@ pub fn yearly_income(w: &World, data: &Data) -> Fx {
     income - upkeep
 }
 
-/// `yearly_income` as (income, upkeep): the crown provinces and the positive `economy.flows`
-/// and treasury flow edges (`graph::treasury_flows`);
+/// `yearly_income` as (income, upkeep): the crown provinces and the positive `economy.flows`,
+/// treasury flow edges (`graph::treasury_flows`) and `LawDef.treasury` of the laws in force;
 /// the negative flows, the war's toll, the army and the land beyond the crown's room.
 pub fn income_parts(w: &World, data: &Data) -> (Fx, Fx) {
     let r = &data.war;
@@ -112,6 +112,7 @@ pub fn income_parts(w: &World, data: &Data) -> (Fx, Fx) {
     let land = crown.fold(Fx(0), |s, p| s + p.income);
     let flows = data.economy.flows.iter().map(|(a, k)| w.axes[a] * *k);
     let flows = flows.chain(crate::graph::treasury_flows(data, w));
+    let flows = flows.chain(data.laws_in_force(w).map(|l| l.treasury));
     let (gain, cost) = flows.fold((Fx(0), Fx(0)), |(g, c), f| match f > Fx(0) {
         true => (g + f, c),
         false => (g, c - f),

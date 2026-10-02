@@ -247,6 +247,7 @@
                 "assassination": "убийство",
                 "war_wound": "рана на войне",
                 "abdication": "отречение",
+                "monastery": "уход в монастырь",
             },
             // The subject is the dynasty (feminine): «89 лет на троне · пала от узурпации».
             falls: [

@@ -162,13 +162,13 @@
         choices: [
             (
                 text: "Уступить пограничную провинцию",
-                effects: [TransferProvince(OwnBorder, Foreign(EventTarget)), Tribute(-50), RulerHealth(-10), Axis("legitimacy", -10), Axis("prestige", -10), EndWar(Defeat)],
+                effects: [TransferProvince(OwnBorder, Foreign(EventTarget)), Tribute(-50), RulerHealth(-10), Axis("legitimacy", -10), Axis("prestige", -10), Axis("loyalty_nobles", -10), EndWar(Defeat)],
                 cause_tag: "war_lost_land",
                 hint: "Отданная земля станет причиной новой войны.",
             ),
             (
                 text: "Отдать наследника в заложники",
-                effects: [TakeHostage(0, EventTarget), Tribute(-100), RulerHealth(-10), Axis("legitimacy", -8), Axis("prestige", -10), EndWar(Defeat)],
+                effects: [TakeHostage(0, EventTarget), Tribute(-100), RulerHealth(-10), Axis("legitimacy", -8), Axis("prestige", -10), Axis("loyalty_nobles", -10), EndWar(Defeat)],
                 cause_tag: "war_lost_hostage",
                 hint: "Наследник, выросший у врага, вернётся чужим.",
             ),

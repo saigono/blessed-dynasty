@@ -441,6 +441,43 @@ fn the_death_of_the_last_infant_heir_is_told_at_the_fall() {
     );
 }
 
+/// Stage 12: a child king in the church's care with a loyal church takes the vows; the next
+/// heir is crowned.
+#[test]
+fn a_king_under_church_regency_takes_the_vows() {
+    let mut data = content();
+    let vows = data.sim_events.iter().find(|e| e.id == "monastery_vows");
+    let vows = vows.unwrap().clone();
+    quiet(&mut data);
+    data.sim_events = vec![vows];
+    data.sim.max_years = 3;
+    let run = |church: i64| {
+        let mut g = heirs(
+            &data,
+            &[(10, 80, HeirStatus::Home), (8, 70, HeirStatus::Home)],
+        );
+        g.world.flags.insert("church_regency".into());
+        g.world
+            .axes
+            .insert(ax("loyalty_church"), Fx::from_int(church));
+        sim::run(end_now(&g), &data, Rng::from_seed(1))
+    };
+    let c = run(80);
+    let names: Vec<_> = c.rulers.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names[1..], ["h0", "h1"]);
+    assert_eq!(c.rulers[1].cause.as_deref(), Some("monastery"));
+    assert!(
+        !c.entries
+            .last()
+            .unwrap()
+            .snapshot
+            .flags
+            .contains("church_regency")
+    );
+    // A church without that loyalty keeps its ward on the throne.
+    assert_eq!(run(50).rulers.len(), 2);
+}
+
 #[test]
 fn falls() {
     let mut data = content();

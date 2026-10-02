@@ -228,7 +228,7 @@
                 name: "Разделение",
                 description: "Корону получает старший сын, а каждый следующий сын при воцарении — коронную землю в удел и свой дом. Уделы раздаются от дальних земель к столице, столица остаётся у короны. Знать довольна, но земель у короны всё меньше. Если у наследника претензия ниже {crisis_claim}, престол оспорят."),
         ],
-        birth: [(0, 0), (16, 25), (35, 20), (45, 10), (50, 0)],
+        birth: [(0, 0), (16, 30), (35, 22), (45, 10), (50, 0)],
         // Chance in percent that a child is a son.
         male_percent: 50,
         married_flag: "married",
@@ -239,6 +239,10 @@
         designate_penalty: [("legitimacy", -10), ("loyalty_nobles", -5), ("loyalty_church", -5)],
         designate_dispute: 40,
         bastard_claim: 20,
+        // Disputes from real causes besides the claim: a child crowned (below
+        // sim.regency_age), an heir of ability below the first number: chances in percent.
+        dispute_minor: 100,
+        dispute_weak: (80, 100),
         death: [(0, 120), (1, 40), (5, 6), (16, 6), (30, 10), (40, 15), (50, 30), (55, 60), (60, 90), (65, 130), (70, 180), (80, 300)],
     ),
 
@@ -339,7 +343,7 @@
                 // overreach 30 the heirs give the conquests away and warmonger dynasties fall
                 // to usurpation (stage 15, docs/calibration.md).
                 "overreach": 0,
-                "usurped": -26, "plot": -20, "plague": -20,
+                "usurped": -12, "plot": -20, "plague": -20,
             },
             traits: {
                 "greedy": {"treasury": 0.3, "income": 2, "province_income": 2},

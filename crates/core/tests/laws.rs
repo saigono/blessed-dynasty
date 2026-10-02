@@ -18,11 +18,13 @@ fn read(rel: &str) -> String {
     fs::read_to_string(dir.join(rel)).unwrap()
 }
 
-/// Rules, actions and names; no events.
+/// Rules, actions and names; no events; disputes of minors and weak heirs off (their own
+/// test turns them on).
 fn data() -> Data {
     let mut data = bd_core::data::load(&read("rules.ron")).unwrap();
     data.add_actions(&read("actions.ron")).unwrap();
     data.add_names(&read("names.ron")).unwrap();
+    (data.heirs.dispute_minor, data.heirs.dispute_weak) = (Fx(0), (Fx(0), Fx(0)));
     data
 }
 
@@ -779,6 +781,19 @@ fn the_rightful_heir_has_his_claim_at_once() {
     // Crowned the same tick he became first: still with his right.
     let e = crown_under(&data, "law_primogeniture", &[(M, 30, true, 50)]);
     assert!(!contested(&e));
+}
+
+/// Disputes besides the claim: a child crowned below `regency_age`, an heir of ability below
+/// the threshold of `dispute_weak`; a grown, able rightful heir reigns undisputed.
+#[test]
+fn a_child_or_a_weak_heir_is_disputed() {
+    let mut data = data();
+    (data.heirs.dispute_minor, data.heirs.dispute_weak) =
+        (Fx::from_int(100), (Fx::from_int(80), Fx::from_int(100)));
+    let law = "law_primogeniture";
+    assert!(!contested(&crown_under(&data, law, &[(M, 30, true, 90)])));
+    assert!(contested(&crown_under(&data, law, &[(M, 30, true, 50)])));
+    assert!(contested(&crown_under(&data, law, &[(M, 10, true, 90)])));
 }
 
 /// Acceptance: under male primogeniture a daughter comes to the throne only without sons, and

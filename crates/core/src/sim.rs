@@ -292,7 +292,9 @@ pub fn next_heir(w: &World) -> Option<usize> {
 
 /// Crowns the next heir, the rightful one with at least `Law.rightful_claim`: a claim below
 /// the law's `crisis_claim` contests the succession (`abdication.contested_flag`), and so
-/// may the rivals (`Law.dispute_per_heir`) and a woman under `Law.female_heir`; a child
+/// may the rivals (`Law.dispute_per_heir`), a woman under `Law.female_heir`, an heir named
+/// over the law (`heirs.designate_dispute`), a child (`heirs.dispute_minor`) and a weak
+/// heir (`heirs.dispute_weak`); a child
 /// reigns under the regency flag, the other heirs become the collateral line, the flags of
 /// the last reign (`sim.reign_flags`) go. False: no heir.
 fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
@@ -335,13 +337,17 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
         false => w.flags.remove(&married),
     };
     if let Some(l) = d.heirs.law(w) {
-        // Each heir left is a rival: a chance of dispute per head, rolled only if the law has one.
-        let rivals = l.dispute_per_heir * Fx::from_int(w.heirs.len() as i64);
-        let quarrel = rivals > Fx(0) && rng.range(0, Fx::from_int(100).0) < rivals.0;
+        // Chances in percent, rolled only where they apply and are above 0.
+        let mut roll = |p: Fx| p > Fx(0) && rng.range(0, Fx::from_int(100).0) < p.0;
+        // Each heir left is a rival: a chance of dispute per head.
+        let quarrel = roll(l.dispute_per_heir * Fx::from_int(w.heirs.len() as i64));
         let queen = heir.sex == Sex::Female && l.female_heir.is_some();
         // Named over the rightful heir, who keeps his claim: a rival.
-        let named = !lawful && rng.range(0, Fx::from_int(100).0) < d.heirs.designate_dispute.0;
-        if heir.claim < l.crisis_claim || quarrel || queen || named {
+        let named = !lawful && roll(d.heirs.designate_dispute);
+        let h = &d.heirs;
+        let minor = ruler.age < d.sim.regency_age && roll(h.dispute_minor);
+        let weak = heir.ability < h.dispute_weak.0 && roll(h.dispute_weak.1);
+        if heir.claim < l.crisis_claim || quarrel || queen || named || minor || weak {
             w.flags.insert(d.abdication.contested_flag.clone());
         }
     }

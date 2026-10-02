@@ -40,12 +40,12 @@
         title: "Брак наследника",
         text: "{heir}: пора подумать о браке. Соседние дворы присылают сватов.",
         when: All([]),
-        weight: 60,
+        weight: 100,
         once: false,
         cooldown_years: 1,
         importance: 3,
         sign: Good,
-        target: UnmarriedHeir(16, 50),
+        target: UnmarriedHeir(14, 50),
         choices: [
             (
                 text: "Искать пару при чужеземном дворе",
@@ -127,12 +127,13 @@
         ],
     ),
     (
-        // Fires when the claims of the first two heirs are close: rare under primogeniture,
+        // Fires when the claims of the first two heirs are close: rare under primogeniture
+        // (the rightful heir's claim 90, the rest 35: after a quarrel won by the younger),
         // frequent without a law.
         id: "heir_dispute",
         title: "Спор наследников",
         text: "Двое королевских детей не уступают друг другу, у каждого свои сторонники при дворе.",
-        when: All([HeirAge(1, 14, 99), ClaimGapBelow(30)]),
+        when: All([HeirAge(1, 14, 99), ClaimGapBelow(45)]),
         weight: 8,
         once: false,
         cooldown_years: 5,

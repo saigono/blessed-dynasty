@@ -186,8 +186,8 @@
                 effects: [
                     ClearFlag("succession_contested"),
                     Chance((
-                        percent: 40,
-                        axes: [("army", 0.5)],
+                        percent: 20,
+                        axes: [("army", 1.2)],
                         then: [Axis("legitimacy", 10), Axis("army", -15)],
                         otherwise: [SetFlag("usurped")],
                     )),

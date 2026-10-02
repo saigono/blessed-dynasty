@@ -305,6 +305,12 @@ pub struct HeirRules {
     /// The claim of a bastard recognized (`HeirOp::Recognize`).
     #[serde(default)]
     pub bastard_claim: Fx,
+    /// Chance in percent that the coronation of a child (below `sim.regency_age`) is
+    /// contested; and of an heir of ability below the first number, the second.
+    #[serde(default)]
+    pub dispute_minor: Fx,
+    #[serde(default)]
+    pub dispute_weak: (Fx, Fx),
 }
 
 fn half() -> Fx {

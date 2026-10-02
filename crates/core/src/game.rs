@@ -376,7 +376,7 @@ impl Game {
         }
     }
 
-    /// Treasury, aging, desertion, drift. Yearly amounts are spread over the ticks of a year.
+    /// Treasury, aging, desertion, the influence graph, drift. Yearly amounts are spread over the ticks of a year.
     fn passive(&mut self) {
         let (d, w) = (&self.data, &mut self.world);
         let per_tick = |v: Fx| v / Fx::from_int(d.time_unit.ticks_per_year as i64);
@@ -407,15 +407,7 @@ impl Game {
             true => (v + step).min(base),
             false => (v - step).max(base),
         };
-        for f in &d.factions {
-            let def = d
-                .axes
-                .iter()
-                .find(|a| a.id == f.axis)
-                .expect("checked on load");
-            let v = w.axes.get_mut(&f.axis).expect("the world has every axis");
-            *v = toward(*v, def.default);
-        }
+        crate::graph::tick(d, w);
         for p in w.provinces.values_mut() {
             p.loyalty = toward(p.loyalty, d.drift.province_loyalty);
         }

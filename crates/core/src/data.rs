@@ -460,6 +460,19 @@ pub struct AxisDef {
     /// 0: never.
     #[serde(default)]
     pub notable: Fx,
+    /// A hidden node of the influence graph: no number for the player.
+    #[serde(default)]
+    pub hidden: bool,
+    /// Yearly step toward the target (`graph::step`); None: `drift.step` for a faction axis,
+    /// 0 for the rest.
+    #[serde(default)]
+    pub step: Option<Fx>,
+    /// The bureaucracy that reveals a hidden node to the player.
+    #[serde(default)]
+    pub reveal: Option<Fx>,
+    /// The target before the edges (`graph::target`); None: `default`.
+    #[serde(default)]
+    pub anchor: Option<Fx>,
 }
 
 /// Coefficients of `World::recompute_crown_power`.

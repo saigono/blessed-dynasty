@@ -251,7 +251,7 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
                 .values()
                 .map(|p| p.holder.clone())
                 .collect();
-            let war = g.world.war.as_ref().map(|x| x.enemy.clone());
+            let mut war = g.world.war.as_ref().map(|x| x.enemy.clone());
             let first = successor(&g.world, &g.data).map(|i| g.world.heirs[i].clone());
             let law = g.data.heirs.law(&g.world).map(|l| l.flag.clone());
             let laws: Vec<String> = (g.data.laws_in_force(&g.world))
@@ -297,11 +297,20 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
                         let keys = event_keys(&g.world, e, p);
                         (causes(&g.world, keys), chain(&g.data, &g.world, e))
                     });
+                    // An event a neighbour's stance offers is his move: a war it starts
+                    // is his attack, not the ruler's breach of a Peace order.
+                    let ai = &g.data.neighbour_ai;
+                    let attack = [&ai.expand, &ai.defend, &ai.trade, &ai.wait]
+                        .iter()
+                        .any(|s| s.events.iter().any(|(id, _)| *id == v.event_id));
                     let idx = auto.choose(&mut g, &v.choices);
                     let faithful = testament::faithful(&g, &v.choices, idx, &base);
                     let mut past = g.told(idx).unwrap_or(v.text);
                     reign.count(&v.choices[idx].cause_tag);
                     g.resolve(idx, false).expect("a listed choice");
+                    if attack && war.is_none() {
+                        war = g.world.war.as_ref().map(|x| x.enemy.clone());
+                    }
                     if faithful {
                         keep(&mut g, &mut reign);
                         let n = TESTAMENT + c.entries.len() as u64;

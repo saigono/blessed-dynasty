@@ -225,7 +225,8 @@ pub fn faithful_action(g: &Game, a: &Action, base: &AutoChooser) -> bool {
 }
 
 /// The order was broken since the world stood at `laws` (the laws then in force),
-/// `holders` (the holders of the provinces in order) and `war` (the enemy then).
+/// `holders` (the holders of the provinces in order) and `war` (the enemy then, or the
+/// neighbour who attacked since: a war he starts breaks no Peace order).
 pub fn broken(w: &World, laws: &[String], holders: &[Holder], war: Option<&NeighbourId>) -> bool {
     let t = w.testament.as_ref();
     let Some(t) = t.filter(|t| t.since.is_some() && t.broken.is_none()) else {

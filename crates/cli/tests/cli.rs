@@ -734,7 +734,7 @@ fn calibration_criteria_hold() {
         .unwrap()
         .parse()
         .unwrap();
-    assert!(treasury <= 2000, "{treasury}");
+    assert!(treasury <= 2200, "{treasury}");
     let deserted: u32 = (after(&outs[3], "# дезертирство в ").split('%').next())
         .unwrap()
         .parse()

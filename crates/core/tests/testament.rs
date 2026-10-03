@@ -247,28 +247,27 @@ fn parting<'a>(
 /// told; the life of the ruler who broke it says so.
 #[test]
 fn a_broken_order_costs_and_is_told() {
-    let data = content();
-    let nb = game(&data, 1)
-        .world
-        .neighbours
-        .keys()
-        .next()
-        .cloned()
-        .unwrap();
-    let t = Testament {
-        precept: Some("treasury".into()),
+    // The ruler's own war: a sword precept that craves it, past the Peace order's weight.
+    let mut data = content();
+    let r = data.testament.as_mut().unwrap();
+    let sword = r.precepts.iter_mut().find(|p| p.id == "sword").unwrap();
+    sword.weights.insert("war".into(), Fx::from_int(300));
+    let title = &data.testament.as_ref().unwrap().texts.breach;
+    let peace = |nb| Testament {
+        precept: Some("sword".into()),
         order: Some(Order::Peace(nb)),
         ..Default::default()
     };
-    let title = &data.testament.as_ref().unwrap().texts.breach;
-    let seed = (0..40)
-        .find(|s| {
+    let neighbours: Vec<_> = game(&data, 1).world.neighbours.into_keys().collect();
+    let (seed, t) = (0..40)
+        .flat_map(|s| neighbours.iter().map(move |nb| (s, peace(nb.clone()))))
+        .find(|(s, t)| {
             dynasty(&data, *s, Some(t.clone()))
                 .entries
                 .iter()
                 .any(|e| &e.title == title)
         })
-        .expect("a war with the neighbour within 40 dynasties");
+        .expect("a war on a neighbour within 40 dynasties");
     let mut free = data.clone();
     free.testament.as_mut().unwrap().breach = vec![];
     let (a, b) = (
@@ -297,6 +296,46 @@ fn a_broken_order_costs_and_is_told() {
         "{}",
         broke.biography
     );
+}
+
+/// A Peace order is broken by the ruler's war, not by the neighbour's: a war that starts
+/// from an event his stance offers (declared on us, an invasion) is no breach.
+#[test]
+fn a_neighbour_attacking_breaks_no_peace() {
+    let data = content();
+    let ai = &data.neighbour_ai;
+    let offered = |id: &str| {
+        [&ai.expand, &ai.defend, &ai.trade, &ai.wait]
+            .iter()
+            .any(|s| s.events.iter().any(|(e, _)| e == id))
+    };
+    let title = &data.testament.as_ref().unwrap().texts.breach;
+    let mut seen = 0;
+    for seed in 0..40 {
+        let w = game(&data, seed).world;
+        for nb in w.neighbours.keys() {
+            let t = Testament {
+                order: Some(Order::Peace(nb.clone())),
+                ..Default::default()
+            };
+            let c = dynasty(&data, seed, Some(t));
+            let attacked = c.entries.iter().position(|e| {
+                let war = e.snapshot.war.as_ref();
+                e.event.as_deref().is_some_and(offered)
+                    && war.is_some_and(|x| x.enemy == *nb && x.started == e.tick)
+                    && e.snapshot.testament.as_ref().unwrap().broken.is_none()
+            });
+            let Some(i) = attacked else { continue };
+            seen += 1;
+            let during = c.entries[i..]
+                .iter()
+                .take_while(|e| e.snapshot.war.as_ref().is_some_and(|x| x.enemy == *nb));
+            for e in during {
+                assert_ne!(&e.title, title, "seed {seed}, {nb:?}, {}", e.tick.0);
+            }
+        }
+    }
+    assert!(seen >= 3, "attacks seen: {seen}");
 }
 
 /// Acceptance: a choice true to the testament raises legitimacy times the strength and the

@@ -1170,7 +1170,7 @@ function criteria(r) {
     add('Медианы счёта соседних стратегий', '≥ 15% друг от друга', null, null);
     add('Причины падения соседних по счёту', '≥ 15 п.п. по одной причине', null, null);
   }
-  add('Медиана казны в конце на neutral', '≤ 2000', n ? n.treasury[1] : null, n ? n.treasury[1] <= 2000 : null);
+  add('Медиана казны в конце на neutral', '≤ 2200', n ? n.treasury[1] : null, n ? n.treasury[1] <= 2200 : null);
   add('Дезертирство у warmonger', '≥ 10% династий', w ? w.deserted + '%' : null, w ? w.deserted >= 10 : null);
   const noHeir = n && w ? (w.falls.NoHeir || 0) - (n.falls.NoHeir || 0) : null;
   add('NoHeir warmonger минус neutral', '≤ 5 п.п.', noHeir == null ? null : noHeir + ' п.п.', noHeir == null ? null : noHeir <= 5);

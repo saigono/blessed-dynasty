@@ -99,7 +99,7 @@ fn the_kingdoms_change_nothing_of_ours() {
 /// of events by importance, one more action for the automaton), re-pinned. Stage 26c: the
 /// compound events (`events/stories.ron`) join the pool and the dynasty goes another way
 /// again (without them it ends as before, only the texts differ), re-pinned; a hint is not
-/// told twice within six entries, re-pinned.
+/// told twice within six entries, more variants of the frequent events: re-pinned.
 #[test]
 fn a_link_from_before_the_stage_plays_the_same() {
     let link = "AQdkZWZhdWx0Kh0AASMAAQABAQABAQABAQABAQABAQAAAQABAgABAQAAAQABAQABAQABAgABAQABAQABAQABAQ\
@@ -127,7 +127,7 @@ fn a_link_from_before_the_stage_plays_the_same() {
         ),
         (28, 61, "Usurped", 12, 4043)
     );
-    assert_eq!(format!("{hash:016x}"), "9e84155e01346695");
+    assert_eq!(format!("{hash:016x}"), "2b661e55c2871608");
     assert_eq!(c.realms.len(), 3, "the kingdoms play beside it");
 }
 

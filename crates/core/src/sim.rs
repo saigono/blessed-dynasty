@@ -1520,7 +1520,9 @@ impl AutoChooser {
                 | Effect::SpawnEvent(..)
                 | Effect::Clash
                 | Effect::EndWar(_)
-                | Effect::SetWarStage(_) => continue,
+                | Effect::SetWarStage(_)
+                | Effect::Mark(_)
+                | Effect::Unmark(_) => continue,
             };
             sum = sum + self.weight(key) * v;
         }

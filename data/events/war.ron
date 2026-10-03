@@ -3,11 +3,14 @@
 // Each step waits for its stage (rules.ron `war`): war_declared at Declared, war_clash at
 // Fighting, then war_siege (winning) or war_talks (not winning) at Fighting, then exactly one
 // of war_victory, war_defeat, war_draw at Peace by war_score. The sibling that does not fit
-// is dropped. Nominally four years from the declaration. The war actions of actions.ron
+// is dropped. Nominally four years from the declaration. The outcome comes a year after the
+// siege or the talks with no battle in between: its text tells the battles won and lost
+// ({war_won}, {war_lost}), why the war ends. The war actions of actions.ron
 // (battle, talks, siege) can cut it short: talks spawn the outcome by the score at once.
 // Victory takes the province the war is fought for (War.target, ProvinceTarget WarTarget).
 // war_siege_won is the card of the siege action (actions.ron war_siege_target): the province
-// is taken already, its one choice signs the peace.
+// is taken already, its one choice signs the peace. A war breaks the enemy's treaty of
+// nb_embassy: war_declared clears its mark "treaty".
 [
     (
         id: "war_declared",
@@ -22,21 +25,21 @@
         choices: [
             (
                 text: "Нанять наёмников",
-                effects: [Axis("treasury", -60), Axis("army", 25), SetWarStage(Fighting), SpawnEvent("war_clash", 1)],
+                effects: [Axis("treasury", -60), Axis("army", 25), SetWarStage(Fighting), SpawnEvent("war_clash", 1), Unmark("treaty")],
                 cause_tag: "war_mercenaries",
                 hint: "Наёмник верен, пока ему платят.",
                 told: "Для войны с {neighbour.тв} корона набрала наёмников на казённое серебро.",
             ),
             (
                 text: "Созвать вассалов",
-                effects: [Axis("loyalty_nobles", -5), Axis("army", 15), SetWarStage(Fighting), SpawnEvent("war_clash", 1)],
+                effects: [Axis("loyalty_nobles", -5), Axis("army", 15), SetWarStage(Fighting), SpawnEvent("war_clash", 1), Unmark("treaty")],
                 cause_tag: "war_levy",
                 hint: "Бароны, пролившие кровь за корону, потребуют награды.",
                 told: "На войну с {neighbour.тв} {ruler} {ruler:созвал|созвала} вассалов с их дружинами.",
             ),
             (
                 text: "Выступить малым войском",
-                effects: [Axis("prestige", -2), SetWarStage(Fighting), SpawnEvent("war_clash", 1)],
+                effects: [Axis("prestige", -2), SetWarStage(Fighting), SpawnEvent("war_clash", 1), Unmark("treaty")],
                 cause_tag: "war_small_army",
                 hint: "Малое войско быстро выступает и быстро тает.",
                 told: "{ruler} {ruler:выступил|выступила} против {neighbour.род} с малым войском, не дожидаясь подкреплений.",
@@ -141,7 +144,7 @@
     (
         id: "war_victory",
         title: "Победа",
-        text: "{neighbour} просит мира. Королевское войско победило, и враг готов платить.",
+        text: "{neighbour}, проиграв короне {war_won}, не ждёт новых битв и просит мира. Враг готов платить.",
         when: All([WarStage(Peace), WarScoreAbove(15)]),
         weight: 0,
         once: false,
@@ -155,21 +158,21 @@
                 effects: [TransferProvince(WarTarget, Crown), Tribute(60), Axis("prestige", 15), Axis("legitimacy", 5), Relation(EventTarget, -20), EndWar(Victory)],
                 cause_tag: "war_won_land",
                 hint: "Взятая земля долго помнит, чьей была.",
-                told: "{neighbour} {neighbour:запросил|запросила} мира, и корона взяла спорную землю и контрибуцию.",
+                told: "{neighbour}, проиграв {war_won}, {neighbour:запросил|запросила} мира, и корона взяла спорную землю и контрибуцию.",
             ),
             (
                 text: "Взять только контрибуцию",
                 effects: [Tribute(120), Axis("prestige", 8), Axis("legitimacy", 3), EndWar(Victory)],
                 cause_tag: "war_won_gold",
                 hint: "Серебро уходит, а обида побеждённого остаётся.",
-                told: "{neighbour} {neighbour:запросил|запросила} мира, и победители удовольствовались богатой контрибуцией.",
+                told: "{neighbour}, проиграв {war_won}, {neighbour:запросил|запросила} мира, и победители удовольствовались богатой контрибуцией.",
             ),
         ],
     ),
     (
         id: "war_defeat",
         title: "Поражение",
-        text: "Королевское войско разбито. {neighbour} диктует условия мира.",
+        text: "Корона проиграла {war_lost}, королевское войско разбито. {neighbour} диктует условия мира.",
         when: All([WarStage(Peace), WarScoreBelow(-15)]),
         weight: 0,
         once: false,
@@ -182,21 +185,21 @@
                 effects: [TransferProvince(OwnBorder, Foreign(EventTarget)), Tribute(-50), RulerHealth(-10), Axis("legitimacy", -10), Axis("prestige", -10), Axis("loyalty_nobles", -10), EndWar(Defeat)],
                 cause_tag: "war_lost_land",
                 hint: "Отданная земля станет причиной новой войны.",
-                told: "Королевское войско было разбито, и {neighbour} {neighbour:забрал|забрала} пограничную землю.",
+                told: "Корона проиграла {war_lost}, и {neighbour} {neighbour:забрал|забрала} пограничную землю.",
             ),
             (
                 text: "Отдать наследника в заложники",
                 effects: [TakeHostage(0, EventTarget), Tribute(-100), RulerHealth(-10), Axis("legitimacy", -8), Axis("prestige", -10), Axis("loyalty_nobles", -10), EndWar(Defeat)],
                 cause_tag: "war_lost_hostage",
                 hint: "Наследник, выросший у врага, вернётся чужим.",
-                told: "Королевское войско было разбито, и наследника престола отдали {neighbour.дат} в заложники.",
+                told: "Корона проиграла {war_lost}, и наследника престола отдали {neighbour.дат} в заложники.",
             ),
         ],
     ),
     (
         id: "war_draw",
         title: "Мир без победы",
-        text: "Ни одна сторона не одолела. {neighbour} готов к миру на прежних границах.",
+        text: "Корона выиграла {war_won} и проиграла {war_lost}: ни одна сторона не одолела. {neighbour} готов к миру на прежних границах.",
         when: All([WarStage(Peace), Not(WarScoreAbove(15)), Not(WarScoreBelow(-15))]),
         weight: 0,
         once: false,
@@ -209,14 +212,14 @@
                 effects: [Axis("prestige", -2), EndWar(Draw)],
                 cause_tag: "war_draw_peace",
                 hint: "Война без победы забывается быстрее всего.",
-                told: "Война с {neighbour.тв} кончилась ничем, и мир заключили на прежних границах.",
+                told: "Война с {neighbour.тв} кончилась ничем: выиграно {war_won}, проиграно {war_lost}, и мир заключили на прежних границах.",
             ),
             (
                 text: "Скрепить мир подарками",
                 effects: [Tribute(-30), Relation(EventTarget, 15), EndWar(Draw)],
                 cause_tag: "war_draw_gifts",
                 hint: "Подарки после войны соседи принимают за слабость или за дружбу.",
-                told: "Война с {neighbour.тв} кончилась без победы, и мир скрепили богатыми подарками.",
+                told: "Война с {neighbour.тв} кончилась без победы: выиграно {war_won}, проиграно {war_lost}, и мир скрепили богатыми подарками.",
             ),
         ],
     ),

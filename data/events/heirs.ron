@@ -188,7 +188,9 @@
         once: false,
         cooldown_years: 5,
         importance: 4,
-        target: Heir(0, 99),
+        // From rules.ron sim.heir_death_age on: a hunt is no trouble of a child, whose
+        // death is not an heir's (stage 25); children fall ill in heir_fever.
+        target: Heir(14, 99),
         choices: [
             (
                 text: "Позвать лучших лекарей",

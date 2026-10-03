@@ -59,6 +59,7 @@ fn two_heirs(w: &mut World) {
         married: false,
         married_in: None,
         bastard: false,
+        marks: Default::default(),
     });
 }
 
@@ -77,6 +78,7 @@ fn event(id: &str, effects: Vec<Effect>) -> Event {
         sign: Sign::Bad,
         target: EventTarget::None,
         omen: false,
+        unmarked: None,
         choices: vec![Choice {
             text: id.into(),
             effects,

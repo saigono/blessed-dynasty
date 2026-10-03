@@ -99,8 +99,8 @@ pub fn chronicle(
                 map.show(ui, &e.snapshot, d, &[]);
             });
             // The numbers of the year on hover (stage 22).
-            let more = ui.small(RichText::new(crate::NUMBERS).color(FG2));
-            more.on_hover_ui(|ui| snapshot_table(ui, e, d));
+            let more = RichText::new(crate::NUMBERS).small().color(FG2);
+            crate::tip_label(ui, more, |ui| snapshot_table(ui, e, d));
         });
     egui::CentralPanel::default().show(ui, |ui| {
         ui.set_max_width(680.0);

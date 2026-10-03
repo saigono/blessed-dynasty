@@ -48,6 +48,9 @@ pub struct Province {
     /// Set by `World::from_preset`; the graph never changes, so it stays valid.
     #[serde(default)]
     pub distance_to_capital: u32,
+    /// What decisions remember of this province (`Effect::Mark`, `Event::unmarked`).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub marks: BTreeSet<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -114,6 +117,9 @@ pub struct Heir {
     /// recognized (`HeirOp::Recognize`), he stands in `heirs` after the lawful ones.
     #[serde(default)]
     pub bastard: bool,
+    /// What decisions remember of this heir (`Effect::Mark`, `Event::unmarked`).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub marks: BTreeSet<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -141,6 +147,9 @@ pub struct Neighbour {
     /// the map colours by it.
     #[serde(default)]
     pub ordinal: u32,
+    /// What decisions remember of this state (`Effect::Mark`, `Event::unmarked`).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub marks: BTreeSet<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -440,6 +449,31 @@ impl World {
             .filter(|a| !self.active_actions.contains(a))
             .map(|a| Change::Done(a.id.clone(), a.target.clone()));
         (axes.chain(born).chain(gone).chain(holders).chain(done)).collect()
+    }
+
+    /// The marks of the province, neighbour or heir `t` names; None without one.
+    pub fn marks_mut(&mut self, t: Option<&crate::rules::Target>) -> Option<&mut BTreeSet<String>> {
+        use crate::rules::Target;
+        match t? {
+            Target::Province(id) => self.provinces.get_mut(id).map(|p| &mut p.marks),
+            Target::Neighbour(id) => self.neighbours.get_mut(id).map(|n| &mut n.marks),
+            Target::Heir(id) => (self.heirs.iter_mut())
+                .find(|h| h.id == *id)
+                .map(|h| &mut h.marks),
+        }
+    }
+
+    /// Whether `t` bears the mark `m`.
+    pub fn marked(&self, t: &crate::rules::Target, m: &str) -> bool {
+        use crate::rules::Target;
+        match t {
+            Target::Province(id) => self.provinces.get(id).is_some_and(|p| p.marks.contains(m)),
+            Target::Neighbour(id) => self.neighbours.get(id).is_some_and(|n| n.marks.contains(m)),
+            Target::Heir(id) => self
+                .heirs
+                .iter()
+                .any(|h| h.id == *id && h.marks.contains(m)),
+        }
     }
 
     /// Index in `heirs` of the heir with this id.
@@ -856,6 +890,7 @@ mod tests {
             neighbours: neighbours.iter().map(|n| pid(n)).collect(),
             crown_power: Fx(0),
             distance_to_capital: 0,
+            marks: BTreeSet::new(),
         };
         let nordmark = Holder::Foreign(NeighbourId("nordmark".into()));
         let mut map = vec![p("nordheim", nordmark, &["capital", "far"])];

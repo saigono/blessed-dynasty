@@ -702,7 +702,7 @@ impl Game {
     fn view(&self, p: &PendingEvent) -> EventView {
         let e = find_event(&self.data, &p.event_id).expect("pending events exist");
         let named = self.named(p);
-        let fill = |s: &str| crate::text::fill(s, &self.data.names, &named);
+        let fill = |s: &str| self.battles(crate::text::fill(s, &self.data.names, &named));
         let choices = e.choices.iter().map(|c| Choice {
             text: fill(&c.text),
             hint: c.hint.as_deref().map(fill),
@@ -760,8 +760,24 @@ impl Game {
         let c = find_event(&self.data, &p.event_id)?.choices.get(idx)?;
         let named = self.named(p);
         let year = (self.world.year()).to_string();
-        let told = crate::text::fill(&c.told, &self.data.names, &named);
+        let told = self.battles(crate::text::fill(&c.told, &self.data.names, &named));
         (!told.is_empty()).then(|| told.replace("{year}", &year))
+    }
+
+    /// `s` with `{war_won}` and `{war_lost}` filled in: the battles of the war going on the
+    /// crown won and lost, «2 сражения» (`WarRules.battles`). A battle that moved nothing
+    /// counts as neither. Without a war `s` stays as it is.
+    fn battles(&self, s: String) -> String {
+        let Some(war) = &self.world.war else {
+            return s;
+        };
+        let n = |won: bool| {
+            let moved = war.battles.iter().filter(|(_, d)| *d != Fx(0));
+            moved.filter(|(_, d)| (*d > Fx(0)) == won).count() as u32
+        };
+        let forms = &self.data.war.battles;
+        s.replace("{war_won}", &crate::text::plural(n(true), forms))
+            .replace("{war_lost}", &crate::text::plural(n(false), forms))
     }
 }
 
@@ -835,6 +851,8 @@ fn moves_crown_power(effects: &[Effect]) -> bool {
         Effect::Axis(..)
         | Effect::SetFlag(_)
         | Effect::ClearFlag(_)
+        | Effect::Mark(_)
+        | Effect::Unmark(_)
         | Effect::SpawnEvent(..)
         | Effect::RulerHealth(_)
         | Effect::HeirOp(_)
@@ -864,7 +882,16 @@ fn find_event<'a>(data: &'a Data, id: &str) -> Option<&'a Event> {
 
 /// `None`: the event needs no target. `Some(empty)`: it cannot fire now. Lazy: the pick
 /// asks every event of the pool each tick whether it has a target at all.
-fn candidates<'a>(
+fn candidates<'a>(e: &'a Event, w: &'a World) -> Option<Box<dyn Iterator<Item = Target> + 'a>> {
+    let all = candidates_of(&e.target, w)?;
+    match &e.unmarked {
+        Some(m) => Some(Box::new(all.filter(move |t| !w.marked(t, m)))),
+        None => Some(all),
+    }
+}
+
+/// The targets of `target`, marks aside (`candidates`).
+fn candidates_of<'a>(
     target: &'a EventTarget,
     w: &'a World,
 ) -> Option<Box<dyn Iterator<Item = Target> + 'a>> {
@@ -911,10 +938,10 @@ fn pick_event(
     offers: Vec<PendingEvent>,
 ) -> Option<PendingEvent> {
     let ready = |e: &Event| e.when.eval(w) && !(e.once && w.last_fired.contains_key(&e.id));
-    let targets = |e: &Event| candidates(&e.target, w).is_none_or(|mut t| t.next().is_some());
+    let targets = |e: &Event| candidates(e, w).is_none_or(|mut t| t.next().is_some());
     let fire = |e: &Event, rng: &mut Rng| {
         let mut pick = |t: Vec<Target>| t[rng.range(0, t.len() as i64) as usize].clone();
-        let target = candidates(&e.target, w).map(|t| pick(t.collect()));
+        let target = candidates(e, w).map(|t| pick(t.collect()));
         Some(PendingEvent {
             event_id: e.id.clone(),
             target,
@@ -1019,6 +1046,7 @@ mod tests {
             sign: Sign::Bad,
             target: EventTarget::None,
             omen: false,
+            unmarked: None,
             choices: vec![Choice {
                 text: id.into(),
                 effects,

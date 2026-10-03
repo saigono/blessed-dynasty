@@ -496,3 +496,65 @@ fn a_siege_takes_the_target() {
     assert_eq!(siege(1), (Holder::Crown, fell, false));
     assert_eq!(siege(0), (Holder::Foreign(nordmark()), None, true));
 }
+
+/// Acceptance, bug of playtest 02 (stage 25): a war may end with no battle that year, so
+/// its outcome card and its chronicle entry tell how many battles were won and lost.
+#[test]
+fn a_war_outcome_tells_its_battles() {
+    let mut seen = std::collections::BTreeSet::new();
+    for seed in 0..60 {
+        let mut g = war_only(seed);
+        declare(&mut g, "frostad");
+        for _ in 0..20 {
+            if let Step::Event(v) = g.wait().unwrap() {
+                if ["war_victory", "war_defeat", "war_draw"].contains(&v.event_id.as_str()) {
+                    assert!(
+                        v.text.contains(" сражени") && !v.text.contains('{'),
+                        "{}",
+                        v.text
+                    );
+                    for i in 0..v.choices.len() {
+                        let told = g.told(i).unwrap();
+                        assert!(told.contains(" сражени") && !told.contains('{'), "{told}");
+                    }
+                    seen.insert(v.event_id.clone());
+                }
+                g.choose((seed as usize) % v.choices.len()).unwrap();
+            }
+            if g.world.war.is_none() {
+                break;
+            }
+        }
+    }
+    assert_eq!(seen.len(), 3, "{seen:?}");
+}
+
+/// Stage 25: a court agrees to a suit less readily while the crown is at war with anyone
+/// (`marriage.war_penalty`); the war is no ban.
+#[test]
+fn a_war_lowers_the_chance_of_a_suit() {
+    let data = content();
+    let preset = Preset::load_with_map(PRESET, MAP, &data).unwrap();
+    let mut g = Game::new(data, &preset, 1);
+    g.world.heirs[0].age = 20; // someone to wed
+    let vestrum = NeighbourId("vestrum".into());
+    let chance = |g: &Game| g.data.marriage.chance(&g.world, &g.data, &vestrum);
+    let peace = chance(&g);
+    g.world.war = Some(bd_core::war::War {
+        enemy: nordmark(),
+        stage: bd_core::war::WarStage::Fighting,
+        our_strength: Fx(0),
+        their_strength: Fx(0),
+        war_score: Fx(0),
+        started: bd_core::time::Tick(0),
+        target: None,
+        battles: vec![],
+    });
+    let war = chance(&g);
+    assert!(war > Fx(0), "{peace:?} {war:?}");
+    assert_eq!(
+        peace - war,
+        g.data.marriage.war_penalty,
+        "{peace:?} {war:?}"
+    );
+}

@@ -552,3 +552,213 @@ fn lint_reports_broken_references_and_hints() {
     data.war.start_event = "ghost_war".into();
     assert_eq!(lint::named(&data), ["rules.ron: нет события ghost_war"]);
 }
+
+/// The effects of `es`, the nested ones of chances, friends and suits included.
+fn all_effects(es: &[Effect]) -> Vec<&Effect> {
+    let mut out = vec![];
+    for e in es {
+        out.push(e);
+        match e {
+            Effect::Chance(c) => out.extend(
+                all_effects(&c.then)
+                    .into_iter()
+                    .chain(all_effects(&c.otherwise)),
+            ),
+            Effect::IfFriendly(es) => out.extend(all_effects(es)),
+            Effect::Marry { then, otherwise } => {
+                out.extend(all_effects(then).into_iter().chain(all_effects(otherwise)))
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Bug of playtest 02 (stage 25): an event that may take its heir away targets no one
+/// younger than `sim.heir_death_age`, so its death is an heir's everywhere, as the
+/// chronicle tells it («Беда с наследником» once hunted with babies).
+#[test]
+fn an_heir_taken_by_an_event_is_of_heir_death_age() {
+    use bd_core::rules::{EventTarget, HeirOp};
+    let data = load_all();
+    let age = data.sim.heir_death_age;
+    let mut checked = 0;
+    for e in data.events.iter().chain(&data.sim_events) {
+        let effects = e.choices.iter().flat_map(|c| all_effects(&c.effects));
+        if !effects
+            .into_iter()
+            .any(|x| *x == Effect::HeirOp(HeirOp::TargetRemove))
+        {
+            continue;
+        }
+        let lo = match e.target {
+            EventTarget::Heir(lo, _) | EventTarget::UnmarriedHeir(lo, _) => lo,
+            _ => panic!("{}: removes a target heir without one", e.id),
+        };
+        assert!(
+            lo >= age,
+            "{}: heirs from {lo}, told as heirs from {age}",
+            e.id
+        );
+        checked += 1;
+    }
+    assert!(checked >= 2, "heir_death and heir_first_campaign at least");
+}
+
+/// The default game of `seed` with event `id` waiting at `target`.
+fn waiting(seed: u64, id: &str, target: Option<bd_core::rules::Target>) -> Game {
+    let data = load_all();
+    let preset = preset(&read("presets/default.ron"), &data);
+    let mut g = Game::new(data, &preset, seed);
+    g.pending_event = Some(bd_core::game::PendingEvent {
+        event_id: id.into(),
+        target,
+        neighbour: None,
+    });
+    g
+}
+
+/// Whether event `id` could fire at `target` now: its `when`, and for a province its filter.
+fn could_fire(g: &Game, id: &str, target: &Option<bd_core::rules::Target>) -> bool {
+    use bd_core::rules::{EventTarget, Target};
+    let e = g.data.events.iter().find(|e| e.id == id).unwrap();
+    let w = &g.world;
+    let here = match (&e.target, target) {
+        (EventTarget::RandomProvince(f), Some(Target::Province(p))) => {
+            f.matches(&w.provinces[p], w)
+        }
+        _ => true,
+    };
+    let marked =
+        (e.unmarked.as_ref()).is_some_and(|m| target.as_ref().is_some_and(|t| w.marked(t, m)));
+    e.when.eval(w) && here && !marked
+}
+
+/// Plays `g` for `years`, event `id` the likeliest and off cooldown, its other events by
+/// their first choice and `id` by its last one. Returns the targets `id` fired at.
+fn fired_at(g: &mut Game, id: &str, years: u32) -> Vec<bd_core::rules::Target> {
+    for e in &mut g.data.events {
+        if e.id == id {
+            (e.weight, e.cooldown_years) = (1_000_000, bd_core::time::Years(0));
+        }
+    }
+    let mut at = vec![];
+    for _ in 0..years {
+        match g.wait() {
+            Ok(Step::Event(v)) => {
+                let fire = v.event_id == id;
+                at.extend(v.target.clone().filter(|_| fire));
+                let last = v.choices.len() - 1;
+                assert!(
+                    g.choose(if fire { last } else { 0 }).is_ok(),
+                    "the reign ended"
+                );
+            }
+            Ok(Step::ReignEnded { .. }) | Err(_) => break,
+            Ok(_) => {}
+        }
+    }
+    at
+}
+
+/// Chooses `choice` of the event waiting in `g` and checks its target is marked `mark`.
+fn decide(g: &mut Game, choice: &str, mark: &str) -> bd_core::rules::Target {
+    let p = g.pending_event.clone().unwrap();
+    let e = g.data.events.iter().find(|e| e.id == p.event_id).unwrap();
+    let i = e.choices.iter().position(|c| c.text == choice).unwrap();
+    g.choose(i).unwrap();
+    let t = p.target.unwrap();
+    assert!(g.world.marked(&t, mark), "{t:?}");
+    t
+}
+
+/// Acceptance, bug of playtest 02 (stage 25): a town rebuilt in stone does not burn again;
+/// the other crown provinces still do.
+#[test]
+fn a_town_rebuilt_in_stone_burns_no_more() {
+    use bd_core::rules::Target;
+    let capital = Target::Province(bd_core::state::ProvinceId("capital".into()));
+    let mut g = waiting(1, "cap_fire", Some(capital.clone()));
+    decide(&mut g, "Строить заново только из камня", "stone");
+    let at = fired_at(&mut g, "cap_fire", 30);
+    assert!(!at.contains(&capital), "{at:?}");
+    assert!(at.len() >= 5, "{at:?}");
+}
+
+/// Acceptance (stage 25): a neighbour with a treaty sends no other embassy, the others do;
+/// a war with it breaks the treaty.
+#[test]
+fn a_treaty_is_signed_once_until_a_war() {
+    use bd_core::rules::Target;
+    let nordmark = Target::Neighbour(bd_core::state::NeighbourId("nordmark".into()));
+    let mut g = waiting(5, "nb_embassy", Some(nordmark.clone()));
+    decide(&mut g, "Подписать договор", "treaty");
+    let at = fired_at(&mut g, "nb_embassy", 20);
+    assert!(!at.contains(&nordmark) && !at.is_empty(), "{at:?}");
+    g.pending_event = Some(bd_core::game::PendingEvent {
+        event_id: "war_declared".into(),
+        target: Some(nordmark.clone()),
+        neighbour: None,
+    });
+    g.choose(2).unwrap();
+    assert!(!g.world.marked(&nordmark, "treaty"));
+}
+
+/// Acceptance (stage 25): an heir with an appanage does not ask again, his brother does.
+#[test]
+fn an_heir_with_an_appanage_asks_no_more() {
+    use bd_core::rules::Target;
+    let mut g = waiting(1, "heir_appanage", None);
+    let brother = g.data.newborn(g.world.next_heir_id);
+    g.world.add_heir(brother);
+    for h in &mut g.world.heirs {
+        h.age = 18;
+    }
+    let first = Target::Heir(g.world.heirs[0].id);
+    g.pending_event.as_mut().unwrap().target = Some(first.clone());
+    decide(&mut g, "Дать удел в кормление", "appanage");
+    let at = fired_at(&mut g, "heir_appanage", 10);
+    assert!(!at.contains(&first) && !at.is_empty(), "{at:?}");
+}
+
+/// Bug of playtest 02 (stage 25): every other decision for good is remembered too, and
+/// its event does not ask again (at that place, for a province).
+#[test]
+fn decisions_for_good_are_remembered() {
+    use bd_core::rules::Target;
+    let province = |p: &str| Some(Target::Province(bd_core::state::ProvinceId(p.into())));
+    for (id, target, choice) in [
+        ("cap_guild_charter", None, "Даровать хартию"),
+        ("cap_guild_charter", None, "Продать хартию за серебро"),
+        ("fac_church_demands", None, "Платить десятину"),
+        ("omen_search_decree", None, "Издать указ о бессрочном сыске"),
+        ("dis_flood", province("berg"), "Насыпать валы"),
+        (
+            "prov_pilgrimage",
+            province("holm"),
+            "Поставить у источника обитель",
+        ),
+    ] {
+        let mut g = waiting(1, id, target.clone());
+        for (a, v) in [
+            ("loyalty_church", 50),
+            ("loyalty_nobles", 70),
+            ("serfdom", 50),
+        ] {
+            g.world.axes.insert(
+                bd_core::state::AxisId(a.into()),
+                bd_core::fx::Fx::from_int(v),
+            );
+        }
+        assert!(could_fire(&g, id, &target), "{id}");
+        let e = g.data.events.iter().find(|e| e.id == id).unwrap();
+        let i = e.choices.iter().position(|c| c.text == choice).unwrap();
+        g.choose(i).unwrap();
+        assert!(!could_fire(&g, id, &target), "{id}: {choice}");
+    }
+    // A cathedral consecrated is not asked for again.
+    let mut g = waiting(1, "cap_cathedral_consecrated", None);
+    g.world.flags.insert("cathedral_building".into());
+    g.choose(0).unwrap();
+    assert!(!could_fire(&g, "cap_cathedral", &None));
+}

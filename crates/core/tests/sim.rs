@@ -138,9 +138,15 @@ fn golden_seed_42_script_a() {
     // horizon; omens are told whatever their importance.
     // Stage 24: the trait `defiant` rolls at every coronation and two events join the pool
     // (royal_will, forged_will): the same outcome by another road, Конрад reigns 22 years.
+    // Stage 25: decisions for good are remembered (a city in stone burns no more, the dikes
+    // hold, a charter or a cathedral is not asked for again), a hunt is no trouble of an heir
+    // under 14: other events from the founder's first years. He dies in 1223. Then marks on
+    // the target (a fire in a province, a treaty, an appanage), weddings open in peace with the
+    // automaton's weight on them lowered: Конрад reigns 35 years and the dynasty lives to the
+    // horizon (usurped in the year 213 before the marks).
     assert_eq!(
         (c.years, &c.fall, c.entries.len()),
-        (300, &FallReason::Alive, 77)
+        (300, &FallReason::Alive, 97)
     );
     let hint = |h: &'static str| Some(h);
     assert_eq!(
@@ -148,24 +154,44 @@ fn golden_seed_42_script_a() {
         [
             (
                 "Новое правление",
-                "После Ульриха Набожного на престол взошёл Конрад.",
-                hint("Основатель породнил наследника с домом своего барона."),
-            ),
-            (
-                "Мятеж дома Вейр",
-                "Дом Вейр поднял мятеж в земле Берг и отказался присягать короне, и Конрад двинул на мятежников войско.",
-                hint("Вассал, которому основатель доверил меч, привык к нему."),
+                "После Ульриха Набожного на престол взошёл Конрад. Страна вздохнула спокойно: новый король не любил поспешных решений.",
+                hint("Наследник основателя учился власти в королевском совете."),
             ),
             (
                 "Мятеж дома Арден",
-                "Дом Арден поднял мятеж в земле Арден, но корона откупилась от него золотом и титулами.",
-                hint("Вассал, которому основатель доверил меч, привык к нему."),
+                "Дом Арден поднял мятеж в земле Мар, и Конрад признал его независимость.",
+                hint("Набег, отбитый при основателе, научил соседа осторожности."),
+            ),
+            (
+                "Потеря земли",
+                "Земля Арден отошла под руку Ардена.",
+                hint("Набег, отбитый при основателе, научил соседа осторожности."),
             ),
         ]
     );
     // The same seed and decisions give the same chronicle.
     let (g2, end2) = script_a(42);
     assert_eq!(sim::run(end2, &g2.data, g2.rng.clone()), c);
+}
+
+/// Acceptance, bug of playtest 02 (stage 25): the chronicle tells how a war ended in battles
+/// won and lost, a war may end in a year without one.
+#[test]
+fn a_war_ends_in_the_chronicle_with_its_battles() {
+    let (g, end) = script_a(42);
+    let c = sim::run(end, &g.data, g.rng.clone());
+    let outcomes = ["war_victory", "war_defeat", "war_draw"];
+    let ends: Vec<_> = (c.entries.iter())
+        .filter(|e| e.event.as_deref().is_some_and(|id| outcomes.contains(&id)))
+        .collect();
+    assert!(!ends.is_empty());
+    for e in ends {
+        assert!(
+            e.text.contains("сражени") && !e.text.contains('{'),
+            "{}",
+            e.text
+        );
+    }
 }
 
 /// Stage 24 golden: script A with the founder's testament written in his first year
@@ -197,11 +223,13 @@ fn golden_seed_42_script_a_with_a_testament() {
         }
     });
     let c = sim::run(end, &g.data, g.rng.clone());
+    // Stage 25: another reign (see golden_seed_42_script_a) and another dynasty: usurped in
+    // the year 104 before, then alive at the horizon before the marks and the weddings in
+    // peace; with them the crown loses its last land in the year 149.
     assert_eq!(
         (c.years, &c.fall, c.entries.len()),
-        (104, &FallReason::Usurped, 27)
+        (149, &FallReason::NoCrownLand, 37)
     );
-    // The bad luck of seed 42 under a will paid for at 32: usurped in the year 104.
     assert_eq!(
         texts(&c)[0],
         (
@@ -308,6 +336,7 @@ fn heirs(data: &Data, list: &[(u32, i64, HeirStatus)]) -> Game {
             married: *age >= 16,
             married_in: None,
             bastard: false,
+            marks: Default::default(),
         });
     }
     g
@@ -779,8 +808,9 @@ fn decisions_mark_what_they_touch_and_marks_fade() {
 }
 
 /// Stage 17b: a war takes the year's event (its events are deferred and go first), and
-/// `heir_marriage` with it; the automaton weds the heir by `marry_heir` all the same. Only an
-/// heir unwed and of `marriage.age` is offered.
+/// `heir_marriage` with it; the automaton weds the heir by `marry_heir` all the same (stage
+/// 25: by its weight, about every other year, so within a few picks). Only an heir unwed and
+/// of `marriage.age` is offered, in peace (stage 25) as in war.
 #[test]
 fn an_heir_weds_in_war() {
     let mut data = content();
@@ -800,6 +830,9 @@ fn an_heir_weds_in_war() {
     g.world
         .axes
         .insert(AxisId("treasury".into()), Fx::from_int(100));
+    let groom = g.world.heirs.iter().find(|h| h.age == 15).unwrap().id;
+    let wedding = vec![("marry_heir".into(), vec![Target::Heir(groom)])];
+    assert_eq!(g.available_actions(), wedding);
     let nordmark = bd_core::state::NeighbourId("nordmark".into());
     g.world.war = Some(bd_core::war::War {
         enemy: nordmark.clone(),
@@ -817,14 +850,11 @@ fn an_heir_weds_in_war() {
         neighbour: None,
     };
     g.queue.push((Tick(g.world.tick.0 + 1), clash));
-    let groom = g.world.heirs.iter().find(|h| h.age == 15).unwrap().id;
-    let offered = g.available_actions();
-    assert_eq!(
-        offered,
-        vec![("marry_heir".into(), vec![Target::Heir(groom)])]
-    );
+    assert_eq!(g.available_actions(), wedding);
     let auto = AutoChooser::for_ruler(&data, &g.world.ruler);
-    let (id, target) = auto.action(&mut g).expect("a wedding");
+    let (id, target) = (0..10)
+        .find_map(|_| auto.action(&mut g))
+        .expect("a wedding");
     g.start_action(&id, target).unwrap();
     let Step::Event(v) = g.wait().unwrap() else {
         panic!("the war goes on");
@@ -1106,20 +1136,21 @@ fn year_changes_of_seed_42_script_a() {
     let [g1, g2] = granted("gart");
     let [l1, l2] = granted("lugovo");
     let [b1, b2] = granted("berg");
-    let people = |v| Change::Axis(ax("loyalty_people"), Fx(v));
+    // Stage 25: other events (a fire in stone remembered, heirs' hunts from 14 on).
+    let born = |n: &str| Change::Born(n.into());
     let want = vec![
-        (1188, vec![nobles(9), g1, g2]),
-        (1189, vec![nobles(9), Change::Born("Генрих".into()), l1, l2]),
-        (1190, vec![nobles(10), b1, b2]),
-        (1192, vec![Change::Born("Ирмгард".into())]),
-        (1194, vec![axis("army", 20)]),
-        (1197, vec![axis("loyalty_church", 6)]),
-        (1198, vec![Change::Born("Гизела".into())]),
-        (1199, vec![axis("army", 15), nobles(-6)]),
-        (1202, vec![Change::Born("Аделина".into())]),
-        (1205, vec![people(5_904)]),
-        (1217, vec![axis("legitimacy", 6), axis("prestige", 15)]),
-        (1228, vec![axis("loyalty_church", 5)]),
+        (1188, vec![axis("army", 20), nobles(9), g1, g2]),
+        (1189, vec![nobles(14), born("Генрих"), l1, l2]),
+        (1190, vec![nobles(7), b1, b2]),
+        (1192, vec![born("Освальд")]),
+        (1193, vec![born("Рейнхольд")]),
+        (
+            1194,
+            vec![born("Аделина"), Change::HeirGone("Освальд".into())],
+        ),
+        (1203, vec![axis("loyalty_church", 5)]),
+        (1205, vec![axis("legitimacy", 6), axis("prestige", 15)]),
+        (1215, vec![axis("loyalty_church", 5)]),
     ];
     assert_eq!(log, want);
 }
@@ -1137,23 +1168,24 @@ fn kin_of_seed_42_script_a() {
     );
     assert_eq!((k[0].crowned, k[0].parent), (Some(1187), None));
     assert_eq!(k[0].died, Some(1187 + c.rulers[0].end.0));
-    // Конрад, 6 at the start, reigned 1229..1251 (stage 24); his siblings died uncrowned.
+    // Конрад, 6 at the start, reigned 1223..1258 (stage 25); his siblings died uncrowned,
+    // Освальд a child.
     assert_eq!(
         (k[1].name.as_str(), k[1].born, k[1].crowned, k[1].died),
-        ("Конрад", 1181, Some(1229), Some(1251))
+        ("Конрад", 1181, Some(1223), Some(1258))
     );
     assert_eq!(
         (k[2].name.as_str(), k[2].born, k[2].parent, k[2].crowned),
         ("Генрих", 1189, Some(0), None)
     );
-    assert_eq!(k[2].died, Some(1257));
+    assert_eq!(k[2].died, Some(1250));
     assert_eq!(
         (k[3].name.as_str(), k[3].born, k[3].parent, k[3].died),
-        ("Ирмгард", 1192, Some(0), Some(1237))
+        ("Освальд", 1192, Some(0), Some(1194))
     );
     assert_eq!(
         (k[4].name.as_str(), k[4].born, k[4].parent, k[4].died),
-        ("Гизела", 1198, Some(0), Some(1271))
+        ("Рейнхольд", 1193, Some(0), Some(1235))
     );
     // Every ruler in the chronicle is a crowned kin, in order; children point at a ruler.
     let crowned: Vec<(&str, u32)> = (k.iter())

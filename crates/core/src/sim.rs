@@ -562,10 +562,10 @@ pub fn fuse(
         None => &f.next_year,
     };
     let join = Some(text::pick(joins, salt, n)).filter(|j| !j.is_empty())?;
-    let first = a.text.trim_end().trim_end_matches('.');
-    let text = join
-        .replace("{a}", first)
-        .replace("{b}", &lower(d, w, b.text));
+    // Both without their full stops: the join ends the sentence.
+    let bare = |s: &'_ str| s.trim_end().trim_end_matches('.').to_string();
+    let second = lower(d, w, &bare(b.text));
+    let text = put(join, "{b}", &second, &d.sim.texts.clauses).replace("{a}", &bare(a.text));
     Some((pair.map_or(String::new(), |p| p.title.clone()), text))
 }
 
@@ -673,7 +673,7 @@ fn reign_deeds<'a>(c: &Chronicle, from: usize, g: &'a Game, salt: u64) -> Vec<St
     main.sort_by_key(|i| (Reverse(c.entries[*i].importance), *i));
     main.truncate(life.deeds);
     main.sort();
-    let mut last: Option<u32> = None;
+    let (mut last, mut said): (Option<u32>, &str) = (None, "");
     (main.into_iter())
         .map(|i| {
             let e = &c.entries[i];
@@ -690,10 +690,27 @@ fn reign_deeds<'a>(c: &Chronicle, from: usize, g: &'a Game, salt: u64) -> Vec<St
                 Some(_) => some(&life.later),
             };
             let phrases = phrases.unwrap_or(&life.deed);
-            let phrase = text::pick(phrases, salt, LIFE + i as u64);
-            phrase.replace("{deed}", deed).replace("{year}", &year)
+            let mut phrase = text::pick(phrases, salt, LIFE + i as u64);
+            // Never the same link twice in a row: the next one of its list instead.
+            if phrase == said {
+                let k = phrases.iter().position(|p| p == phrase).unwrap_or(0);
+                phrase = &phrases[(k + 1) % phrases.len()];
+            }
+            said = phrase;
+            put(phrase, "{deed}", deed, &d.sim.texts.clauses).replace("{year}", &year)
         })
         .collect()
+}
+
+/// `phrase` with `part` at `key`, a comma before it when it opens a clause of its own
+/// (`SimTexts.clauses`) and no colon stands there.
+fn put(phrase: &str, key: &str, part: &str, clauses: &[String]) -> String {
+    let opens = clauses.iter().any(|c| part.starts_with(c.as_str()));
+    let phrase = match opens && !phrase.contains(&format!(": {key}")) {
+        true => phrase.replace(&format!(" {key}"), &format!(", {key}")),
+        false => phrase.to_string(),
+    };
+    phrase.replace(key, part)
 }
 
 /// `s` from a small letter, unless its first word is a name.

@@ -454,6 +454,6 @@ pub fn variants(data: &Data) -> Vec<String> {
     all.extend(names);
     (all.into_iter())
         .filter(|(_, n, min)| n < min)
-        .map(|(k, n, min)| format!("{k}: {n} вариантов, нужно не меньше {min}"))
+        .map(|(k, n, min)| format!("{k}: вариантов {n}, нужно не меньше {min}"))
         .collect()
 }

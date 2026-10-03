@@ -706,7 +706,7 @@ fn a_treaty_is_signed_once_until_a_war() {
     use bd_core::rules::Target;
     let nordmark = Target::Neighbour(bd_core::state::NeighbourId("nordmark".into()));
     let mut g = waiting(5, "nb_embassy", Some(nordmark.clone()));
-    decide(&mut g, "Подписать договор", "treaty");
+    decide(&mut g, "Подписать договор с соседом", "treaty");
     let at = fired_at(&mut g, "nb_embassy", 20);
     assert!(!at.contains(&nordmark) && !at.is_empty(), "{at:?}");
     g.pending_event = Some(bd_core::game::PendingEvent {
@@ -730,7 +730,7 @@ fn an_heir_with_an_appanage_asks_no_more() {
     }
     let first = Target::Heir(g.world.heirs[0].id);
     g.pending_event.as_mut().unwrap().target = Some(first.clone());
-    decide(&mut g, "Дать удел в кормление", "appanage");
+    decide(&mut g, "Дать наследнику удел в кормление", "appanage");
     let at = fired_at(&mut g, "heir_appanage", 10);
     assert!(!at.contains(&first) && !at.is_empty(), "{at:?}");
 }
@@ -742,11 +742,11 @@ fn decisions_for_good_are_remembered() {
     use bd_core::rules::Target;
     let province = |p: &str| Some(Target::Province(bd_core::state::ProvinceId(p.into())));
     for (id, target, choice) in [
-        ("cap_guild_charter", None, "Даровать хартию"),
+        ("cap_guild_charter", None, "Даровать хартию вольностей"),
         ("cap_guild_charter", None, "Продать хартию за серебро"),
-        ("fac_church_demands", None, "Платить десятину"),
+        ("fac_church_demands", None, "Платить церкви десятину"),
         ("omen_search_decree", None, "Издать указ о бессрочном сыске"),
-        ("dis_flood", province("berg"), "Насыпать валы"),
+        ("dis_flood", province("berg"), "Насыпать вдоль реки валы"),
         (
             "prov_pilgrimage",
             province("holm"),

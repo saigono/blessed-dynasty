@@ -1921,7 +1921,7 @@ mod tests {
             let expected = match id.as_str() {
                 // The raid hits a province and names its raider.
                 "neighbour_raid" => {
-                    assert!(text.contains("Отряды Нордмарк"), "{text}");
+                    assert!(text.contains("Нордмарк"), "{text}");
                     Target::Province(pid("arden"))
                 }
                 "neighbour_ultimatum" | "neighbour_war_declared" => {

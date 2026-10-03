@@ -29,12 +29,13 @@ const NAMES: &str = include_str!("../../../data/names.ron");
 const HINTS: &str = include_str!("../../../data/hints.ron");
 const SCORE: &str = include_str!("../../../data/score.ron");
 /// Every top-level file of data/events, in file name order like the CLI.
-const EVENTS: [&str; 6] = [
+const EVENTS: [&str; 7] = [
     include_str!("../../../data/events/death.ron"),
     include_str!("../../../data/events/heirs.ron"),
     include_str!("../../../data/events/neighbours.ron"),
     include_str!("../../../data/events/omens.ron"),
     include_str!("../../../data/events/reign.ron"),
+    include_str!("../../../data/events/stories.ron"),
     include_str!("../../../data/events/war.ron"),
 ];
 /// Every file of data/events/sim, in file name order.

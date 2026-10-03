@@ -367,7 +367,7 @@ fn the_automaton_changes_the_law_by_its_weights() {
         .iter()
         .find(|e| e.title == "Новый закон о престоле");
     let e = e.expect("the change is told");
-    assert!(e.text.contains("закону «Салический закон»"), "{}", e.text);
+    assert!(e.text.contains("закон «Салический закон»"), "{}", e.text);
     assert!(e.snapshot.flags.contains("law_salic"));
 }
 
@@ -500,18 +500,18 @@ fn the_traits_of_a_new_ruler_shift_the_axes() {
         (65, 60)
     );
     assert_eq!(at(&e, "loyalty_people"), 50);
-    let cheer = |e: &bd_core::sim::ChronicleEntry, s: &str| e.text.ends_with(&format!(". {s}"));
-    assert!(
-        cheer(&e, "Церковь возрадовалась: новый король был набожен."),
-        "{}",
-        e.text
-    );
+    // The pious trait's told or one of its other ways (stage 26c), of a king or a queen.
+    let pious = data.sim.traits.iter().find(|t| t.id == "pious").unwrap();
+    let ways: Vec<_> = std::iter::once(&pious.told).chain(&pious.retold).collect();
+    let cheer = |e: &bd_core::sim::ChronicleEntry, queen: bool| {
+        ways.iter().any(|(m, f)| {
+            let s = if queen { f } else { m };
+            e.text.ends_with(&format!(". {s}"))
+        })
+    };
+    assert!(cheer(&e, false), "{}", e.text);
     let e = crowned(&data, F, 80, &FACTIONS);
-    assert!(
-        cheer(&e, "Церковь возрадовалась: новая королева была набожна."),
-        "{}",
-        e.text
-    );
+    assert!(cheer(&e, true), "{}", e.text);
 }
 
 fn court(id: &str) -> NeighbourId {

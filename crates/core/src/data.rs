@@ -1024,6 +1024,10 @@ pub struct SimTexts {
     /// Two linked events told in one entry (stage 26c, `sim::fuse`).
     #[serde(default)]
     pub fuse: Fuse,
+    /// Openings of a told that start a clause of their own (stage 26c): a life or a fused
+    /// entry puts a comma before such a part («Вскоре, пока орда...»), after no colon.
+    #[serde(default)]
+    pub clauses: Vec<String>,
 }
 
 /// Two events of one year or of two years running, told one after the other, become one

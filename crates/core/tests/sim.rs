@@ -133,9 +133,12 @@ fn golden_seed_42_script_a() {
     // Кунигунда inherits a shrinking realm and Вейр takes it in the year 82.
     // Stage 19: the automaton weighs laws by their anchors, upkeep and the pressure of the
     // factions; the Смута of a split society
+    // Stage 20: events move the hidden nodes, omens and the schism, the founder's reign draws
+    // other events: Конрад reigns three years, Хедвига 23, and the dynasty lives to the
+    // horizon; omens are told whatever their importance.
     assert_eq!(
         (c.years, &c.fall, c.entries.len()),
-        (176, &FallReason::NoCrownLand, 50)
+        (300, &FallReason::Alive, 129)
     );
     let hint = |h: &'static str| Some(h);
     assert_eq!(
@@ -143,18 +146,18 @@ fn golden_seed_42_script_a() {
         [
             (
                 "Новое правление",
-                "Престол наследует Конрад. Знать ликует: на троне воинственный король.",
-                hint("Наследника наказали при всём дворе ещё при основателе."),
+                "Престол наследует Конрад.",
+                hint("Основатель породнил наследника с домом своего барона."),
             ),
             (
-                "Спор о короне",
-                "Корона сложена до срока. Бароны не признают наследника и называют своих претендентов.",
+                "Новое правление",
+                "Престол наследует Хедвига. Страна спокойна: на троне осторожная королева.",
                 None,
             ),
             (
-                "Великое бедствие",
-                "В тот год великое наводнение, а за ним мор опустошили землю Сол.",
-                hint("Основатель простил подати голодному краю."),
+                "Мятеж дома Вейр",
+                "В тот год дом Вейр поднял мятеж в земле Вейр и отказался присягать короне.",
+                hint("Вассал, которому основатель доверил меч, привык к нему."),
             ),
         ]
     );
@@ -1057,23 +1060,17 @@ fn year_changes_of_seed_42_script_a() {
     let people = |v| Change::Axis(ax("loyalty_people"), Fx(v));
     let want = vec![
         (1188, vec![nobles(9), g1, g2]),
-        (1189, vec![nobles(9), l1, l2]),
-        (1190, vec![nobles(7), b1, b2]),
-        (1191, vec![nobles(-6)]),
-        (1193, vec![Change::Born("Генрих".into())]),
-        (1199, vec![Change::Born("Освальд".into())]),
-        (1200, vec![people(5_928)]),
-        (1201, vec![nobles(-6)]),
-        (
-            1202,
-            vec![axis("army", 20), Change::Born("Рейнхольд".into())],
-        ),
-        (1204, vec![axis("loyalty_church", 5)]),
-        (1207, vec![nobles(6)]),
-        (1212, vec![Change::Axis(ax("loyalty_nobles"), Fx(-6_480))]),
-        (1220, vec![nobles(5)]),
-        (1221, vec![axis("army", 20)]),
-        (1223, vec![axis("loyalty_church", 6)]),
+        (1189, vec![nobles(9), Change::Born("Генрих".into()), l1, l2]),
+        (1190, vec![nobles(10), b1, b2]),
+        (1192, vec![Change::Born("Ирмгард".into())]),
+        (1194, vec![axis("army", 20)]),
+        (1197, vec![axis("loyalty_church", 6)]),
+        (1198, vec![Change::Born("Гизела".into())]),
+        (1199, vec![axis("army", 15), nobles(-6)]),
+        (1202, vec![Change::Born("Аделина".into())]),
+        (1205, vec![people(5_904)]),
+        (1217, vec![axis("legitimacy", 6), axis("prestige", 15)]),
+        (1228, vec![axis("loyalty_church", 5)]),
     ];
     assert_eq!(log, want);
 }
@@ -1091,23 +1088,23 @@ fn kin_of_seed_42_script_a() {
     );
     assert_eq!((k[0].crowned, k[0].parent), (Some(1187), None));
     assert_eq!(k[0].died, Some(1187 + c.rulers[0].end.0));
-    // Конрад, 6 at the start, reigned 1225..1254; his brothers died uncrowned, as below.
+    // Конрад, 6 at the start, reigned 1229..1232; his siblings died uncrowned, as below.
     assert_eq!(
         (k[1].name.as_str(), k[1].born, k[1].crowned, k[1].died),
-        ("Конрад", 1181, Some(1225), Some(1257))
+        ("Конрад", 1181, Some(1229), Some(1232))
     );
     assert_eq!(
         (k[2].name.as_str(), k[2].born, k[2].parent, k[2].crowned),
-        ("Генрих", 1193, Some(0), None)
+        ("Генрих", 1189, Some(0), None)
     );
-    assert_eq!(k[2].died, Some(1270));
+    assert_eq!(k[2].died, Some(1261));
     assert_eq!(
         (k[3].name.as_str(), k[3].born, k[3].parent, k[3].died),
-        ("Освальд", 1199, Some(0), Some(1271))
+        ("Ирмгард", 1192, Some(0), Some(1245))
     );
     assert_eq!(
         (k[4].name.as_str(), k[4].born, k[4].parent, k[4].died),
-        ("Рейнхольд", 1202, Some(0), Some(1268))
+        ("Гизела", 1198, Some(0), Some(1274))
     );
     // Every ruler in the chronicle is a crowned kin, in order; children point at a ruler.
     let crowned: Vec<(&str, u32)> = (k.iter())

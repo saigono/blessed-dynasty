@@ -659,8 +659,9 @@ fn percent(n: usize, of: usize) -> usize {
     (n * 100).checked_div(of).unwrap_or(0)
 }
 
-/// Every chronicle entry, and under it each decision behind it: when, its tag and target,
-/// the weight of its marks left at the entry, the event.
+/// Every chronicle entry, its chain (nodes from the start, law, decision: text) and under it
+/// each decision behind it: when, its tag and target, the weight of its marks left at the
+/// entry, the event; at last how the dynasty ended.
 fn trace(g: &Game, c: &sim::Chronicle) -> String {
     let w = &g.world;
     let mut out = String::new();
@@ -668,6 +669,16 @@ fn trace(g: &Game, c: &sim::Chronicle) -> String {
         let date = e.tick.date(w.time_unit, w.start_year);
         let event = e.event.as_deref().unwrap_or("-");
         out += &format!("{date} {} [{event}]\n", e.title);
+        if let Some(ch) = &e.chain {
+            let nodes: Vec<&str> = ch.nodes.iter().map(|a| a.0.as_str()).collect();
+            let law = ch.law.as_deref().unwrap_or("-");
+            let decision = ch.decision.map_or("-".into(), |i| format!("#{i}"));
+            out += &format!(
+                "  цепочка {decision} {law} → {}: {}\n",
+                nodes.join(" → "),
+                ch.text
+            );
+        }
         if e.causes.is_empty() {
             out += "  без решений основателя\n";
         }
@@ -684,7 +695,7 @@ fn trace(g: &Game, c: &sim::Chronicle) -> String {
             );
         }
     }
-    out
+    out + &format!("конец {:?} на {}-м году\n", c.fall, c.years)
 }
 
 /// Every simulated year of `node`: its value, its target and the `Target` edges into it,
@@ -846,7 +857,8 @@ fn print_dynasty(g: &Game, c: &sim::Chronicle, s: &score::Score) {
     }
 }
 
-/// `soft`: a Wait while an event waits takes its middle choice instead of failing, and a step
+/// `soft`: a Wait or an Action while an event waits takes its middle choice instead of
+/// failing, and a step
 /// that does not fit the game (a script of another seed) is skipped. `log` gets
 /// the treasury at the end of every year (see `note`).
 fn play_script(
@@ -859,6 +871,13 @@ fn play_script(
         // The rest of the script has no reign to act in.
         if g.ended.is_some() {
             break;
+        }
+        // Soft: an action waits for no event, it takes the middle choice first.
+        if soft
+            && let ScriptStep::Action(..) = step
+            && let Some(choices) = pending_choices(g)
+        {
+            g.choose((choices.len() - 1) / 2).map_err(err)?;
         }
         let res = match step {
             ScriptStep::Wait(_) if g.pending_event.is_some() && !soft => {
@@ -1051,11 +1070,11 @@ mod tests {
         let mut g = game();
         let steps = "[Wait(5), Wait(1), Action(\"nope\", None)]";
         play_script(&mut g, &script(steps), true, &mut vec![]).unwrap();
-        // An event every tick: each one waiting when the next tick comes takes the middle;
-        // the unknown action is skipped.
+        // An event every tick: each one waiting when the next tick or an action comes takes
+        // the middle; the unknown action is skipped.
         assert_eq!(g.world.tick, Tick(6));
-        assert_eq!(tags(&g), ["b"; 5]);
-        assert!(g.pending_event.is_some());
+        assert_eq!(tags(&g), ["b"; 6]);
+        assert!(g.pending_event.is_none());
     }
 
     #[test]

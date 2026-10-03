@@ -157,6 +157,75 @@ fn trace_links_entries_to_decisions() {
     assert!(out.contains("  без решений основателя\n"), "{out}");
 }
 
+/// Stage 20: `trace` of a scenario of section 6 of docs/design/hidden-state.html, its script
+/// data/scripts/{name}.ron on its seed; the entries of `event`, the first one with the line
+/// under it, and the last line (how the dynasty ended).
+fn scenario(name: &str, seed: &str, event: &str) -> (usize, String, String) {
+    let script = format!("data/scripts/{name}.ron");
+    let out = stdout(cli(&["trace", "--seed", seed, "--script", &script]));
+    let tag = format!(" [{event}]");
+    let mut lines = out.lines().skip_while(|l| !l.ends_with(&tag));
+    let first = (lines.next().unwrap_or(""), lines.next().unwrap_or(""));
+    (
+        out.lines().filter(|l| l.ends_with(&tag)).count(),
+        format!("{}\n{}", first.0, first.1),
+        out.lines().last().unwrap().to_string(),
+    )
+}
+
+/// Golden: the heresy of the scribes. The charters of the 5th year raise literacy, faith
+/// falls and the realm splits in the year 203 (later than the design's estimate of 160:
+/// «Единоверие» holds faith above 40 for long), four times by the horizon.
+#[test]
+fn scenario_avalanche_ends_in_schism() {
+    let (n, first, end) = scenario("avalanche", "217", "schism");
+    assert_eq!(n, 4);
+    assert_eq!(
+        first,
+        "1390 Раскол [schism]\n  цепочка #5 law_charters → literacy → faith: Вера раскололась: \
+         множились грамотные (с 1194 года, когда основатель дал городам хартии вольностей), от \
+         этого шаталась вера."
+    );
+    assert_eq!(end, "конец Alive на 300-м году");
+}
+
+/// Golden: long stability. Granaries and schools; no peasant war, schism or great famine in
+/// 300 years.
+#[test]
+fn scenario_stability_has_no_catastrophe() {
+    for event in ["peasant_war", "schism", "great_famine"] {
+        let (n, _, end) = scenario("stability", "2", event);
+        assert_eq!(
+            (n, end.as_str()),
+            (0, "конец Alive на 300-м году"),
+            "{event}"
+        );
+    }
+}
+
+/// Golden: the golden age of the corvée. The first peasant war comes in the year 112; its
+/// chain of three nodes leads back to the founder's serfdom decree, decision #3 of tick 3.
+/// The dynasty is usurped in the year 235.
+#[test]
+fn scenario_trap_ends_in_peasant_war() {
+    let (n, first, end) = scenario("trap", "3", "peasant_war");
+    assert_eq!(n, 5);
+    assert_eq!(
+        first,
+        "1299 Мужицкая война [peasant_war]\n  цепочка #3 law_serfdom → serfdom → strata → \
+         loyalty_people: Мужики поднялись: крепла барщина (с 1193 года, когда основатель \
+         прикрепил крестьян к земле господ), от этого росло расслоение, от этого озлоблялся \
+         народ."
+    );
+    let script = "data/scripts/trap.ron";
+    let out = stdout(cli(&["trace", "--seed", "3", "--script", script]));
+    assert!(
+        out.contains("  решение #3 (тик 3, law_serfdom) → метка"),
+        "{out}"
+    );
+    assert_eq!(end, "конец Usurped на 235-м году");
+}
+
 /// Stage 18: the hidden nodes of the graph at the dynasty's 100th and 150th year and at the
 /// fall, one column each, and their share of years at a bound.
 #[test]

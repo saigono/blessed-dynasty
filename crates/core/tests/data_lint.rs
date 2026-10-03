@@ -265,7 +265,9 @@ fn every_reign_event_fires_under_neutral_play() {
 }
 
 /// The same for the simulation: 1000 dynasties, each after a neutral reign of its seed; every
-/// simulation event reaches the chronicle at least once.
+/// simulation event and every omen reaches the chronicle at least once. Stage 20: every
+/// fourth dynasty has «Городские вольности» in force from the start (as `cli batch --law`):
+/// without a founder's law faith never falls to the schism.
 #[test]
 #[ignore = "about a minute in release; stage 9 acceptance, run with --release --ignored"]
 fn every_sim_event_fires_in_a_thousand_dynasties() {
@@ -274,6 +276,10 @@ fn every_sim_event_fires_in_a_thousand_dynasties() {
     let mut fired: BTreeMap<String, u32> = BTreeMap::new();
     for seed in 0..1000 {
         let mut g = Game::new(data.clone(), &preset, seed);
+        if seed % 4 == 0 {
+            g.world.flags.insert("law_charters".into());
+            g.world.laws.insert("law_charters".into(), g.world.tick);
+        }
         let end = loop {
             match g.wait().unwrap() {
                 Step::Event(v) => g.choose((v.choices.len() - 1) / 2).unwrap(),
@@ -285,7 +291,8 @@ fn every_sim_event_fires_in_a_thousand_dynasties() {
             *fired.entry(e.event.unwrap_or_default()).or_default() += 1;
         }
     }
-    let silent: Vec<_> = (data.sim_events.iter())
+    let omens = data.events.iter().filter(|e| e.omen);
+    let silent: Vec<_> = (data.sim_events.iter().chain(omens))
         .filter(|e| !fired.contains_key(&e.id))
         .map(|e| &e.id)
         .collect();

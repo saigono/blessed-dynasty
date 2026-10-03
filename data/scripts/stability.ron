@@ -1,0 +1,14 @@
+// Stage 20, scenario «Долгая стабильность» (docs/design/hidden-state.html, section 6),
+// seed 2: a progress, «Свод законов» in the 16th year (skipped: the bureaucracy never reaches
+// 40 by then), «Королевские житницы» in the 20th, «Монастырские школы» in the 25th; the
+// peasants stay by custom. Played by `cli trace` (soft).
+[
+    Action("royal_progress", None),
+    Wait(16),
+    Action("enact_law_code", None),
+    Wait(4),
+    Action("enact_law_granaries", None),
+    Wait(5),
+    Action("enact_law_schools", None),
+    Wait(40),
+]

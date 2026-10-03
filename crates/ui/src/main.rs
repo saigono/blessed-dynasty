@@ -1890,22 +1890,19 @@ mod tests {
                 "1188",
                 vec![
                     line(
-                        "Казна: -13 (доход +32, содержание -5, траты -40)",
+                        "Казна: -23 (доход +32, содержание -5, траты -50)",
                         Some(false),
                     ),
-                    line("«Беда с наследником»: Позвать лучших лекарей", None),
-                    line("Смерть наследника: Конрад", Some(false)),
+                    line("«Пожар в столице»: Отстроить посад из казны", None),
                 ],
             ),
             (
                 "1189",
                 vec![
-                    line(
-                        "Казна: -8 (доход +32, содержание -5, траты -35)",
-                        Some(false),
-                    ),
-                    line("«Неурожай»: Раздать зерно из казны", None),
-                    line("Рождение: Генрих", Some(true)),
+                    line("Казна: +27 (доход +32, содержание -5, траты 0)", Some(true)),
+                    line("«Знать требует»: Подтвердить вольности", None),
+                    line("Бюрократия -5", Some(false)),
+                    line("Знать +11", Some(true)),
                     line("Завершено: Проложить дорогу (Берг)", None),
                 ],
             ),
@@ -1913,20 +1910,19 @@ mod tests {
                 "1190",
                 vec![
                     line(
-                        "Казна: -12 (доход +33, содержание -5, траты -40)",
-                        Some(false),
+                        "Казна: +53 (доход +33, содержание -5, траты +25)",
+                        Some(true),
                     ),
-                    line("«Ультиматум: Нордмарк»: Заплатить дань", None),
-                    line("Рождение: Освальд", Some(true)),
+                    line("«Чужие купцы»: Открыть ярмарки", None),
+                    line("Рождение: Генрих", Some(true)),
                 ],
             ),
             (
                 "1191",
                 vec![
                     money.clone(),
-                    line("«Знать требует»: Подтвердить вольности", None),
-                    line("Бюрократия -5", Some(false)),
-                    line("Знать +11", Some(true)),
+                    line("«Собор знати»: Созвать собор и слушать", None),
+                    line("Знать +7.84", Some(true)),
                 ],
             ),
             (
@@ -1937,16 +1933,12 @@ mod tests {
                         Some(true),
                     ),
                     line("«Пограничная стычка»: Потребовать виру", None),
-                    line("Рождение: Рейнхольд", Some(true)),
+                    line("Рождение: Освальд", Some(true)),
                 ],
             ),
             (
                 "1193",
-                vec![
-                    money,
-                    line("«Нордмарк объявляет войну»: Принять вызов", None),
-                    line("Смерть наследника: Рейнхольд", Some(false)),
-                ],
+                vec![money, line("Смерть наследника: Генрих", Some(false))],
             ),
         ];
         let got: Vec<_> = (h.app.journal.iter())
@@ -1956,7 +1948,7 @@ mod tests {
         let texts = texts(&h.frame(vec![]));
         let (latest, older) = (pos(&texts, "1193"), pos(&texts, "1192"));
         assert!(latest < older, "the latest year comes first");
-        assert!(texts.iter().any(|t| t == "Смерть наследника: Конрад"));
+        assert!(texts.iter().any(|t| t == "Смерть наследника: Генрих"));
         // A quiet year says so; a reign over leaves the journal to the reign's card.
         let g = h.app.game.as_mut().unwrap();
         (g.data.quiet_weight, g.data.heirs.birth) = (1_000_000, vec![]);
@@ -2372,17 +2364,14 @@ mod tests {
         let shown = texts_of(&mut h);
         for t in [
             "♔ Ульрих (р. 1155), правил с 1187",
-            "Конрад (1181–1188)",
-            "Генрих (р. 1189)",
+            "Конрад (р. 1181)",
+            "Генрих (1190–1193)",
         ] {
             assert!(shown.contains(&t.to_string()), "{t}: {shown:?}");
         }
         // Children under their parent, deeper.
         let kin = &h.game().world.kin;
-        assert_eq!(
-            chronicle::family(kin),
-            [(0, 0), (1, 1), (2, 1), (3, 1), (4, 1)]
-        );
+        assert_eq!(chronicle::family(kin), [(0, 0), (1, 1), (2, 1), (3, 1)]);
         h.click_label("Закрыть");
         assert!(!h.app.tree);
 

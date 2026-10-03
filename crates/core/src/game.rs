@@ -282,6 +282,9 @@ impl Game {
             return Ok(Step::Event(self.view(p)));
         }
         self.world.tick.0 += 1;
+        if (self.world.tick.0).is_multiple_of(self.data.time_unit.ticks_per_year) {
+            self.world.events_this_year = 0;
+        }
         self.passive();
         if (self.world.tick.0).is_multiple_of(self.data.time_unit.ticks_per_year) {
             self.overreach();
@@ -335,6 +338,9 @@ impl Game {
         self.world
             .last_fired
             .insert(p.event_id.clone(), self.world.tick);
+        if find_event(&self.data, &p.event_id).is_some_and(|e| !e.is_message()) {
+            self.world.events_this_year += 1;
+        }
         let view = self.view(&p);
         self.pending_event = Some(p);
         Ok(Step::Event(view))
@@ -949,11 +955,15 @@ fn candidates_of<'a>(
     }
 }
 
-/// At most one event per tick. Due deferred events go first, earliest due first, with the
-/// target they were spawned with, or a fresh one if they had none. Then a weighted pick over
+/// At most one event per tick, and at most `Data.events_per_year` with a choice a year
+/// (stage 26b); messages (`Event::is_message`) are not held back. Deferred events past their
+/// due tick by more than `queue_years` drop first. Then the due ones, the most important first,
+/// then the earliest due, with the target they were spawned with, or a fresh one if they had
+/// none; the others stay for the next ticks. Then, a year not full yet, a weighted pick over
 /// ready pool events off cooldown, the neighbours' `offers` (`neighbour_ai.weight` each, kept
-/// targets) and `quiet_weight` for no event; events add their `Event::bonus`. Any event is dropped when its `when` is false,
-/// it already fired `once`, or it has no target; unpicked offers are dropped too.
+/// targets) and `quiet_weight` for no event; events add their `Event::bonus`. Any event is
+/// dropped when its `when` is false as it would show, it already fired `once`, or it has no
+/// target; unpicked offers are dropped too.
 fn pick_event(
     data: &Data,
     w: &World,
@@ -973,10 +983,20 @@ fn pick_event(
         })
     };
 
+    let life = data.queue_years.ticks(w.time_unit).0;
+    queue.retain(|(due, _)| due.0 + life >= w.tick.0);
+    let full = w.events_this_year >= data.events_per_year;
+    let rank = |p: &PendingEvent| {
+        let e = find_event(data, &p.event_id);
+        let held = full && e.is_none_or(|e| !e.is_message());
+        (!held).then(|| std::cmp::Reverse(e.map_or(0, |e| e.importance)))
+    };
     let due = |q: &Vec<(Tick, PendingEvent)>| {
         (0..q.len())
             .filter(|&i| q[i].0 <= w.tick)
-            .min_by_key(|&i| q[i].0)
+            .filter_map(|i| Some((rank(&q[i].1)?, q[i].0, i)))
+            .min()
+            .map(|(.., i)| i)
     };
     while let Some(i) = due(queue) {
         let (_, p) = queue.remove(i);
@@ -985,6 +1005,9 @@ fn pick_event(
             Some(e) if targets(e) => return fire(e, rng),
             _ => {}
         }
+    }
+    if full {
+        return None;
     }
 
     let pool: Vec<&Event> = (data.events.iter())
@@ -1946,5 +1969,95 @@ mod tests {
         assert_eq!(w.provinces[&pid("holm")].loyalty, Fx::from_int(41));
         assert_eq!(w.provinces[&pid("capital")].loyalty, Fx::from_int(69));
         assert_eq!(w.provinces[&pid("nordheim")].loyalty, Fx::from_int(50));
+    }
+
+    /// Out of the pool, with two choices: an event to choose in.
+    fn asked(id: &str, importance: u32, when: Predicate) -> Event {
+        let mut e = event(id, vec![]);
+        e.choices.push(e.choices[0].clone());
+        Event {
+            importance,
+            when,
+            ..e
+        }
+    }
+
+    fn queue(g: &mut Game, tick: u32, id: &str) {
+        let p = PendingEvent {
+            event_id: id.into(),
+            target: None,
+            neighbour: None,
+        };
+        g.queue.push((Tick(tick), p));
+    }
+
+    /// Acceptance, stage 26b: three events with a choice due the same year, the player gets
+    /// the most important one; the others come in the next years, most important first. One
+    /// whose `when` is false as it would show drops (the ultimatum after the war), and so does
+    /// one kept waiting past `queue_years`.
+    #[test]
+    fn one_event_with_a_choice_a_year_the_rest_wait() {
+        let mut data = bare();
+        let flag = || Predicate::Flag("war".into());
+        data.events = vec![
+            asked("small", 1, Predicate::All(vec![])),
+            asked("ultimatum", 3, flag()),
+            asked("war", 5, Predicate::All(vec![])),
+            asked("old", 2, Predicate::All(vec![])),
+        ];
+        data.queue_years = Years(2);
+        let mut g = game(data, 1);
+        g.world.flags.insert("war".into());
+        for id in ["small", "ultimatum", "war"] {
+            queue(&mut g, 1, id);
+        }
+        queue(&mut g, 0, "old");
+        let mut year = |g: &mut Game| {
+            let fired = fired(g.wait().unwrap());
+            if fired.is_some() {
+                g.choose(0).unwrap();
+            }
+            fired
+        };
+        assert_eq!(year(&mut g).as_deref(), Some("war"));
+        assert_eq!(g.queue.len(), 3, "the rest wait");
+        g.world.flags.remove("war"); // the war is over
+        assert_eq!(year(&mut g).as_deref(), Some("old")); // tick 2: due at 0, 2 years
+        assert_eq!(year(&mut g).as_deref(), Some("small")); // the ultimatum dropped
+        assert_eq!(year(&mut g), None);
+        assert!(g.queue.is_empty());
+        // `queue_years` past their due tick they drop.
+        queue(&mut g, 1, "small");
+        assert_eq!(year(&mut g), None);
+        assert!(g.queue.is_empty());
+    }
+
+    /// Stage 26b: `events_per_year` counts a year, not a tick: in seasons the second event
+    /// with a choice waits for the next year, a message (one choice) does not wait.
+    #[test]
+    fn the_limit_is_a_year_and_messages_pass() {
+        let mut data = bare();
+        data.time_unit = TimeUnit { ticks_per_year: 4 };
+        data.events = vec![
+            asked("first", 1, Predicate::All(vec![])),
+            asked("second", 5, Predicate::All(vec![])),
+            event("news", vec![]),
+        ];
+        assert!(data.events[2].is_message() && !data.events[1].is_message());
+        let mut g = game(data, 1);
+        queue(&mut g, 1, "first");
+        queue(&mut g, 2, "second");
+        queue(&mut g, 2, "news");
+        let mut seen = vec![];
+        for _ in 0..4 {
+            let f = fired(g.wait().unwrap());
+            if f.is_some() {
+                g.choose(0).unwrap();
+            }
+            seen.push(f);
+        }
+        let s = |x: &str| Some(x.to_string());
+        assert_eq!(seen, [s("first"), s("news"), None, s("second")]);
+        assert_eq!(g.world.tick, Tick(4));
     }
 }

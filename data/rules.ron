@@ -251,6 +251,26 @@
     // Weight of a quiet tick in the random event pick, next to the weights of the events.
     quiet_weight: 20,
 
+    // Stage 26b: at most `events_per_year` events with a choice reach the ruler in a year
+    // (his death aside; a message, an event of one choice, is not held back). The others wait
+    // in the queue for the next years, the most important first; one waiting longer than
+    // `queue_years` past its due year drops, and so does one whose `when` is false as it
+    // would show (an ultimatum after the war is over).
+    events_per_year: 1,
+    queue_years: 3,
+
+    // Stage 26b: the buildings the map shows, by their `Build` id, each a glyph of the
+    // game's font (DejaVu Sans; a test checks it). A work of the whole kingdom told by flags
+    // shows in the capital: built while `flag` is set, being built while `underway` is.
+    buildings: [
+        (id: "fort", name: "крепость", icon: "♜"),
+        (id: "road", name: "дорога", icon: "═"),
+        (id: "market", name: "рынок", icon: "⚖"),
+        (id: "abbey", name: "обитель", icon: "☦"),
+        (id: "dikes", name: "валы", icon: "≈"),
+        (id: "cathedral", name: "собор", icon: "✝", flag: "cathedral", underway: "cathedral_building"),
+    ],
+
     // Province loyalty below this shows as unrest on the map. Display only; below the
     // start loyalty of every own province (40 and up), between the sim triggers (30, 40).
     unrest_below: 35,

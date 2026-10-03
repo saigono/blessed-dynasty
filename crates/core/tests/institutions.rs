@@ -384,3 +384,47 @@ fn the_chronicle_tells_a_law_repealed_and_brought_in() {
     assert!(has(&told, "Новый закон", "Y"), "{told:?}");
     assert!(!told.iter().any(|(t, _)| t == "Отмена закона"), "{told:?}");
 }
+
+/// Plays `years` of the founder's reign, choosing the first answer; with `chancery`, founds
+/// a chancery whenever the slot is free. The bureaucracy at its height, chanceries founded.
+fn chanceries(chancery: bool, years: u32) -> (Fx, u32) {
+    let data = data();
+    let mut g = game(&data);
+    let (mut top, mut founded) = (Fx(0), 0);
+    for _ in 0..years {
+        let free = g
+            .available_actions()
+            .iter()
+            .any(|(id, _)| id == "found_chancery");
+        if chancery && g.world.active_actions.is_empty() && free {
+            g.start_action("found_chancery", None).unwrap();
+            founded += 1;
+        }
+        loop {
+            match g.wait().unwrap() {
+                bd_core::game::Step::Event(_) => g.choose(0).unwrap(),
+                bd_core::game::Step::Idle => break,
+                bd_core::game::Step::ReignEnded(_) => return (top, founded),
+            }
+            if g.pending_event.is_none() {
+                break;
+            }
+        }
+        top = top.max(g.world.axes[&ax("bureaucracy")]);
+    }
+    (top, founded)
+}
+
+/// Acceptance, stage 26b: the bureaucracy 40 (a second action at a time) can be had within a
+/// reign by founding chanceries, at a price: 80 of the treasury each, the nobles displeased.
+/// Without them it stays below.
+#[test]
+fn chanceries_raise_the_bureaucracy_to_40_within_a_reign() {
+    let (top, founded) = chanceries(true, 30);
+    assert!(top >= Fx::from_int(40), "{top:?} after {founded}");
+    let (alone, _) = chanceries(false, 30);
+    assert!(alone < Fx::from_int(40), "{alone:?}");
+    let d = data();
+    let a = d.actions.iter().find(|a| a.id == "found_chancery").unwrap();
+    assert!(a.cost > Fx(0) && founded >= 3, "{founded}");
+}

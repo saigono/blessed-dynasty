@@ -217,4 +217,20 @@
         ))],
         cause_tag: "war_siege_target",
     ),
+    (
+        // Stage 26b: the bureaucracy by hand; last, so the actions before keep their indices
+        // in links (link.rs). 20 to 40 (two actions at once) takes four of them: 8 years of
+        // the only slot, 320 of the treasury, the nobles -16 less what drifts back. The
+        // automaton weighs it below doing nothing (sim.auto: the price outweighs the gain).
+        id: "found_chancery",
+        description: "Учредить при дворе новую канцелярию: писцы, печати, приказы. Бюрократия растёт, а с ней число дел, которые корона ведёт разом, и то, что корона знает о своей земле. Знать недовольна: дела уходят из её рук к чиновникам.",
+        name: "Учредить канцелярию",
+        duration_years: 2,
+        cost: 80,
+        requires: All([]),
+        min_crown_power: 40,
+        target: None,
+        on_complete: [Axis("bureaucracy", 5), Axis("loyalty_nobles", -4)],
+        cause_tag: "chancery_founded",
+    ),
 ]

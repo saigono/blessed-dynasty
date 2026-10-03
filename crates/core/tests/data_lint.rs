@@ -99,6 +99,14 @@ fn every_cause_tag_has_a_hint() {
 }
 
 #[test]
+fn every_building_has_its_icon() {
+    let mut data = load_all();
+    assert_eq!(lint::buildings(&data), Vec::<String>::new());
+    data.buildings.retain(|b| b.id != "dikes");
+    assert_eq!(lint::buildings(&data).len(), 1);
+}
+
+#[test]
 fn every_spawned_event_exists() {
     assert_eq!(lint::spawned(&load_all()), Vec::<String>::new());
 }

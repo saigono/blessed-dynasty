@@ -18,6 +18,7 @@ pub fn lint(data: &Data, world: &World) -> Vec<String> {
         templates(data),
         names(data, world),
         epithets(data),
+        buildings(data),
     ]
     .concat()
 }
@@ -301,6 +302,25 @@ pub fn names(data: &Data, world: &World) -> Vec<String> {
     let undeclined = n.undeclined(all).into_iter();
     undeclined
         .map(|s| format!("{s}: нет падежей (names.ron forms)"))
+        .collect()
+}
+
+/// Every `Build` of an event or an action has its icon in `Data.buildings` (stage 26b): the
+/// map would not show it.
+pub fn buildings(data: &Data) -> Vec<String> {
+    let events = data.events.iter().chain(&data.sim_events);
+    let choices = events.flat_map(|e| e.choices.iter().map(move |c| (&e.id, &c.effects)));
+    let actions = data.actions.iter().map(|a| (&a.id, &a.on_complete));
+    let effects = choices
+        .chain(actions)
+        .flat_map(|(id, es)| es.iter().map(move |e| (id, e)));
+    effects
+        .filter_map(|(at, e)| match e {
+            Effect::Build(_, b) if !data.buildings.iter().any(|d| d.id == *b) => {
+                Some(format!("{at}: постройки {b} нет в rules.ron buildings"))
+            }
+            _ => None,
+        })
         .collect()
 }
 

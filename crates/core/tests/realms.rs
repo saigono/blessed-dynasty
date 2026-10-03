@@ -95,6 +95,8 @@ fn the_kingdoms_change_nothing_of_ours() {
 
 /// Acceptance: a link made before the stage (seed 42, the script `test.ron`, then neutral to
 /// the founder's death; 28 decisions) opens and gives the outcome it gave then, word for word.
+/// Stage 26b: it opens to the same reign; the dynasty after it goes another way (the queue
+/// of events by importance, one more action for the automaton), re-pinned.
 #[test]
 fn a_link_from_before_the_stage_plays_the_same() {
     let link = "AQdkZWZhdWx0Kh0AASMAAQABAQABAQABAQABAQABAQAAAQABAgABAQAAAQABAQABAQABAgABAQABAQABAQABAQ\
@@ -120,9 +122,9 @@ fn a_link_from_before_the_stage_plays_the_same() {
             c.entries.len(),
             s.total
         ),
-        (28, 300, "Alive", 89, 24944)
+        (28, 300, "Alive", 83, 25737)
     );
-    assert_eq!(format!("{hash:016x}"), "b0bad94698718518");
+    assert_eq!(format!("{hash:016x}"), "3562134f6dad11eb");
     assert_eq!(c.realms.len(), 3, "the kingdoms play beside it");
 }
 
@@ -309,4 +311,27 @@ fn the_kingdoms_share_our_map_and_show_their_rulers() {
         .map(|n| n.realm.as_ref().unwrap().house.as_str())
         .collect();
     assert_eq!(houses, ["Эрлинги", "Аргириды", "Вестинги"]);
+}
+
+/// Stage 26b: a link to a game the automaton played (`warmonger`) opens to the same world:
+/// its noise comes from a stream of its own, the game's rng goes to the game alone.
+#[test]
+fn a_link_of_an_automaton_game_plays_the_same() {
+    let f = files();
+    for seed in [3, 42] {
+        let start = batch::load(&f, PRESET, MAP, 0).unwrap().reseeded(seed);
+        let auto = batch::chooser(&f, &start, "warmonger").unwrap();
+        let mut g = start.clone();
+        batch::play(&mut g, auto.as_ref(), &mut vec![]).unwrap();
+        assert!(g.decisions.len() > 10 && g.ended.is_some());
+        let l = bd_core::link::decode(&bd_core::link::encode("default", seed, &g)).unwrap();
+        let mut again = start.clone();
+        l.play(&mut again).unwrap();
+        assert_eq!(
+            batch::world_hash(&again),
+            batch::world_hash(&g),
+            "seed {seed}"
+        );
+        assert_eq!(again.rng, g.rng);
+    }
 }

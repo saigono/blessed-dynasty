@@ -140,9 +140,12 @@ fn golden_seed_42_script_a() {
     // the target (a fire in a province, a treaty, an appanage), weddings open in peace with the
     // automaton's weight on them lowered: Конрад reigns 35 years and the dynasty lives to the
     // horizon (usurped in the year 213 before the marks).
+    // Stage 26b: the queue of events goes by importance and the automaton weighs one more
+    // action (the chancery): another road for the dynasty, its last crown land lost in the
+    // year 186.
     assert_eq!(
         (c.years, &c.fall, c.entries.len()),
-        (300, &FallReason::Alive, 97)
+        (186, &FallReason::NoCrownLand, 58)
     );
     let hint = |h: &'static str| Some(h);
     assert_eq!(
@@ -155,7 +158,7 @@ fn golden_seed_42_script_a() {
             ),
             (
                 "Мятеж дома Арден",
-                "Дом Арден поднял мятеж в земле Мар, и Конрад признал его независимость.",
+                "Дом Арден поднял мятеж в земле Арден, и Конрад признал его независимость.",
                 hint("Набег, отбитый при основателе, научил соседа осторожности."),
             ),
             (
@@ -222,9 +225,10 @@ fn golden_seed_42_script_a_with_a_testament() {
     // Stage 25: another reign (see golden_seed_42_script_a) and another dynasty: usurped in
     // the year 104 before, then alive at the horizon before the marks and the weddings in
     // peace; with them the crown loses its last land in the year 149.
+    // Stage 26b (see golden_seed_42_script_a): usurped in the year 104.
     assert_eq!(
         (c.years, &c.fall, c.entries.len()),
-        (149, &FallReason::NoCrownLand, 37)
+        (104, &FallReason::Usurped, 31)
     );
     assert_eq!(
         texts(&c)[0],
@@ -1164,24 +1168,24 @@ fn kin_of_seed_42_script_a() {
     );
     assert_eq!((k[0].crowned, k[0].parent), (Some(1187), None));
     assert_eq!(k[0].died, Some(1187 + c.rulers[0].end.0));
-    // Конрад, 6 at the start, reigned 1223..1258 (stage 25); his siblings died uncrowned,
-    // Освальд a child.
+    // Конрад, 6 at the start, reigned 1223..1235 (stage 26b; 1258 in stage 25); his
+    // siblings died uncrowned, Освальд a child.
     assert_eq!(
         (k[1].name.as_str(), k[1].born, k[1].crowned, k[1].died),
-        ("Конрад", 1181, Some(1223), Some(1258))
+        ("Конрад", 1181, Some(1223), Some(1235))
     );
     assert_eq!(
         (k[2].name.as_str(), k[2].born, k[2].parent, k[2].crowned),
         ("Генрих", 1189, Some(0), None)
     );
-    assert_eq!(k[2].died, Some(1250));
+    assert_eq!(k[2].died, Some(1232));
     assert_eq!(
         (k[3].name.as_str(), k[3].born, k[3].parent, k[3].died),
         ("Освальд", 1192, Some(0), Some(1194))
     );
     assert_eq!(
         (k[4].name.as_str(), k[4].born, k[4].parent, k[4].died),
-        ("Рейнхольд", 1193, Some(0), Some(1235))
+        ("Рейнхольд", 1193, Some(0), Some(1224))
     );
     // Every ruler in the chronicle is a crowned kin, in order; children point at a ruler.
     let crowned: Vec<(&str, u32)> = (k.iter())

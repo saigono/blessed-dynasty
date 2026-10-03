@@ -43,6 +43,16 @@ pub struct Data {
     pub laws: Laws,
     /// Weight of "nothing happens" in the random event pick.
     pub quiet_weight: u32,
+    /// At most this many events with a choice reach the ruler a year (stage 26b); the rest
+    /// wait in `Game.queue`, the most important first. Death is not held back.
+    #[serde(default = "one")]
+    pub events_per_year: u32,
+    /// A deferred event waits at most this long past its due tick, then drops.
+    #[serde(default = "three_years")]
+    pub queue_years: crate::time::Years,
+    /// The buildings the map shows (stage 26b), by `Effect::Build` id.
+    #[serde(default)]
+    pub buildings: Vec<BuildingDef>,
     /// Province loyalty below this shows as unrest. Display only.
     #[serde(default)]
     pub unrest_below: Fx,
@@ -78,6 +88,24 @@ pub struct Data {
     /// From `add_names`, not from `rules.ron`.
     #[serde(default)]
     pub names: Names,
+}
+
+fn three_years() -> crate::time::Years {
+    crate::time::Years(3)
+}
+
+/// A building on the map: its name and the glyph of the game's font it shows as, built with
+/// `Effect::Build` under this `id`. A work of the whole kingdom told by flags (the cathedral)
+/// shows in the capital: built while `flag` is set, being built while `underway` is.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct BuildingDef {
+    pub id: String,
+    pub name: String,
+    pub icon: String,
+    #[serde(default)]
+    pub flag: Option<String>,
+    #[serde(default)]
+    pub underway: Option<String>,
 }
 
 /// Name pools (`data/names.ron`). A vassal house founded by `Effect::Grant` takes the first
@@ -1436,8 +1464,8 @@ mod tests {
         data.add_events(NEIGHBOUR_EVENTS).unwrap();
         data.add_actions(ACTIONS).unwrap();
         assert_eq!(data.events.len(), 38);
-        // 15 of actions.ron; to enact 16 laws, to repeal the 10 not of the succession.
-        assert_eq!(data.actions.len(), 15 + 16 + 10);
+        // 16 of actions.ron; to enact 16 laws, to repeal the 10 not of the succession.
+        assert_eq!(data.actions.len(), 16 + 16 + 10);
         // Ids must be unique across files.
         assert!(matches!(
             data.add_events(EVENTS),

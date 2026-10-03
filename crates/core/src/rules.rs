@@ -822,6 +822,11 @@ pub struct Choice {
 }
 
 impl Event {
+    /// One choice only, nothing to choose (stage 26b): a message, out of `events_per_year`.
+    pub fn is_message(&self) -> bool {
+        self.choices.len() < 2
+    }
+
     /// Sum of the `weight_bonus` that hold now.
     pub fn bonus(&self, w: &World) -> u32 {
         let holding = self.weight_bonus.iter().filter(|(p, _)| p.eval(w));

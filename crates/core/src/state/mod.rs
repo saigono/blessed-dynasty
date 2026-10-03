@@ -204,6 +204,10 @@ pub struct World {
     /// Tick each event last fired at; drives `once` and cooldowns.
     #[serde(default)]
     pub last_fired: BTreeMap<String, Tick>,
+    /// Events with a choice fired this year (stage 26b, `Data.events_per_year`); counted
+    /// anew every year, so not written out.
+    #[serde(default, skip_serializing)]
+    pub events_this_year: u32,
     /// Added to the crown power formula; set by `Effect::CrownPower`, drifts to 0.
     #[serde(default)]
     pub crown_modifiers: BTreeMap<ProvinceId, Fx>,
@@ -333,6 +337,7 @@ impl World {
             active_actions: Vec::new(),
             flags: preset.flags.clone(),
             last_fired: BTreeMap::new(),
+            events_this_year: 0,
             crown_modifiers: BTreeMap::new(),
             war: None,
             next_heir_id: 0,

@@ -2,3 +2,4 @@
 /crates/*/target
 /crates/ui/dist
 *.swp
+assets/raw/

@@ -804,6 +804,10 @@ pub struct WarRules {
     /// is below 0, this share of the army deserts.
     #[serde(default)]
     pub desertion: Fx,
+    /// «сражение» in its forms (one, few, many) for `{war_won}` and `{war_lost}` of event
+    /// texts: the battles of the war the crown won and lost (stage 25).
+    #[serde(default)]
+    pub battles: (String, String, String),
 }
 
 /// The dynasty simulation after the reign, see `sim::run`.

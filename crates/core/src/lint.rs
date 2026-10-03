@@ -116,8 +116,9 @@ pub fn told(data: &Data) -> Vec<String> {
 /// The `{…}` of a template that `text::fill` would leave as they are: an unknown key, an
 /// unknown case, a sex choice without two forms.
 pub fn bad_braces(s: &str) -> Vec<String> {
-    // Stage 24 (testament.rs): founder, forebear, precept, order, will.
-    const KEYS: [&str; 19] = [
+    // Stage 24 (testament.rs): founder, forebear, precept, order, will. Stage 25 (war):
+    // war_won, war_lost.
+    const KEYS: [&str; 21] = [
         "founder",
         "forebear",
         "precept",
@@ -131,6 +132,8 @@ pub fn bad_braces(s: &str) -> Vec<String> {
         "vassal",
         "house",
         "war_target",
+        "war_won",
+        "war_lost",
         "year",
         "years",
         "law",

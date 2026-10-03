@@ -84,7 +84,8 @@
         id: "omen_search_decree",
         title: "Указ о сыске",
         text: "Бароны бьют челом: крестьяне бегут от господ, и знать просит указ о бессрочном сыске беглых.",
-        when: All([AxisAbove("loyalty_nobles", 65), AxisAbove("serfdom", 45)]),
+        // A search without term, once decreed, stands (stage 25).
+        when: All([AxisAbove("loyalty_nobles", 65), AxisAbove("serfdom", 45), NotFlag("search_decree")]),
         weight: 4,
         once: false,
         cooldown_years: 12,
@@ -95,7 +96,7 @@
         choices: [
             (
                 text: "Издать указ о бессрочном сыске",
-                effects: [Axis("serfdom", 6), Axis("loyalty_nobles", 6), Axis("loyalty_people", -5)],
+                effects: [Axis("serfdom", 6), Axis("loyalty_nobles", 6), Axis("loyalty_people", -5), SetFlag("search_decree")],
                 cause_tag: "search_decreed",
                 hint: "Указ о сыске прикрепил крестьян крепче цепи.",
                 told: "Бароны били челом о сыске беглых крестьян, и {ruler} {ruler:издал|издала} указ о бессрочном сыске.",

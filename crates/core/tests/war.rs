@@ -496,3 +496,35 @@ fn a_siege_takes_the_target() {
     assert_eq!(siege(1), (Holder::Crown, fell, false));
     assert_eq!(siege(0), (Holder::Foreign(nordmark()), None, true));
 }
+
+/// Acceptance, bug of playtest 02 (stage 25): a war may end with no battle that year, so
+/// its outcome card and its chronicle entry tell how many battles were won and lost.
+#[test]
+fn a_war_outcome_tells_its_battles() {
+    let mut seen = std::collections::BTreeSet::new();
+    for seed in 0..60 {
+        let mut g = war_only(seed);
+        declare(&mut g, "frostad");
+        for _ in 0..20 {
+            if let Step::Event(v) = g.wait().unwrap() {
+                if ["war_victory", "war_defeat", "war_draw"].contains(&v.event_id.as_str()) {
+                    assert!(
+                        v.text.contains(" сражени") && !v.text.contains('{'),
+                        "{}",
+                        v.text
+                    );
+                    for i in 0..v.choices.len() {
+                        let told = g.told(i).unwrap();
+                        assert!(told.contains(" сражени") && !told.contains('{'), "{told}");
+                    }
+                    seen.insert(v.event_id.clone());
+                }
+                g.choose((seed as usize) % v.choices.len()).unwrap();
+            }
+            if g.world.war.is_none() {
+                break;
+            }
+        }
+    }
+    assert_eq!(seen.len(), 3, "{seen:?}");
+}

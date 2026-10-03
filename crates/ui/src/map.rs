@@ -1,7 +1,7 @@
 //! The province map: polygons from the map file painted by holder. Floats are display only.
 
 use bd_core::data::Data;
-use bd_core::rules::{ActionTarget, Effect};
+use bd_core::rules::{ActionTarget, Effect, Target};
 use bd_core::state::{Holder, ProvinceId, World};
 use eframe::egui::{Color32, Mesh, Pos2, Rect, Sense, Shape, Stroke, Ui, pos2, vec2};
 use std::cell::Cell;
@@ -225,11 +225,7 @@ impl MapView {
         let hovered = resp.hover_pos().and_then(|pos| self.province_at(pos));
         if let Some(p) = hovered.and_then(|id| w.provinces.get(id)) {
             resp.on_hover_ui_at_pointer(|ui| {
-                ui.strong(&p.name);
-                ui.label(holder_name(w, &p.holder));
-                ui.label(format!("Лояльность {}", round(p.loyalty)));
-                ui.label(format!("Сила короны {}", round(p.crown_power)));
-                ui.label(format!("Доход {}", round(p.income)));
+                crate::target_tip(ui, w, &Target::Province(p.id.clone()));
                 if war_target == Some(&p.id) {
                     ui.label(eframe::egui::RichText::new("Цель войны").color(RUBRIC));
                 }

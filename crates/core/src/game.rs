@@ -702,7 +702,7 @@ impl Game {
     fn view(&self, p: &PendingEvent) -> EventView {
         let e = find_event(&self.data, &p.event_id).expect("pending events exist");
         let named = self.named(p);
-        let fill = |s: &str| crate::text::fill(s, &self.data.names, &named);
+        let fill = |s: &str| self.battles(crate::text::fill(s, &self.data.names, &named));
         let choices = e.choices.iter().map(|c| Choice {
             text: fill(&c.text),
             hint: c.hint.as_deref().map(fill),
@@ -760,8 +760,24 @@ impl Game {
         let c = find_event(&self.data, &p.event_id)?.choices.get(idx)?;
         let named = self.named(p);
         let year = (self.world.year()).to_string();
-        let told = crate::text::fill(&c.told, &self.data.names, &named);
+        let told = self.battles(crate::text::fill(&c.told, &self.data.names, &named));
         (!told.is_empty()).then(|| told.replace("{year}", &year))
+    }
+
+    /// `s` with `{war_won}` and `{war_lost}` filled in: the battles of the war going on the
+    /// crown won and lost, «2 сражения» (`WarRules.battles`). A battle that moved nothing
+    /// counts as neither. Without a war `s` stays as it is.
+    fn battles(&self, s: String) -> String {
+        let Some(war) = &self.world.war else {
+            return s;
+        };
+        let n = |won: bool| {
+            let moved = war.battles.iter().filter(|(_, d)| *d != Fx(0));
+            moved.filter(|(_, d)| (*d > Fx(0)) == won).count() as u32
+        };
+        let forms = &self.data.war.battles;
+        s.replace("{war_won}", &crate::text::plural(n(true), forms))
+            .replace("{war_lost}", &crate::text::plural(n(false), forms))
     }
 }
 

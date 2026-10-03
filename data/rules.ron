@@ -313,6 +313,8 @@
         income_penalty: 0.3,
         army_upkeep: [(0, 0), (50, 5), (100, 15), (150, 35), (200, 70), (300, 170), (1000, 1000)],
         desertion: 0.2,
+        // `{war_won}`, `{war_lost}` in the war's events: «2 сражения» won and lost (stage 25).
+        battles: ("сражение", "сражения", "сражений"),
     ),
 
     // Direct rule has a limit (yearly): the crown holds at most capital crown power *

@@ -138,9 +138,13 @@ fn golden_seed_42_script_a() {
     // horizon; omens are told whatever their importance.
     // Stage 24: the trait `defiant` rolls at every coronation and two events join the pool
     // (royal_will, forged_will): the same outcome by another road, Конрад reigns 22 years.
+    // Stage 25: decisions for good are remembered (a city in stone burns no more, the dikes
+    // hold, a charter or a cathedral is not asked for again), a hunt is no trouble of an heir
+    // under 14: other events from the founder's first years. He dies in 1223, Конрад reigns
+    // eight years and the dynasty is usurped in the year 213.
     assert_eq!(
         (c.years, &c.fall, c.entries.len()),
-        (300, &FallReason::Alive, 77)
+        (213, &FallReason::Usurped, 71)
     );
     let hint = |h: &'static str| Some(h);
     assert_eq!(
@@ -148,24 +152,44 @@ fn golden_seed_42_script_a() {
         [
             (
                 "Новое правление",
-                "После Ульриха Набожного на престол взошёл Конрад.",
-                hint("Основатель породнил наследника с домом своего барона."),
+                "После Ульриха Набожного на престол взошёл Конрад. Страна вздохнула спокойно: новый король не любил поспешных решений.",
+                hint("Наследник основателя учился власти в королевском совете."),
             ),
             (
                 "Мятеж дома Вейр",
-                "Дом Вейр поднял мятеж в земле Берг и отказался присягать короне, и Конрад двинул на мятежников войско.",
-                hint("Вассал, которому основатель доверил меч, привык к нему."),
+                "Дом Вейр поднял мятеж в земле Вейр и отказался присягать короне, и Конрад двинул на мятежников войско.",
+                hint("Набег, отбитый при основателе, научил соседа осторожности."),
             ),
             (
-                "Мятеж дома Арден",
-                "Дом Арден поднял мятеж в земле Арден, но корона откупилась от него золотом и титулами.",
-                hint("Вассал, которому основатель доверил меч, привык к нему."),
+                "Потеря земли",
+                "Земля Берг отошла под руку Вейра.",
+                hint("Обитель у святого источника, поставленная основателем, кормила край."),
             ),
         ]
     );
     // The same seed and decisions give the same chronicle.
     let (g2, end2) = script_a(42);
     assert_eq!(sim::run(end2, &g2.data, g2.rng.clone()), c);
+}
+
+/// Acceptance, bug of playtest 02 (stage 25): the chronicle tells how a war ended in battles
+/// won and lost, a war may end in a year without one.
+#[test]
+fn a_war_ends_in_the_chronicle_with_its_battles() {
+    let (g, end) = script_a(42);
+    let c = sim::run(end, &g.data, g.rng.clone());
+    let outcomes = ["war_victory", "war_defeat", "war_draw"];
+    let ends: Vec<_> = (c.entries.iter())
+        .filter(|e| e.event.as_deref().is_some_and(|id| outcomes.contains(&id)))
+        .collect();
+    assert!(!ends.is_empty());
+    for e in ends {
+        assert!(
+            e.text.contains("сражени") && !e.text.contains('{'),
+            "{}",
+            e.text
+        );
+    }
 }
 
 /// Stage 24 golden: script A with the founder's testament written in his first year
@@ -197,16 +221,17 @@ fn golden_seed_42_script_a_with_a_testament() {
         }
     });
     let c = sim::run(end, &g.data, g.rng.clone());
+    // Stage 25: another reign (see golden_seed_42_script_a) and another dynasty: under
+    // the will it lives to the horizon (usurped in the year 104 before).
     assert_eq!(
         (c.years, &c.fall, c.entries.len()),
-        (104, &FallReason::Usurped, 27)
+        (300, &FallReason::Alive, 85)
     );
-    // The bad luck of seed 42 under a will paid for at 32: usurped in the year 104.
     assert_eq!(
         texts(&c)[0],
         (
             "Завещание основателя",
-            "Над гробом Ульриха канцлер сломал печать на его завещании. Первым он завещал \
+            "Когда Ульриха похоронили, при дворе вскрыли его завещание. Первым он завещал \
              держаться правила: «Полная казна — крепость державы». Особо наказано было никогда \
              не воевать с Нордмарком.",
             None
@@ -1106,20 +1131,21 @@ fn year_changes_of_seed_42_script_a() {
     let [g1, g2] = granted("gart");
     let [l1, l2] = granted("lugovo");
     let [b1, b2] = granted("berg");
-    let people = |v| Change::Axis(ax("loyalty_people"), Fx(v));
+    // Stage 25: other events (a fire in stone remembered, heirs' hunts from 14 on).
+    let born = |n: &str| Change::Born(n.into());
     let want = vec![
-        (1188, vec![nobles(9), g1, g2]),
-        (1189, vec![nobles(9), Change::Born("Генрих".into()), l1, l2]),
-        (1190, vec![nobles(10), b1, b2]),
-        (1192, vec![Change::Born("Ирмгард".into())]),
-        (1194, vec![axis("army", 20)]),
-        (1197, vec![axis("loyalty_church", 6)]),
-        (1198, vec![Change::Born("Гизела".into())]),
-        (1199, vec![axis("army", 15), nobles(-6)]),
-        (1202, vec![Change::Born("Аделина".into())]),
-        (1205, vec![people(5_904)]),
-        (1217, vec![axis("legitimacy", 6), axis("prestige", 15)]),
-        (1228, vec![axis("loyalty_church", 5)]),
+        (1188, vec![axis("army", 20), nobles(9), g1, g2]),
+        (1189, vec![nobles(14), born("Генрих"), l1, l2]),
+        (1190, vec![nobles(7), b1, b2]),
+        (1192, vec![born("Освальд")]),
+        (1193, vec![born("Рейнхольд")]),
+        (
+            1194,
+            vec![born("Аделина"), Change::HeirGone("Освальд".into())],
+        ),
+        (1203, vec![axis("loyalty_church", 5)]),
+        (1205, vec![axis("legitimacy", 6), axis("prestige", 15)]),
+        (1215, vec![axis("loyalty_church", 5)]),
     ];
     assert_eq!(log, want);
 }
@@ -1137,23 +1163,24 @@ fn kin_of_seed_42_script_a() {
     );
     assert_eq!((k[0].crowned, k[0].parent), (Some(1187), None));
     assert_eq!(k[0].died, Some(1187 + c.rulers[0].end.0));
-    // Конрад, 6 at the start, reigned 1229..1251 (stage 24); his siblings died uncrowned.
+    // Конрад, 6 at the start, reigned 1223..1231 (stage 25); his siblings died uncrowned,
+    // Освальд a child.
     assert_eq!(
         (k[1].name.as_str(), k[1].born, k[1].crowned, k[1].died),
-        ("Конрад", 1181, Some(1229), Some(1251))
+        ("Конрад", 1181, Some(1223), Some(1231))
     );
     assert_eq!(
         (k[2].name.as_str(), k[2].born, k[2].parent, k[2].crowned),
         ("Генрих", 1189, Some(0), None)
     );
-    assert_eq!(k[2].died, Some(1257));
+    assert_eq!(k[2].died, Some(1253));
     assert_eq!(
         (k[3].name.as_str(), k[3].born, k[3].parent, k[3].died),
-        ("Ирмгард", 1192, Some(0), Some(1237))
+        ("Освальд", 1192, Some(0), Some(1194))
     );
     assert_eq!(
         (k[4].name.as_str(), k[4].born, k[4].parent, k[4].died),
-        ("Гизела", 1198, Some(0), Some(1271))
+        ("Рейнхольд", 1193, Some(0), Some(1253))
     );
     // Every ruler in the chronicle is a crowned kin, in order; children point at a ruler.
     let crowned: Vec<(&str, u32)> = (k.iter())

@@ -43,7 +43,8 @@
         id: "cap_guild_charter",
         title: "Гильдии просят хартию",
         text: "Старшины цехов столицы принесли к трону хартию вольностей и просят скрепить её печатью.",
-        when: All([]),
+        // Granted or sold, the charter stays with the guilds (stage 25).
+        when: NotFlag("guild_charter"),
         weight: 4,
         once: false,
         cooldown_years: 10,
@@ -53,14 +54,14 @@
         choices: [
             (
                 text: "Даровать хартию",
-                effects: [Province(Capital, Income, 2), Axis("liberties", 5), Axis("loyalty_people", 4), Axis("loyalty_nobles", -3)],
+                effects: [Province(Capital, Income, 2), Axis("liberties", 5), Axis("loyalty_people", 4), Axis("loyalty_nobles", -3), SetFlag("guild_charter")],
                 cause_tag: "guild_charter_granted",
                 hint: "Вольный город богатеет, а знать косится на купцов.",
                 told: "{ruler} {ruler:скрепил|скрепила} печатью хартию столичных цехов. Город зажил вольнее и богаче, а знать косилась на разбогатевших купцов.",
             ),
             (
                 text: "Продать хартию за серебро",
-                effects: [Axis("treasury", 40), Axis("loyalty_people", -2)],
+                effects: [Axis("treasury", 40), Axis("loyalty_people", -2), SetFlag("guild_charter")],
                 cause_tag: "guild_charter_sold",
                 hint: "Серебро сейчас, обида потом.",
                 told: "Старшины цехов выкупили у короны хартию вольностей за серебро. Казна пополнилась, но в цехах ворчали, что свободу им продали втридорога.",
@@ -78,7 +79,7 @@
         id: "cap_cathedral",
         title: "Собор на холме",
         text: "Епископ просит корону заложить в столице собор, какого не видели на сто вёрст окрест.",
-        when: NotFlag("cathedral_building"),
+        when: All([NotFlag("cathedral_building"), NotFlag("cathedral")]),
         weight: 3,
         once: true,
         cooldown_years: 0,
@@ -142,7 +143,8 @@
         id: "cap_fire",
         title: "Пожар в столице",
         text: "Ночью занялись склады у реки, и к утру выгорел целый посад.",
-        when: All([]),
+        // A city rebuilt in stone does not burn again (stage 25).
+        when: NotFlag("stone_city"),
         weight: 3,
         once: false,
         cooldown_years: 12,
@@ -166,7 +168,7 @@
             ),
             (
                 text: "Строить заново только из камня",
-                effects: [Axis("treasury", -80), Province(Capital, Population, -500), Axis("prestige", 8), Axis("loyalty_people", -2)],
+                effects: [Axis("treasury", -80), Province(Capital, Population, -500), Axis("prestige", 8), Axis("loyalty_people", -2), SetFlag("stone_city")],
                 cause_tag: "fire_stone",
                 hint: "Каменный город не горит, но дорог.",
                 told: "Ночной пожар выжег посад у реки, и {ruler} {ruler:велел|велела} строить заново только из камня. Город стал краше, но казна опустела.",
@@ -560,7 +562,7 @@
         cooldown_years: 10,
         importance: 1,
         sign: Good,
-        target: RandomProvince((holder: Vassal)),
+        target: RandomProvince((holder: Vassal, without_building: "abbey")),
         choices: [
             (
                 text: "Взять паломников под охрану короны",
@@ -571,7 +573,7 @@
             ),
             (
                 text: "Поставить у источника обитель",
-                effects: [Axis("treasury", -30), Axis("loyalty_church", 6), Province(EventTarget, Income, 1), Province(EventTarget, Loyalty, 4)],
+                effects: [Axis("treasury", -30), Axis("loyalty_church", 6), Province(EventTarget, Income, 1), Province(EventTarget, Loyalty, 4), Build(EventTarget, "abbey")],
                 cause_tag: "pilgrims_abbey",
                 hint: "Обитель кормит край и молится за короля.",
                 told: "У чудотворного источника в земле {province} поставили обитель, и паломники шли к ней со всех концов королевства.",
@@ -590,7 +592,7 @@
         id: "fac_church_demands",
         title: "Церковь требует",
         text: "Епископ напоминает трону, что корону возложила церковь, и просит десятину со всех земель.",
-        when: AxisBelow("loyalty_church", 60),
+        when: All([AxisBelow("loyalty_church", 60), NotFlag("law_tithe")]),
         weight: 4,
         once: false,
         cooldown_years: 8,
@@ -1092,11 +1094,11 @@
         cooldown_years: 10,
         importance: 3,
         sign: Bad,
-        target: RandomProvince((holder: Crown)),
+        target: RandomProvince((holder: Crown, without_building: "dikes")),
         choices: [
             (
                 text: "Насыпать валы",
-                effects: [Axis("treasury", -50), Axis("grain", -5), Province(EventTarget, Population, -500), Province(EventTarget, Loyalty, 5)],
+                effects: [Axis("treasury", -50), Axis("grain", -5), Province(EventTarget, Population, -500), Province(EventTarget, Loyalty, 5), Build(EventTarget, "dikes")],
                 cause_tag: "flood_dikes",
                 hint: "Валы, насыпанные тогда, держат реку до сих пор.",
                 told: "Весенний разлив затопил поля земли {province}, и корона насыпала там валы.",

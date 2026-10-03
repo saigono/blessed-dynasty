@@ -809,3 +809,20 @@ fn texts_have_their_minimum_of_variants() {
         ]
     );
 }
+
+/// Stage 26c: a compound event (one waiting for its causes, `FiredWithin`) recalls them in
+/// every way the chronicle may tell it, not only in its text.
+#[test]
+fn compound_events_recall_their_causes_in_every_told() {
+    let data = load_all();
+    let stories: Vec<_> = (data.events.iter())
+        .filter(|e| format!("{:?}", e.when).contains("FiredWithin"))
+        .collect();
+    assert!(stories.len() >= 6, "{}", stories.len());
+    for e in stories {
+        let told = (e.choices.iter()).flat_map(|c| std::iter::once(&c.told).chain(&c.retold));
+        for t in told {
+            assert!(t.contains("{prev_"), "{}: {t}", e.id);
+        }
+    }
+}

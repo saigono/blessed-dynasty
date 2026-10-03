@@ -7,9 +7,10 @@ use bd_core::rng::Rng;
 use bd_core::rules::Target;
 use bd_core::sim::{self, AutoChooser, Chronicle, FallReason};
 use bd_core::state::{
-    AxisId, Heir, HeirStatus, Holder, MarkKey, Preset, ProvinceId, Sex, VassalId,
+    AxisId, Heir, HeirStatus, Holder, MarkKey, NeighbourId, Preset, ProvinceId, Sex, VassalId,
 };
 use bd_core::time::Tick;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
@@ -146,9 +147,12 @@ fn golden_seed_42_script_a() {
     // Stage 27: the founder's reign as it was; the neighbours' strength is their kingdoms'
     // own, the news from afar join the entries, Вейр and Арден who broke away are states
     // armed as kingdoms: another road again, Хедвига loses the «Смута» in the year 79.
+    // Stage 26c on top of 27: the compound events join the pool («Баронская лига» fires in
+    // the founder's reign): the dynasty is conquered in the year 172. Without them the outcome
+    // is that of stage 27, only the texts differ.
     assert_eq!(
         (c.years, &c.fall, c.entries.len()),
-        (79, &FallReason::Usurped, 24)
+        (172, &FallReason::Conquered, 66)
     );
     let hint = |h: &'static str| Some(h);
     assert_eq!(
@@ -156,18 +160,21 @@ fn golden_seed_42_script_a() {
         [
             (
                 "Новое правление",
-                "После Ульриха Набожного на престол взошёл Конрад. Страна вздохнула спокойно: новый король не любил поспешных решений.",
+                "После Ульриха Благочестивого на престол взошёл Конрад. Советники скоро поняли, что новый король не терпит спешки, и в королевстве стало тише.",
                 hint("Наследник основателя учился власти в королевском совете."),
             ),
             (
                 "Мятеж дома Арден",
-                "Дом Арден поднял мятеж в земле Арден, и Конрад признал его независимость.",
-                hint("Набег, отбитый при основателе, научил соседа осторожности."),
+                "Корона отпустила мятежный дом Арден вместе с его землёй, не обнажив меча, и при дворе это называли то мудростью, то позором.",
+                hint(
+                    "С того набега, отбитого в первое царствование, сосед ходил к границе с оглядкой."
+                ),
             ),
             (
                 "Потеря земли",
-                "Земля Арден отошла под руку Ардена.",
-                hint("Набег, отбитый при основателе, научил соседа осторожности."),
+                "Конрад не удержал Арден, и тамошние люди стали подданными Ардена.",
+                // Told in the entry before: not again (stage 26c).
+                None,
             ),
         ]
     );
@@ -235,17 +242,18 @@ fn golden_seed_42_script_a_with_a_testament() {
     // peace; with them the crown loses its last land in the year 149.
     // Stage 26b (see golden_seed_42_script_a): usurped in the year 104.
     // Stage 27 (see golden_seed_42_script_a): usurped in the year 103.
+    // Stage 26c on top of 27 (the compound events): alive at the horizon.
     assert_eq!(
         (c.years, &c.fall, c.entries.len()),
-        (103, &FallReason::Usurped, 38)
+        (300, &FallReason::Alive, 93)
     );
     assert_eq!(
         texts(&c)[0],
         (
             "Завещание основателя",
-            "Над гробом Ульриха канцлер сломал печать на его завещании. Первым он завещал \
-             держаться правила: «Полная казна — крепость державы». Особо наказано было никогда \
-             не воевать с Нордмарком.",
+            "Над гробом Ульриха канцлер сломал печать на его завещании. Потомкам Ульрих \
+             оставил заповедь: «Полная казна — крепость державы». Ещё он велел никогда не \
+             воевать с Нордмарком.",
             None
         )
     );
@@ -276,6 +284,14 @@ fn dynasties(n: u64) {
             c.rulers.len() >= 2 || c.fall == FallReason::NoHeir,
             "seed {seed}"
         );
+        // Stage 26c: a link of a life or a join of two entries never puts a second colon in
+        // a sentence.
+        let lives = c.rulers.iter().map(|r| r.biography.as_str());
+        for text in lives.chain(c.entries.iter().map(|e| e.text.as_str())) {
+            for s in text.split(". ") {
+                assert!(s.matches(':').count() <= 1, "seed {seed}: {s}");
+            }
+        }
     }
 }
 
@@ -548,7 +564,12 @@ fn the_death_of_a_grown_first_heir_is_told() {
         [crowned.clone(), (2, "Смерть наследника".into())]
     );
     let e = &c.entries[1];
-    assert_eq!(e.text, "Умер h1, первый в очереди на престол.");
+    // One of the ways to tell it (stage 26c), the heir named.
+    let ways: Vec<_> = (std::iter::once(&data.sim.texts.heir_died.1))
+        .chain(&data.sim.texts.variants["heir_died"])
+        .map(|t| bd_core::text::fill(t, &data.names, &[("heir", "h1", Some(Sex::Male))]))
+        .collect();
+    assert!(ways.contains(&e.text), "{}", e.text);
     assert_eq!(e.importance, data.sim.notable);
     assert!(e.snapshot.heirs.is_empty());
     // Dying at 13 (below sim.heir_death_age), the last heir of a living dynasty: not told.
@@ -917,6 +938,40 @@ fn an_unfinished_war_starts_over_under_the_heir() {
     assert!(events.contains(&"war_clash"), "{events:?}");
 }
 
+/// Stage 26c, a bug of the samples: a neighbour that lost its last land has left the world
+/// (`drop_landless`, in the same step as the crown took that land), and the land is told
+/// without its name, not «отняв край у .». Here Берг is held by a neighbour already gone.
+#[test]
+fn land_taken_from_a_vanished_neighbour_is_told_without_its_name() {
+    let mut data = content();
+    let mut g = game(&data, 1);
+    let berg = g.world.provinces.get_mut(&pid("berg")).unwrap();
+    berg.holder = Holder::Foreign(NeighbourId("gone".into()));
+    quiet(&mut data);
+    data.sim.threshold = 9;
+    data.add_events(
+        r#"[(id: "take", title: "", text: "", when: All([]), weight: 1, once: true,
+         cooldown_years: 0, importance: 1, target: None,
+         choices: [(text: "", cause_tag: "take", effects: [
+            TransferProvince(ById("berg"), Crown)])])]"#,
+    )
+    .unwrap();
+    data.sim.max_years = 4;
+    let mut told = BTreeSet::new();
+    for seed in 0..20 {
+        let c = sim::run(end_now(&g), &data, Rng::from_seed(seed));
+        let t = c.entries.iter().find(|e| e.title == "Земля возвращена");
+        told.insert(t.expect("Берг comes back").text.clone());
+    }
+    assert!(told.len() > 1, "{told:?}");
+    for t in told {
+        assert!(
+            !t.contains(" .") && !t.contains("  ") && !t.contains(" ,"),
+            "{t}"
+        );
+    }
+}
+
 #[test]
 fn lost_and_regained_provinces_are_told_with_the_hint_of_their_cause() {
     let mut data = content();
@@ -953,24 +1008,27 @@ fn lost_and_regained_provinces_are_told_with_the_hint_of_their_cause() {
             )
         })
         .collect();
-    let hint = Some("Дороги, проложенные основателем, связали край со столицей.");
+    let hint =
+        Some("По дорогам, проложенным в первое царствование, обозы шли в столицу и через век.");
     assert_eq!(
         told[1..],
         [
             (
                 3,
                 "Потеря земли",
-                "Земля Берг отошла под руку Нордмарка.",
+                "Над замками Берга подняли знамёна Нордмарка, и королевские наместники уехали оттуда навсегда.",
                 hint
             ),
             (
                 5,
                 "Земля возвращена",
-                "Над замками земли Берг снова подняли королевское знамя, и Нордмарк смирился с потерей.",
-                hint
+                "Над стенами Берга снова подняли королевское знамя, и мытари короны вернулись в свои старые конторы.",
+                // Stage 26c: the same hint two entries on is not told again.
+                None
             ),
         ]
     );
+    assert_eq!(c.entries[2].causes[0].cause_tag, "road_built");
     let lost = &c.entries[1];
     assert_eq!(
         (lost.event.clone(), lost.importance),
@@ -1212,7 +1270,7 @@ fn kin_of_seed_42_script_a() {
         (k[2].name.as_str(), k[2].born, k[2].parent, k[2].crowned),
         ("Генрих", 1189, Some(0), None)
     );
-    assert_eq!(k[2].died, Some(1244)); // 1232 before stage 27
+    assert_eq!(k[2].died, Some(1243)); // 1232 before stage 27, 1244 before stage 26c
     assert_eq!(
         (k[3].name.as_str(), k[3].born, k[3].parent, k[3].died),
         ("Освальд", 1192, Some(0), Some(1194))
@@ -1347,12 +1405,17 @@ fn the_texts_do_not_move_the_main_stream() {
     let full = sim::run(end.clone(), &g.data, g.rng.clone());
     let mut plain = g.data.clone();
     let events = plain.events.iter_mut().chain(&mut plain.sim_events);
-    events
-        .flat_map(|e| &mut e.choices)
-        .for_each(|c| c.told.clear());
+    for e in events {
+        // Stage 26c: the event's other texts and the choices' other ways to tell them.
+        (e.texts, e.texts_when, e.recalled) = Default::default();
+        for c in &mut e.choices {
+            (c.told, c.retold) = Default::default();
+        }
+    }
     let t = &mut plain.sim.texts;
-    (t.variants, t.fall_told, t.epithets) = Default::default();
+    (t.variants, t.fall_told, t.epithets, t.fuse) = Default::default();
     t.life = Default::default();
+    (plain.sim.traits.iter_mut()).for_each(|t| t.retold.clear());
     let bare = sim::run(end, &plain, g.rng.clone());
     let outcome = |c: &Chronicle| {
         let entries = c
@@ -1395,7 +1458,7 @@ fn golden_texts_of_seed_42() {
     let c = sim::run(end, &g.data, g.rng.clone());
     let w = &g.world;
     let mut out = String::new();
-    for e in &c.entries {
+    for e in c.entries.iter().filter(|e| !e.joined) {
         let date = e.tick.date(w.time_unit, w.start_year);
         let hint = e.hint.as_deref().map_or(String::new(), |h| format!(" {h}"));
         out += &format!("{date} {}. {}{hint}\n", e.title, e.text);
@@ -1446,18 +1509,41 @@ fn the_epithet_follows_the_deeds() {
         let c = sim::run(founder_of(tags, sex), &data, Rng::from_seed(1));
         c.rulers[0].epithet.clone()
     };
+    // Stage 26c: an epithet has synonyms, one picked by seed: any name of the right one.
+    let names = |first: &str, female: bool| -> Vec<String> {
+        let e = data.sim.texts.epithets.iter().find(|e| e.name.0 == first);
+        let e = e.unwrap();
+        (std::iter::once(&e.name).chain(&e.also))
+            .map(|n| if female { n.1.clone() } else { n.0.clone() })
+            .collect()
+    };
+    let is = |got: String, first: &str, female: bool| {
+        assert!(names(first, female).contains(&got), "{got} is not {first}");
+    };
     let builds = ["fort_built", "road_built", "market_built"];
     let wars = ["war_declared_by_crown", "war_attack", "war_storm"];
-    assert_eq!(epithet(&builds, Sex::Male), "Строитель");
-    assert_eq!(epithet(&builds, Sex::Female), "Строительница");
-    assert_eq!(epithet(&wars, Sex::Male), "Воитель");
+    is(epithet(&builds, Sex::Male), "Строитель", false);
+    is(epithet(&builds, Sex::Female), "Строитель", true);
+    is(epithet(&wars, Sex::Male), "Воитель", false);
     // Three builds per two needed beat three wars per three.
-    assert_eq!(
-        epithet(&[&builds[..], &wars[..]].concat(), Sex::Male),
-        "Строитель"
-    );
-    assert_eq!(epithet(&[], Sex::Male), "Тихий");
-    assert_eq!(epithet(&["fort_built"], Sex::Male), "Тихий");
+    let both = [&builds[..], &wars[..]].concat();
+    is(epithet(&both, Sex::Male), "Строитель", false);
+    is(epithet(&[], Sex::Male), "Тихий", false);
+    is(epithet(&["fort_built"], Sex::Male), "Тихий", false);
+}
+
+/// Stage 26c, a bug of the samples: the founder's life tells his heaviest decisions by their
+/// hints, but not the one that ended his reign: its end tells the abdication already.
+#[test]
+fn a_founders_life_does_not_tell_his_abdication_twice() {
+    let data = content();
+    let mut end = founder_of(&["fort_built", "abdication"], Sex::Male);
+    end.cause = "abdication".into();
+    let c = sim::run(end, &data, Rng::from_seed(1));
+    let life = &c.rulers[0].biography;
+    assert!(life.contains("репость, поставленная"), "{life}");
+    assert!(!life.contains("корону до срока"), "{life}");
+    assert!(life.contains("отрёкся от престола"), "{life}");
 }
 
 /// Stage 22: a life of 3-6 sentences for a ruler who abdicated, who died, and under whom
@@ -1470,21 +1556,29 @@ fn a_life_is_told_for_an_abdication_a_death_and_a_usurpation() {
     end.cause = "abdication".into();
     let c = sim::run(end, &data, Rng::from_seed(1));
     let life = &c.rulers[0].biography;
+    // Stage 26c: the phrases vary; the founder's year, his epithet in a case and the
+    // abdication (every one of its phrases says so) are there.
+    let epithet = &c.rulers[0].epithet;
+    let declined = |e: &str| {
+        (0..6)
+            .map(|k| data.names.declined(e, k))
+            .collect::<Vec<_>>()
+    };
+    assert!(life.contains("Ульрих") && life.contains("1187"), "{life}");
     assert!(
-        life.starts_with("Ульрих принял корону в 1187 году") || life.contains("досталась Ульриху"),
-        "{life}"
+        declined(epithet).iter().any(|e| life.contains(e.as_str())),
+        "{epithet}: {life}"
     );
-    assert!(
-        life.contains("Строителем") && life.contains("отрёкся от престола"),
-        "{life}"
-    );
+    assert!(life.contains("отрёкся от престола"), "{life}");
     assert!((3..=6).contains(&sentences(life)), "{life}");
     let end = founder_of(&[], Sex::Female);
     let c = sim::run(end, &data, Rng::from_seed(2));
     let life = &c.rulers[0].biography;
+    let epithet = &c.rulers[0].epithet;
     assert!(
-        life.to_lowercase().contains("болезн") && life.contains("Тихой"),
-        "{life}"
+        life.to_lowercase().contains("болезн")
+            && declined(epithet).iter().any(|e| life.contains(e.as_str())),
+        "{epithet}: {life}"
     );
     assert!((3..=6).contains(&sentences(life)), "{life}");
     // The first heir is crowned, and the usurper takes the throne at once.
@@ -1494,9 +1588,224 @@ fn a_life_is_told_for_an_abdication_a_death_and_a_usurpation() {
     assert_eq!((c.fall.clone(), c.rulers.len()), (FallReason::Usurped, 2));
     let life = &c.rulers[1].biography;
     assert!(
-        life.starts_with("Конрад") && life.contains("узурпатор сверг Конрада"),
+        life.contains("Конрад") && life.to_lowercase().contains("узурпатор"),
         "{life}"
     );
     assert!((3..=6).contains(&sentences(life)), "{life}");
     assert!(c.epilogue.contains("Конрад"), "{}", c.epilogue);
+}
+
+/// Stage 26c acceptance: in 20 games a repeat of an event reads anew, both the text the ruler
+/// sees and its entry in the chronicle after him; an entry joined to the one before it is
+/// told inside that one, the same year or the next.
+#[test]
+fn a_repeated_event_reads_anew_in_twenty_games() {
+    let data = content();
+    let (mut shown, mut told, mut joined) = (0, 0, 0);
+    for seed in 0..20 {
+        let mut g = game(&data, seed);
+        let mut last = std::collections::BTreeMap::new();
+        let end = loop {
+            match g.wait().unwrap() {
+                Step::Event(v) => {
+                    if let Some(was) = last.insert(v.event_id.clone(), v.text.clone()) {
+                        assert_ne!(was, v.text, "seed {seed}: {}", v.event_id);
+                        shown += 1;
+                    }
+                    g.choose((v.choices.len() - 1) / 2).unwrap();
+                }
+                Step::Idle => {}
+                Step::ReignEnded(end) => break end,
+            }
+        };
+        let c = sim::run(end, &data, g.rng.clone());
+        let mut last = std::collections::BTreeMap::new();
+        for (i, e) in c.entries.iter().enumerate() {
+            if let Some(id) = &e.event
+                && let Some(was) = last.insert(id.clone(), &e.text)
+            {
+                assert_ne!(was, &e.text, "seed {seed}: {id}");
+                told += 1;
+            }
+            if e.joined {
+                let into = c.entries[..i].iter().rfind(|e| !e.joined).unwrap();
+                let body: String = e.text.trim_end_matches('.').chars().skip(1).collect();
+                assert!(into.text.contains(&body), "seed {seed}: {}", into.text);
+                assert!(e.tick.0 - into.tick.0 <= g.world.time_unit.ticks_per_year);
+                joined += 1;
+            }
+        }
+    }
+    assert!(
+        shown > 20 && told > 20 && joined > 0,
+        "{shown} {told} {joined}"
+    );
+}
+
+/// Stage 26c acceptance: linked events of a year are told as one entry, by the pair's own
+/// joins or, sharing a target, by those of the same year or the next; unlinked ones and ones
+/// further apart stay apart.
+#[test]
+fn linked_events_are_fused_into_one_entry() {
+    let data = content();
+    let g = game(&data, 1);
+    let berg = Target::Province(pid("berg"));
+    let holm = Target::Province(pid("holm"));
+    let told = |event, target, tick| sim::Told {
+        event,
+        target,
+        tick: Tick(tick),
+        root: None,
+        text: match event {
+            "cap_fire" => "Ночью выгорел посад.",
+            "cap_riot" => "Толпа пошла на дворец.",
+            _ => "Разбойники грабили обозы.",
+        },
+    };
+    let fuse = |a: &sim::Told, b: &sim::Told| sim::fuse(&data, &g.world, a, b, 7, 1);
+    let pair = data
+        .sim
+        .texts
+        .fuse
+        .pairs
+        .iter()
+        .find(|p| p.first.contains(&"cap_fire".into()));
+    let fused = |text: &str, joins: &[String]| {
+        joins.iter().any(|j| {
+            j.replace("{a}", "Ночью выгорел посад")
+                .replace("{b}", "толпа пошла на дворец")
+                == text
+        })
+    };
+    // A pair of the table: the fire, then the riot.
+    let (title, text) = fuse(&told("cap_fire", None, 3), &told("cap_riot", None, 3)).unwrap();
+    assert_eq!(title, pair.unwrap().title);
+    assert!(fused(&text, &pair.unwrap().joins), "{text}");
+    // The same target: one of the joins of the same year, of the next.
+    let a = told("prov_brigands", Some(&berg), 3);
+    let b = |tick| sim::Told {
+        text: "Толпа пошла на дворец.",
+        ..told("prov_new_mine", Some(&berg), tick)
+    };
+    let f = &data.sim.texts.fuse;
+    let (_, text) = fuse(&a, &b(3)).unwrap();
+    let same = |text: &str, joins: &[String]| {
+        joins.iter().any(|j| {
+            j.replace("{a}", "Разбойники грабили обозы")
+                .replace("{b}", "толпа пошла на дворец")
+                == text
+        })
+    };
+    assert!(same(&text, &f.same_year), "{text}");
+    let (_, text) = fuse(&a, &b(4)).unwrap();
+    assert!(same(&text, &f.next_year), "{text}");
+    // A second part with its own colon never takes a join with another, a pair's either
+    // (stage 26c).
+    let riot = sim::Told {
+        text: "Толпа пошла на дворец: горели факелы.",
+        ..told("cap_riot", None, 3)
+    };
+    assert!(pair.unwrap().joins.iter().all(|j| j.contains(": {b}")));
+    for salt in 0..40 {
+        let fire = told("cap_fire", None, 3);
+        let (_, text) = sim::fuse(&data, &g.world, &fire, &riot, salt, 1).unwrap();
+        assert_eq!(text.matches(':').count(), 1, "{text}");
+    }
+    // A first part with its own «а» never takes a join with another (stage 26c).
+    let a2 = sim::Told {
+        text: "Разбойники грабили обозы, а стража спала.",
+        ..told("prov_brigands", Some(&berg), 3)
+    };
+    assert!(f.next_year.iter().any(|j| j.starts_with("{a}, а ")));
+    for salt in 0..40 {
+        let (_, text) = sim::fuse(&data, &g.world, &a2, &b(4), salt, 1).unwrap();
+        assert_eq!(text.matches(", а ").count(), 1, "{text}");
+    }
+    // A second part opening a clause of its own never follows «как» (stage 26c).
+    let a3 = sim::Told {
+        text: "После того как стража ушла, разбойники грабили обозы.",
+        ..told("prov_brigands", Some(&berg), 4)
+    };
+    assert!(f.next_year.iter().any(|j| j.ends_with("как {b}.")));
+    for salt in 0..40 {
+        let (_, text) = sim::fuse(&data, &g.world, &a, &a3, salt, 1).unwrap();
+        assert!(!text.contains(" как, "), "{text}");
+    }
+    // Two years apart, another target, an omen: apart.
+    assert_eq!(fuse(&a, &b(5)), None);
+    assert_eq!(fuse(&a, &told("prov_new_mine", Some(&holm), 3)), None);
+    assert_eq!(
+        fuse(
+            &told("omen_dear_bread", None, 3),
+            &told("cap_riot", None, 3)
+        ),
+        None
+    );
+}
+
+/// Stage 26c acceptance: a compound event comes after both its causes, within its window,
+/// and its text recalls them by their `recalled` names.
+#[test]
+fn a_compound_event_follows_its_causes_and_recalls_them() {
+    use bd_core::rules::Predicate;
+    let data = content();
+    let start = game(&data, 0);
+    let mut stories = 0;
+    for seed in 0..300 {
+        if stories >= 6 {
+            break;
+        }
+        let mut g = start.reseeded(seed);
+        loop {
+            let v = match g.wait().unwrap() {
+                Step::Event(v) => v,
+                Step::Idle => continue,
+                Step::ReignEnded(_) => break,
+            };
+            let e = data.events.iter().find(|e| e.id == v.event_id).unwrap();
+            if e.id.starts_with("story_") {
+                stories += 1;
+                let Predicate::All(groups) = &e.when else {
+                    panic!("{}", e.id)
+                };
+                for group in groups {
+                    let ids = match group {
+                        Predicate::Any(ps) => ps.iter().collect(),
+                        p => vec![p],
+                    };
+                    // The latest cause of the group, before now and within its window.
+                    let cause = (ids.iter())
+                        .filter_map(|p| match p {
+                            Predicate::FiredWithin(id, y) => {
+                                let at = g.world.last_fired.get(id)?;
+                                let span = y.ticks(g.world.time_unit).0;
+                                let within = at.0 < g.world.tick.0 && g.world.tick.0 < at.0 + span;
+                                within.then_some((at.0, id))
+                            }
+                            _ => None,
+                        })
+                        .max()
+                        .map(|(_, id)| id);
+                    let cause = cause.unwrap_or_else(|| panic!("seed {seed}: {}", e.id));
+                    let recalled = &data
+                        .events
+                        .iter()
+                        .chain(&data.sim_events)
+                        .find(|c| &c.id == cause)
+                        .unwrap()
+                        .recalled;
+                    assert!(
+                        v.text.contains(recalled.as_str()),
+                        "seed {seed}: {}",
+                        v.text
+                    );
+                }
+                assert!(!v.text.contains('{'), "{}", v.text);
+                let told = g.told(0).unwrap();
+                assert!(!told.contains('{'), "{told}");
+            }
+            g.choose((v.choices.len() - 1) / 2).unwrap();
+        }
+    }
+    assert!(stories >= 6, "{stories}");
 }

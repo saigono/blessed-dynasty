@@ -68,6 +68,9 @@ fn event(id: &str, effects: Vec<Effect>) -> Event {
         id: id.into(),
         title: id.into(),
         text: String::new(),
+        texts: vec![],
+        texts_when: vec![],
+        recalled: String::new(),
         when: Predicate::All(vec![]),
         weight: 0,
         weight_bonus: vec![],
@@ -85,6 +88,7 @@ fn event(id: &str, effects: Vec<Effect>) -> Event {
             cause_tag: id.into(),
             hint: None,
             told: String::new(),
+            retold: vec![],
         }],
     }
 }

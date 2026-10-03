@@ -65,6 +65,10 @@ pub fn chronicle(
         ui.visuals_mut().selection.bg_fill = BG2;
         egui::ScrollArea::vertical().show(ui, |ui| {
             for (i, (e, &(r, crowns))) in c.entries.iter().zip(&reigns).enumerate() {
+                // Told in the entry before it (stage 26c).
+                if e.joined {
+                    continue;
+                }
                 let date = e.tick.date(w.time_unit, w.start_year);
                 let text = match crowns {
                     true => RichText::new(format!(
@@ -162,7 +166,7 @@ pub fn chronicle(
                 .vline(rect.left(), rect.y_range(), (2.0, RUBRIC));
         }
         // How the dynasty ended, after its last entry.
-        if selected + 1 == c.entries.len() {
+        if c.entries[selected + 1..].iter().all(|e| e.joined) {
             ui.add_space(10.0);
             ui.label(RichText::new(&c.epilogue).italics());
         }
@@ -655,6 +659,7 @@ mod tests {
             causes: vec![],
             snapshot: w.clone(),
             chain: None,
+            joined: false,
             news: false,
         };
         let c = Chronicle {
@@ -679,7 +684,7 @@ mod tests {
             laws,
             [
                 "1190  Крепостное право: основатель прикрепил крестьян к земле господ · до конца династии",
-                "1190  Ярмарочное право: основатель освободил ярмарки от мыта баронов · отменён в 1247",
+                "1190  Ярмарочное право: ярмарки освободил от баронского мыта сам основатель · отменён в 1247",
             ]
         );
     }

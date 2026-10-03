@@ -83,6 +83,7 @@ fn choice(effects: Vec<Effect>) -> Choice {
         cause_tag: String::new(),
         hint: None,
         told: String::new(),
+        retold: vec![],
     }
 }
 

@@ -907,7 +907,7 @@ pub fn chronicle_text(g: &Game, c: &sim::Chronicle) -> String {
     let w = &g.world;
     let date = |t: crate::time::Tick| t.date(w.time_unit, w.start_year);
     let mut out = String::from("Хроника:\n");
-    for e in &c.entries {
+    for e in c.entries.iter().filter(|e| !e.joined) {
         let hint = e.hint.as_deref().map_or(String::new(), |h| format!(" {h}"));
         out += &format!("  {} {}. {}{hint}\n", date(e.tick), e.title, e.text);
     }
@@ -1174,6 +1174,7 @@ mod tests {
             causes: vec![],
             snapshot: g.world.clone(),
             chain: None,
+            joined: false,
             news: false,
         };
         let entries = [

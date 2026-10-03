@@ -200,7 +200,7 @@ fn every_reign_event_fires_under_neutral_play() {
     let data = load_all();
     let preset = preset(&read("presets/default.ron"), &data);
     let mut fired = BTreeSet::new();
-    for seed in 0..1000 {
+    for seed in 0..2000 {
         let mut g = Game::new(data.clone(), &preset, seed);
         for _ in 0..60 {
             match g.wait().unwrap() {
@@ -225,14 +225,16 @@ fn every_reign_event_fires_under_neutral_play() {
 /// The same for the simulation: 1000 dynasties, each after a neutral reign of its seed; every
 /// simulation event and every omen reaches the chronicle at least once. Stage 20: every
 /// fourth dynasty has «Городские вольности» in force from the start (as `cli batch --law`):
-/// without a founder's law faith never falls to the schism.
+/// without a founder's law faith never falls to the schism. Stage 26c: 2000 dynasties, not
+/// 1000: «Подложное завещание» comes about once in 700, and the compound events moved the
+/// thousand it fell twice in to one it never does.
 #[test]
-#[ignore = "about a minute in release; stage 9 acceptance, run with --release --ignored"]
+#[ignore = "two minutes in release; stage 9 acceptance, run with --release --ignored"]
 fn every_sim_event_fires_in_a_thousand_dynasties() {
     let data = load_all();
     let preset = preset(&read("presets/default.ron"), &data);
     let mut fired: BTreeMap<String, u32> = BTreeMap::new();
-    for seed in 0..1000 {
+    for seed in 0..2000 {
         let mut g = Game::new(data.clone(), &preset, seed);
         if seed % 4 == 0 {
             g.world.flags.insert("law_charters".into());
@@ -706,7 +708,7 @@ fn a_treaty_is_signed_once_until_a_war() {
     use bd_core::rules::Target;
     let nordmark = Target::Neighbour(bd_core::state::NeighbourId("nordmark".into()));
     let mut g = waiting(5, "nb_embassy", Some(nordmark.clone()));
-    decide(&mut g, "Подписать договор", "treaty");
+    decide(&mut g, "Подписать договор с соседом", "treaty");
     let at = fired_at(&mut g, "nb_embassy", 20);
     assert!(!at.contains(&nordmark) && !at.is_empty(), "{at:?}");
     g.pending_event = Some(bd_core::game::PendingEvent {
@@ -730,7 +732,7 @@ fn an_heir_with_an_appanage_asks_no_more() {
     }
     let first = Target::Heir(g.world.heirs[0].id);
     g.pending_event.as_mut().unwrap().target = Some(first.clone());
-    decide(&mut g, "Дать удел в кормление", "appanage");
+    decide(&mut g, "Дать наследнику удел в кормление", "appanage");
     let at = fired_at(&mut g, "heir_appanage", 10);
     assert!(!at.contains(&first) && !at.is_empty(), "{at:?}");
 }
@@ -742,11 +744,11 @@ fn decisions_for_good_are_remembered() {
     use bd_core::rules::Target;
     let province = |p: &str| Some(Target::Province(bd_core::state::ProvinceId(p.into())));
     for (id, target, choice) in [
-        ("cap_guild_charter", None, "Даровать хартию"),
+        ("cap_guild_charter", None, "Даровать хартию вольностей"),
         ("cap_guild_charter", None, "Продать хартию за серебро"),
-        ("fac_church_demands", None, "Платить десятину"),
+        ("fac_church_demands", None, "Платить церкви десятину"),
         ("omen_search_decree", None, "Издать указ о бессрочном сыске"),
-        ("dis_flood", province("berg"), "Насыпать валы"),
+        ("dis_flood", province("berg"), "Насыпать вдоль реки валы"),
         (
             "prov_pilgrimage",
             province("holm"),
@@ -775,4 +777,52 @@ fn decisions_for_good_are_remembered() {
     g.world.flags.insert("cathedral_building".into());
     g.choose(0).unwrap();
     assert!(!could_fire(&g, "cap_cathedral", &None));
+}
+
+/// Stage 26c acceptance: the minimums of variants hold (an event's text 3, a told 3, a record
+/// of the simulation 5, a slot of a life 5, an epithet's names 2), and a text short of its
+/// minimum is named.
+#[test]
+fn texts_have_their_minimum_of_variants() {
+    let data = load_all();
+    assert_eq!(lint::variants(&data), Vec::<String>::new());
+    let mut short = data.clone();
+    let fire = short
+        .events
+        .iter_mut()
+        .find(|e| e.id == "cap_fire")
+        .unwrap();
+    fire.texts.pop();
+    fire.choices[0].retold.pop();
+    let t = &mut short.sim.texts;
+    t.variants.get_mut("crowned").unwrap().truncate(3);
+    t.life.soon.pop();
+    t.epithets[0].also.clear();
+    assert_eq!(
+        lint::variants(&short),
+        [
+            "cap_fire: текст: вариантов 2, нужно не меньше 3",
+            "cap_fire: told «Отстроить посад из казны»: вариантов 2, нужно не меньше 3",
+            "sim.texts.crowned: вариантов 4, нужно не меньше 5",
+            "sim.texts.life.soon: вариантов 4, нужно не меньше 5",
+            "Собиратель земель: имена: вариантов 1, нужно не меньше 2",
+        ]
+    );
+}
+
+/// Stage 26c: a compound event (one waiting for its causes, `FiredWithin`) recalls them in
+/// every way the chronicle may tell it, not only in its text.
+#[test]
+fn compound_events_recall_their_causes_in_every_told() {
+    let data = load_all();
+    let stories: Vec<_> = (data.events.iter())
+        .filter(|e| format!("{:?}", e.when).contains("FiredWithin"))
+        .collect();
+    assert!(stories.len() >= 6, "{}", stories.len());
+    for e in stories {
+        let told = (e.choices.iter()).flat_map(|c| std::iter::once(&c.told).chain(&c.retold));
+        for t in told {
+            assert!(t.contains("{prev_"), "{}: {t}", e.id);
+        }
+    }
 }

@@ -247,7 +247,8 @@ fn load(f: &Files, texts: &batch::Files, seed: u64) -> Result<Game, String> {
 /// The chronicle without the entry snapshots: JSON maps need string keys, and `World.marks`
 /// has none.
 fn chronicle_json(c: &sim::Chronicle) -> serde_json::Value {
-    let entries = c.entries.iter().map(|e| {
+    // An entry told in the one before it (stage 26c) is not shown.
+    let entries = c.entries.iter().filter(|e| !e.joined).map(|e| {
         serde_json::json!({
             "tick": e.tick,
             "event": e.event,

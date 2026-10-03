@@ -5,13 +5,14 @@ use crate::fx::Fx;
 use crate::neighbour::neighbour_tick;
 use crate::rng::Rng;
 use crate::rules::{
-    Action, ActionTarget, Choice, Ctx, Effect, Event, EventTarget, HeirOp, ProvinceField, Target,
-    add_axis,
+    Action, ActionTarget, Choice, Ctx, Effect, Event, EventTarget, HeirOp, Predicate,
+    ProvinceField, Target, add_axis,
 };
 use crate::state::{
     ActiveAction, CauseTag, Heir, HeirStatus, Holder, MarkKey, NeighbourId, Preset, ProvinceId,
     Union, World,
 };
+use crate::text;
 use crate::time::Tick;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -335,9 +336,11 @@ impl Game {
         let Some(p) = picked else {
             return Ok(Step::Idle);
         };
-        self.world
-            .last_fired
-            .insert(p.event_id.clone(), self.world.tick);
+        let w = &mut self.world;
+        w.last_fired.insert(p.event_id.clone(), w.tick);
+        let first = || crate::text::hash(&p.event_id, w.tick.0) as u32 & 0xffff;
+        let turn = w.retold.entry(p.event_id.clone()).or_insert_with(first);
+        *turn += 1;
         if find_event(&self.data, &p.event_id).is_some_and(|e| !e.is_message()) {
             self.world.events_this_year += 1;
         }
@@ -732,7 +735,7 @@ impl Game {
     fn view(&self, p: &PendingEvent) -> EventView {
         let e = find_event(&self.data, &p.event_id).expect("pending events exist");
         let named = self.named(p);
-        let fill = |s: &str| self.battles(crate::text::fill(s, &self.data.names, &named));
+        let fill = |s: &str| self.recall(e, self.battles(text::fill(s, &self.data.names, &named)));
         let choices = e.choices.iter().map(|c| Choice {
             text: fill(&c.text),
             hint: c.hint.as_deref().map(fill),
@@ -741,7 +744,7 @@ impl Game {
         EventView {
             event_id: e.id.clone(),
             title: fill(&e.title),
-            text: fill(&e.text),
+            text: fill(e.text_now(&self.world)),
             importance: e.importance,
             target: p.target.clone(),
             choices: choices.collect(),
@@ -780,7 +783,56 @@ impl Game {
             .and_then(|x| x.target.as_ref())
             .and_then(|id| w.provinces.get(id));
         named.extend(war_target.map(|p| ("war_target", p.name.as_str(), None)));
+        let causes = find_event(&self.data, &p.event_id).map(|e| self.causes(e));
+        for (key, (e, _)) in ["prev_event", "then_event"]
+            .into_iter()
+            .zip(causes.unwrap_or_default())
+        {
+            named.push((key, e.recalled.as_str(), None));
+        }
         named
+    }
+
+    /// The causes of a compound event (`Predicate::FiredWithin` of its `when` that hold), the
+    /// latest of every group (a part of its All), the earliest first, with the tick each last
+    /// fired at.
+    fn causes(&self, e: &Event) -> Vec<(&Event, Tick)> {
+        // The latest cause of a group: a part of an All, or the whole `when`.
+        fn latest<'a>(p: &'a Predicate, w: &World) -> Option<(&'a String, Tick)> {
+            match p {
+                Predicate::FiredWithin(id, _) if p.eval(w) => Some((id, *w.last_fired.get(id)?)),
+                Predicate::Any(ps) => (ps.iter().filter_map(|p| latest(p, w))).max_by_key(|c| c.1),
+                _ => None,
+            }
+        }
+        let groups = match &e.when {
+            Predicate::All(ps) => ps.iter().collect(),
+            p => vec![p],
+        };
+        let mut all: Vec<_> = (groups.into_iter())
+            .filter_map(|p| latest(p, &self.world))
+            .filter_map(|(id, t)| Some((find_event(&self.data, id)?, t)))
+            .collect();
+        all.sort_by_key(|(e, t)| (*t, e.id.clone()));
+        all
+    }
+
+    /// `s` with `{prev_year}` and `{then_year}` of the causes of `e` (`causes`) filled in.
+    fn recall(&self, e: &Event, s: String) -> String {
+        let w = &self.world;
+        let causes = self.causes(e);
+        let year = |i: usize| {
+            causes
+                .get(i)
+                .map(|(_, t)| t.date(w.time_unit, w.start_year))
+        };
+        let mut s = s;
+        for (key, i) in [("{prev_year}", 0), ("{then_year}", 1)] {
+            if let Some(y) = year(i) {
+                s = s.replace(key, &y);
+            }
+        }
+        s
     }
 
     /// How the chronicle tells choice `idx` of the event waiting (`Choice.told`), filled in
@@ -788,14 +840,16 @@ impl Game {
     pub fn told(&self, idx: usize) -> Option<String> {
         let p = self.pending_event.as_ref()?;
         let c = find_event(&self.data, &p.event_id)?.choices.get(idx)?;
+        let e = find_event(&self.data, &p.event_id)?;
         let named = self.named(p);
         let year = (self.world.year()).to_string();
-        let told = self.battles(crate::text::fill(&c.told, &self.data.names, &named));
+        let told = c.told_now(&e.id, &self.world);
+        let told = self.recall(e, self.battles(text::fill(told, &self.data.names, &named)));
         (!told.is_empty()).then(|| told.replace("{year}", &year))
     }
 
     /// `s` with `{war_won}` and `{war_lost}` filled in: the battles of the war going on the
-    /// crown won and lost, «2 сражения» (`WarRules.battles`). A battle that moved nothing
+    /// crown won and lost, «два сражения» (`WarRules.battles_said`). A battle that moved nothing
     /// counts as neither. Without a war `s` stays as it is.
     fn battles(&self, s: String) -> String {
         let Some(war) = &self.world.war else {
@@ -805,9 +859,12 @@ impl Game {
             let moved = war.battles.iter().filter(|(_, d)| *d != Fx(0));
             moved.filter(|(_, d)| (*d > Fx(0)) == won).count() as u32
         };
-        let forms = &self.data.war.battles;
-        s.replace("{war_won}", &crate::text::plural(n(true), forms))
-            .replace("{war_lost}", &crate::text::plural(n(false), forms))
+        let r = &self.data.war;
+        let say = |n: u32| {
+            (r.battles_said.get(n as usize).cloned()).unwrap_or_else(|| text::plural(n, &r.battles))
+        };
+        s.replace("{war_won}", &say(n(true)))
+            .replace("{war_lost}", &say(n(false)))
     }
 }
 
@@ -1083,6 +1140,9 @@ mod tests {
             id: id.into(),
             title: id.into(),
             text: String::new(),
+            texts: vec![],
+            texts_when: vec![],
+            recalled: String::new(),
             when: Predicate::All(vec![]),
             weight: 0,
             weight_bonus: vec![],
@@ -1100,6 +1160,7 @@ mod tests {
                 cause_tag: id.into(),
                 hint: None,
                 told: String::new(),
+                retold: vec![],
             }],
         }
     }
@@ -1865,7 +1926,7 @@ mod tests {
             let expected = match id.as_str() {
                 // The raid hits a province and names its raider.
                 "neighbour_raid" => {
-                    assert!(text.contains("Отряды Нордмарк"), "{text}");
+                    assert!(text.contains("Нордмарк"), "{text}");
                     Target::Province(pid("arden"))
                 }
                 "neighbour_ultimatum" | "neighbour_war_declared" => {

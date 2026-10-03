@@ -29,12 +29,13 @@ const NAMES: &str = include_str!("../../../data/names.ron");
 const HINTS: &str = include_str!("../../../data/hints.ron");
 const SCORE: &str = include_str!("../../../data/score.ron");
 /// Every top-level file of data/events, in file name order like the CLI.
-const EVENTS: [&str; 6] = [
+const EVENTS: [&str; 7] = [
     include_str!("../../../data/events/death.ron"),
     include_str!("../../../data/events/heirs.ron"),
     include_str!("../../../data/events/neighbours.ron"),
     include_str!("../../../data/events/omens.ron"),
     include_str!("../../../data/events/reign.ron"),
+    include_str!("../../../data/events/stories.ron"),
     include_str!("../../../data/events/war.ron"),
 ];
 /// Every file of data/events/sim, in file name order.
@@ -158,6 +159,9 @@ struct App {
     chosen: Vec<Line>,
     /// The messages of the year in the making (`Event::is_message`), not asked (stage 26b).
     news: Vec<Line>,
+    /// The event told last this year: in the news or not, its id and target. A linked event
+    /// after it joins its line (`sim::fuse`, stage 26c).
+    told: Option<(bool, String, Option<Target>)>,
     /// The treasury before the latest year's tick, that year's income and upkeep
     /// (`war::income_parts`): its «Казна:» line.
     money: Option<(Fx, Fx, Fx)>,
@@ -232,6 +236,7 @@ impl App {
             year_start: None,
             chosen: Vec::new(),
             news: Vec::new(),
+            told: None,
             money: None,
             saved: None,
             persist: false,
@@ -314,7 +319,8 @@ impl App {
                     let mark = if omen { OMEN } else { "" };
                     let told = (self.game.as_ref().and_then(|g| g.told(i)))
                         .unwrap_or_else(|| format!("«{}»: {}", v.title, c.text));
-                    self.chosen.push((format!("{mark}{told}"), None));
+                    let (id, target) = (v.event_id.clone(), v.target.clone());
+                    self.tell(false, id, target, format!("{mark}{told}"));
                 }
             }
             _ => {}
@@ -389,10 +395,13 @@ impl App {
         // A message is not asked: it goes into the year's news (stage 26b).
         let mut res = res;
         while let Ok(Step::Event(v)) = &res
+            && let Some(g) = self.game.as_ref()
             && (g.data.events.iter()).any(|e| e.id == v.event_id && e.is_message())
         {
             let told = g.told(0).unwrap_or_else(|| v.title.clone());
-            self.news.push((told, None));
+            let (id, target) = (v.event_id.clone(), v.target.clone());
+            self.tell(true, id, target, told);
+            let g = self.game.as_mut().expect("in a game");
             res = match g.choose(0) {
                 Ok(()) if g.ended.is_some() => g.wait(),
                 r => r.map(|_| Step::Idle),
@@ -437,7 +446,50 @@ impl App {
 
     /// Puts what happened since «Подождать год» into the journal: the choices made, then
     /// the messages and what changed. A second record of the same date joins the first.
+    /// `told` of event `id` into the year's news or choices, or joined to the line of the
+    /// event told before it this year when the two are linked (`sim::fuse`).
+    fn tell(&mut self, news: bool, id: String, target: Option<Target>, told: String) {
+        let g = self.game.as_ref().expect("in a game");
+        let tick = g.world.tick;
+        let salt = g.rng.clone().next_u64();
+        let fused = self.told.as_ref().and_then(|(in_news, e, t)| {
+            let lines = if *in_news { &self.news } else { &self.chosen };
+            let told_as = |event, target, text| sim::Told {
+                event,
+                target,
+                tick,
+                root: None,
+                text,
+            };
+            let a = told_as(e.as_str(), t.as_ref(), &lines.last()?.0);
+            let b = told_as(&id, target.as_ref(), &told);
+            let (_, text) = sim::fuse(&g.data, &g.world, &a, &b, salt, tick.0 as u64)?;
+            Some((*in_news, text))
+        });
+        match fused {
+            Some((in_news, text)) => {
+                let lines = if in_news {
+                    &mut self.news
+                } else {
+                    &mut self.chosen
+                };
+                lines.last_mut().expect("joined to it").0 = text;
+                self.told = None;
+            }
+            None => {
+                let lines = if news {
+                    &mut self.news
+                } else {
+                    &mut self.chosen
+                };
+                lines.push((told, None));
+                self.told = Some((news, id, target));
+            }
+        }
+    }
+
     fn close_year(&mut self) {
+        self.told = None;
         let g = self.game.as_ref().expect("in a game");
         let chosen = std::mem::take(&mut self.chosen);
         let mut lines = std::mem::take(&mut self.news);
@@ -516,7 +568,7 @@ impl App {
         (self.intro, self.tree, self.year_start) = (true, false, None);
         (self.laws, self.will) = (false, None);
         (self.journal, self.chosen, self.money) = (Vec::new(), Vec::new(), None);
-        self.news.clear();
+        (self.news, self.told) = (Vec::new(), None);
     }
 
     fn step(&mut self, res: Result<Step, GameError>) {
@@ -1976,7 +2028,18 @@ fn movers(d: &Data, w: &World, a: &AxisId) -> Vec<String> {
             .filter(|&k| s[k])
             .for_each(|k| by[k].push(format!("закон «{}»", l.name)));
     }
-    let mut pool: Vec<&bd_core::rules::Event> = d.events.iter().filter(|e| e.weight > 0).collect();
+    // A compound event (stage 26c) is rare whatever its weight: it waits for its causes.
+    fn compound(p: &Predicate) -> bool {
+        match p {
+            Predicate::FiredWithin(..) => true,
+            Predicate::All(ps) | Predicate::Any(ps) => ps.iter().any(compound),
+            Predicate::Not(p) => compound(p),
+            _ => false,
+        }
+    }
+    let mut pool: Vec<&bd_core::rules::Event> = (d.events.iter())
+        .filter(|e| e.weight > 0 && !compound(&e.when))
+        .collect();
     pool.sort_by_key(|e| std::cmp::Reverse(e.weight));
     for (k, list) in by.iter_mut().enumerate() {
         let moving = pool.iter().filter(|e| {
@@ -2891,11 +2954,13 @@ mod tests {
         let line = |s: &str, up| (s.to_string(), up);
         // Every year opens with the treasury, notable or not.
         let money = |s: &str| line(&format!("{MONEY} {s}"), Some(true));
+        // Stage 26c: «Баронская лига» (the nobles' demand of 1189 and their assembly of 1191)
+        // joins the pick from 1192 on: another event that year, the league's card in 1193.
         let want = vec![
             (
                 "1188",
                 vec![line(
-                    "Отряды Нордмарка перешли границу и жгли сёла земли Арден, но королевское войско отбросило их.",
+                    "Отряды Нордмарка перешли границу и жгли сёла в Ардене, но королевское войско отбросило их за реку.",
                     None,
                 )],
                 vec![money("+27: доход +32, расходы -5")],
@@ -2903,7 +2968,7 @@ mod tests {
             (
                 "1189",
                 vec![line(
-                    "Бароны потребовали подтвердить их старые вольности, и Ульрих скрепил грамоту. Руки короны стали короче.",
+                    "Знать получила свои вольности на пергаменте, и с тех пор каждый барон носил копию грамоты при себе, как оберег от королевских указов.",
                     None,
                 )],
                 vec![
@@ -2916,7 +2981,7 @@ mod tests {
             (
                 "1190",
                 vec![line(
-                    "Купцы Веструма получили право торговать на ярмарках королевства.",
+                    "Купцы Веструма получили право торговать на ярмарках королевства, и в торговых рядах заговорили на чужом наречии.",
                     None,
                 )],
                 vec![
@@ -2938,22 +3003,22 @@ mod tests {
             (
                 "1192",
                 vec![line(
-                    "Дозор Веструма сжёг пограничную мельницу и убил людей, и корона потребовала виру за убитых.",
+                    "Град выбил хлеба в Соле, и корона раздала голодающим зерно из казённых амбаров.",
                     None,
                 )],
                 vec![
-                    money("+44: доход +33, расходы -4, действия и события +15"),
+                    line(
+                        &format!("{MONEY} -6: доход +33, расходы -4, действия и события -35"),
+                        Some(false),
+                    ),
                     line("Рождение: Освальд", Some(true)),
                 ],
             ),
             (
                 "1193",
-                vec![line(
-                    "Купцы Веструма получили право торговать на ярмарках королевства.",
-                    None,
-                )],
+                vec![],
                 vec![
-                    money("+54: доход +33, расходы -4, действия и события +25"),
+                    money("+28: доход +33, расходы -4"),
                     line("Умер в детстве королевский сын Генрих", Some(false)),
                     // Stage 27: news from afar, in words.
                     line(
@@ -2992,7 +3057,7 @@ mod tests {
         (g.data.quiet_weight, g.data.heirs.birth) = (1_000_000, vec![]);
         (g.world.war, g.queue) = (None, vec![]);
         h.app.apply(Cmd::Wait);
-        let quiet = vec![money("+28: доход +33, расходы -4")];
+        let quiet = vec![money("+29: доход +33, расходы -4")];
         assert_eq!(
             h.app.journal.last().unwrap(),
             &("1194".to_string(), vec![], quiet)
@@ -3872,7 +3937,7 @@ mod tests {
             panic!("the war's first event")
         };
         assert_eq!(v.event_id, "war_declared");
-        h.click_label("Созвать вассалов");
+        h.click_label("Созвать вассалов с дружинами");
         assert!(matches!(h.app.screen, Screen::Reign));
         let war = h.game().world.war.clone().unwrap();
         assert_eq!(war.target, Some(ProvinceId("skala".into())));
@@ -4115,7 +4180,15 @@ mod tests {
         h.app.apply(Cmd::Choose(1));
         let berg = Target::Province(ProvinceId("berg".into()));
         force_event(&mut h, "prov_crop_failure", Some(berg));
-        let tip = hover(&mut h, "Берг");
+        // The text names it in an oblique case (stage 26c), whichever is on screen: the
+        // nominative (and the accusative, the same) is the map's.
+        let forms: Vec<_> = (1..6)
+            .map(|c| load_data().names.declined("Берг", c))
+            .collect();
+        let shown = texts_of(&mut h);
+        let berg = forms.iter().find(|f| *f != "Берг" && shown.contains(f));
+        let berg = berg.unwrap_or_else(|| panic!("{forms:?} {shown:?}"));
+        let tip = hover(&mut h, berg);
         assert!(tip.contains(&"корона".to_string()), "{tip:?}");
         for t in ["Доход ", "Население ", "Лояльность "] {
             assert!(tip.iter().any(|x| x.starts_with(t)), "{t}: {tip:?}");
@@ -4637,11 +4710,12 @@ mod tests {
         );
         let (_, chosen, lines) = h.app.journal.last().unwrap();
         assert!(chosen.is_empty(), "{chosen:?}");
-        let told = "В день святого покровителя Ульрих устроил турнир";
-        assert!(lines.iter().any(|(t, _)| t.starts_with(told)), "{lines:?}");
+        // The tourney, told one of its ways (stage 26c): every one has its knights.
+        let told = |t: &str| t.contains("рыцар");
+        assert!(lines.iter().any(|(t, _)| told(t)), "{lines:?}");
         let shown = texts_of(&mut h);
         assert!(
-            shown.iter().any(|t| t.starts_with(&format!("· {told}"))),
+            shown.iter().any(|t| t.starts_with("· ") && told(t)),
             "{shown:?}"
         );
     }

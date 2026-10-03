@@ -19,6 +19,7 @@ pub fn lint(data: &Data, world: &World) -> Vec<String> {
         names(data, world),
         epithets(data),
         buildings(data),
+        variants(data),
     ]
     .concat()
 }
@@ -108,8 +109,9 @@ pub fn told(data: &Data) -> Vec<String> {
     let mut out: Vec<String> = unhinted
         .map(|(id, c)| format!("{id}: вариант «{}» без подсказки или с цифрами", c.text))
         .collect();
-    let untold = (choices(&data.events).chain(choices(&data.sim_events)))
-        .filter(|(_, c)| c.told.trim().is_empty() || has_digits(&c.told));
+    let untold = (choices(&data.events).chain(choices(&data.sim_events))).filter(|(_, c)| {
+        c.told.trim().is_empty() || has_digits(&c.told) || c.retold.iter().any(|t| has_digits(t))
+    });
     out.extend(untold.map(|(id, c)| format!("{id}: вариант «{}» без told или с цифрами", c.text)));
     out
 }
@@ -119,7 +121,15 @@ pub fn told(data: &Data) -> Vec<String> {
 pub fn bad_braces(s: &str) -> Vec<String> {
     // Stage 24 (testament.rs): founder, forebear, precept, order, will. Stage 25 (war):
     // war_won, war_lost.
-    const KEYS: [&str; 21] = [
+    // Stage 26c: prev_event, then_event and their years (compound events), a and b (the
+    // joins of `sim.texts.fuse`).
+    const KEYS: [&str; 27] = [
+        "prev_event",
+        "prev_year",
+        "then_event",
+        "then_year",
+        "a",
+        "b",
         "founder",
         "forebear",
         "precept",
@@ -171,7 +181,9 @@ pub fn template_texts(data: &Data) -> Vec<&String> {
     let mut all: Vec<&String> = Vec::new();
     for e in data.events.iter().chain(&data.sim_events) {
         all.extend([&e.title, &e.text]);
+        all.extend(e.texts.iter().chain(e.texts_when.iter().map(|(_, t)| t)));
         all.extend(e.choices.iter().flat_map(|c| [&c.text, &c.told]));
+        all.extend(e.choices.iter().flat_map(|c| &c.retold));
     }
     for (a, b) in [
         &t.crowned,
@@ -188,12 +200,24 @@ pub fn template_texts(data: &Data) -> Vec<&String> {
     all.extend(t.reign_ends.values().chain(t.falls.iter().map(|f| &f.1)));
     all.extend(t.variants.values().flatten());
     all.extend(t.fall_told.iter().flat_map(|f| &f.1));
+    for e in &t.epithets {
+        all.extend(e.told.iter().chain([&e.name.0, &e.name.1]));
+        all.extend(e.also.iter().flat_map(|(a, b)| [a, b]));
+    }
+    for r in &data.sim.traits {
+        all.extend(
+            std::iter::once(&r.told)
+                .chain(&r.retold)
+                .flat_map(|(a, b)| [a, b]),
+        );
+    }
+    let f = &t.fuse;
+    all.extend(f.same_year.iter().chain(&f.next_year));
     all.extend(
-        t.epithets
+        f.pairs
             .iter()
-            .flat_map(|e| e.told.iter().chain([&e.name.0, &e.name.1])),
+            .flat_map(|p| p.joins.iter().chain([&p.title])),
     );
-    all.extend(data.sim.traits.iter().flat_map(|r| [&r.told.0, &r.told.1]));
     all.extend(testament_texts(data).into_iter().flat_map(|(_, v)| v));
     let l = &t.life;
     for v in [
@@ -204,6 +228,8 @@ pub fn template_texts(data: &Data) -> Vec<&String> {
         &l.lawful,
         &l.deed,
         &l.same_year,
+        &l.soon,
+        &l.later,
     ] {
         all.extend(v);
     }
@@ -298,7 +324,8 @@ pub fn names(data: &Data, world: &World) -> Vec<String> {
     let realms = world.neighbours.values().filter_map(|n| n.realm.as_ref());
     all.extend(realms.flat_map(|r| [r.house.as_str(), r.ruler.as_str()]));
     let epithets = data.sim.texts.epithets.iter();
-    all.extend(epithets.flat_map(|e| [e.name.0.as_str(), e.name.1.as_str()]));
+    let names = epithets.flat_map(|e| std::iter::once(&e.name).chain(&e.also));
+    all.extend(names.flat_map(|(a, b)| [a.as_str(), b.as_str()]));
     let undeclined = n.undeclined(all).into_iter();
     undeclined
         .map(|s| format!("{s}: нет падежей (names.ron forms)"))
@@ -356,4 +383,77 @@ pub fn epithets(data: &Data) -> Vec<String> {
         }
     }
     out
+}
+
+/// Stage 26c: texts enough for a repeat to read anew. An event says itself 3 ways without
+/// conditions, a choice is told 3 ways, a record of the simulation, an epilogue and every
+/// phrase of a life (the epithet's included) 5 ways, an epithet has 2 names.
+pub fn variants(data: &Data) -> Vec<String> {
+    let mut all: Vec<(String, usize, usize)> = vec![];
+    for e in data.events.iter().chain(&data.sim_events) {
+        all.push((format!("{}: текст", e.id), 1 + e.texts.len(), 3));
+        for c in &e.choices {
+            all.push((
+                format!("{}: told «{}»", e.id, c.text),
+                1 + c.retold.len(),
+                3,
+            ));
+        }
+    }
+    let t = &data.sim.texts;
+    let more = |k: &str| t.variants.get(k).map_or(0, Vec::len);
+    for k in [
+        "crowned",
+        "province_lost",
+        "province_gained",
+        "heir_died",
+        "law_changed",
+        "law_enacted",
+        "law_repealed",
+        "partition",
+    ] {
+        all.push((format!("sim.texts.{k}"), 1 + more(k), 5));
+    }
+    let falls = t
+        .fall_told
+        .iter()
+        .map(|(f, v)| (format!("fall_told {f:?}"), v.len()));
+    let l = &t.life;
+    let parts = [
+        ("founder", &l.founder),
+        ("regency", &l.regency),
+        ("designated", &l.designated),
+        ("contested", &l.contested),
+        ("lawful", &l.lawful),
+        ("deed", &l.deed),
+        ("same_year", &l.same_year),
+        ("soon", &l.soon),
+        ("later", &l.later),
+    ];
+    let parts = parts
+        .into_iter()
+        .map(|(k, v)| (format!("life.{k}"), v.len()));
+    let ends = l
+        .ends
+        .iter()
+        .map(|(k, v)| (format!("life.ends.{k}"), v.len()));
+    let lf = l
+        .falls
+        .iter()
+        .map(|(f, v)| (format!("life.falls {f:?}"), v.len()));
+    let told = t
+        .epithets
+        .iter()
+        .map(|e| (format!("epithet {}", e.name.0), e.told.len()));
+    let five = falls.chain(parts).chain(ends).chain(lf).chain(told);
+    all.extend(five.map(|(k, n)| (format!("sim.texts.{k}"), n, 5)));
+    let names = t
+        .epithets
+        .iter()
+        .map(|e| (format!("{}: имена", e.name.0), 1 + e.also.len(), 2));
+    all.extend(names);
+    (all.into_iter())
+        .filter(|(_, n, min)| n < min)
+        .map(|(k, n, min)| format!("{k}: вариантов {n}, нужно не меньше {min}"))
+        .collect()
 }

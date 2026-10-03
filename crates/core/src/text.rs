@@ -63,6 +63,14 @@ pub fn pick(variants: &[String], salt: u64, n: u64) -> &str {
     }
 }
 
+/// A number of `s` and `n` for `pick` and the turns of texts, the same on every platform.
+pub fn hash(s: &str, n: u32) -> u64 {
+    let fnv = (s.bytes()).fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+        (h ^ b as u64).wrapping_mul(0x100_0000_01b3)
+    });
+    Rng::from_seed(fnv ^ n as u64).next_u64()
+}
+
 /// `n` and the word of `forms` (one, few, many) it takes: «1 год», «3 года», «11 лет».
 pub fn plural(n: u32, (one, few, many): &(String, String, String)) -> String {
     let word = match (n % 10, n % 100) {

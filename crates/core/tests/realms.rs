@@ -106,6 +106,9 @@ fn the_kingdoms_reach_us_only_through_the_realm_rules() {
 /// of events by importance, one more action for the automaton), re-pinned. Stage 27: the same
 /// reign again, the dynasty after it re-pinned: the neighbours' strength is their kingdoms'
 /// own now, their wars and houses move it, and a usurper ends the dynasty in its 205th year.
+/// Stage 26c: the compound events join the pool and the texts vary: the house dies out without
+/// an heir in its 141st year (without the compound events it ends as in stage 27, only the
+/// texts differ).
 #[test]
 fn a_link_from_before_the_stage_plays_the_same() {
     let link = "AQdkZWZhdWx0Kh0AASMAAQABAQABAQABAQABAQABAQAAAQABAgABAQAAAQABAQABAQABAgABAQABAQABAQABAQ\
@@ -131,9 +134,9 @@ fn a_link_from_before_the_stage_plays_the_same() {
             c.entries.len(),
             s.total
         ),
-        (28, 205, "Usurped", 85, 15882)
+        (28, 141, "NoHeir", 45, 9399)
     );
-    assert_eq!(format!("{hash:016x}"), "dafed280dd3a5764");
+    assert_eq!(format!("{hash:016x}"), "049160f01bb3f49c");
     assert_eq!(
         c.realms.len(),
         5,
@@ -384,17 +387,20 @@ fn world_of(f: &Files, seed: u64, years: u32) -> Dynasty {
 
 /// Stage 27 acceptance of the calibration (docs/calibration.md): the first dynasty of an
 /// established kingdom lives 80 to 150 years at the median, over 100 worlds of 300 years (a
-/// dynasty alive at the end counts 300).
+/// dynasty alive at the end counts 300). Stage 26c: over 1000 worlds. Purpur's dynasties
+/// live to the horizon in a third of the worlds, and the median of a hundred jumps: seeds
+/// 0..99 gave 110 before the compound events and 166 after them, 100..199 gave 138 and 162;
+/// over 1000 worlds 137 and 140 (docs/calibration.md, stage 26c).
 /// `cargo test --release -p core --test realms -- --ignored dynasties`.
 #[test]
-#[ignore = "release only, half a minute"]
+#[ignore = "release only, a minute and a half"]
 fn kingdom_dynasties_live_80_to_150_years() {
     let f = files();
     let mut lives: std::collections::BTreeMap<String, Vec<u32>> = Default::default();
     let mut how: std::collections::BTreeMap<String, Vec<String>> = Default::default();
     let mut news: std::collections::BTreeMap<String, u32> = Default::default();
     let mut realms = vec![];
-    for seed in 0..100 {
+    for seed in 0..1000 {
         let d = world_of(&f, seed, 300);
         let r = &d.g.realms;
         for id in ["nordmark", "purpur", "vestrum"] {
@@ -415,17 +421,27 @@ fn kingdom_dynasties_live_80_to_150_years() {
         for f in &how[&id] {
             *falls.entry(f).or_default() += 1;
         }
-        println!("{id}: {} / {} / {} {falls:?}", v[24], v[49], v[74]);
+        let n = v.len();
+        println!(
+            "{id}: {} / {} / {} {falls:?}",
+            v[n / 4],
+            v[n / 2],
+            v[n * 3 / 4]
+        );
     }
     realms.sort();
+    let n = realms.len();
     println!(
         "kingdoms at the end: {} / {} / {}",
-        realms[24], realms[49], realms[74]
+        realms[n / 4],
+        realms[n / 2],
+        realms[n * 3 / 4]
     );
     println!("news per world: {news:?}");
     for (id, mut v) in lives {
         v.sort();
-        assert!((80..=150).contains(&v[49]), "{id}: median {}", v[49]);
+        let median = v[v.len() / 2];
+        assert!((80..=150).contains(&median), "{id}: median {median}");
     }
 }
 

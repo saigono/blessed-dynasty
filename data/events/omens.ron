@@ -40,7 +40,7 @@
     ),
     (
         // П1, oppression: no way out of one's estate. The villages empty, and the corvée
-        // with them: the node eases.
+        // with them: the node drops off its bound (stage 20, the serfdom trap discharges).
         id: "omen_empty_villages",
         title: "Пустеют сёла",
         text: "В земле {province} пустеют сёла: молодым некуда податься, и они уходят кто куда. Пашни зарастают лесом.",
@@ -55,19 +55,19 @@
         choices: [
             (
                 text: "Простить барщину пустеющим сёлам",
-                effects: [Axis("serfdom", -6), Axis("loyalty_nobles", -4), Province(EventTarget, Population, -500)],
+                effects: [Axis("serfdom", -15), Axis("loyalty_nobles", -4), Province(EventTarget, Population, -500)],
                 cause_tag: "villages_corvee_forgiven",
                 hint: "Прощённая барщина вернула пахарей на землю.",
             ),
             (
                 text: "Звать поселенцев из-за рубежа",
-                effects: [Axis("treasury", -40), Axis("serfdom", -3), Axis("mobility", 3), Province(EventTarget, Population, -500)],
+                effects: [Axis("treasury", -40), Axis("serfdom", -10), Axis("mobility", 3), Province(EventTarget, Population, -500)],
                 cause_tag: "villages_settlers",
                 hint: "Чужие поселенцы оживили пустые сёла.",
             ),
             (
                 text: "Заставить оставшихся пахать за ушедших",
-                effects: [Axis("serfdom", -3), Axis("loyalty_people", -5), Province(EventTarget, Population, -1500)],
+                effects: [Axis("serfdom", -10), Axis("loyalty_people", -5), Province(EventTarget, Population, -1500)],
                 cause_tag: "villages_squeezed",
                 hint: "Тех, кто остался, задавили чужой барщиной.",
             ),

@@ -717,7 +717,9 @@ fn chain(d: &Data, w: &World, e: &Event) -> Option<Chain> {
                 if dir == 0 {
                     break;
                 }
-                (nodes.push(edge.from.clone()), dirs.push(dir), edges.push(i));
+                nodes.push(edge.from.clone());
+                dirs.push(dir);
+                edges.push(i);
             }
             _ => break,
         }

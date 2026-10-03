@@ -92,7 +92,11 @@ mod tests {
 
     fn names() -> Names {
         let mut n = Names::default();
-        for spec in ["Ульрих||а|у|а|ом|е", "Агнесс|а|ы|е|у|ой|е", "Строител|ь|я|ю|я|ем|е"] {
+        for spec in [
+            "Ульрих||а|у|а|ом|е",
+            "Агнесс|а|ы|е|у|ой|е",
+            "Строител|ь|я|ю|я|ем|е",
+        ] {
             n.add_forms(spec).unwrap();
         }
         n
@@ -109,17 +113,32 @@ mod tests {
         );
         // A name with an epithet declines word by word.
         let named = [("prev", "Ульрих Строитель", Some(Sex::Male))];
-        assert_eq!(fill("после {prev.род}", &n, &named), "после Ульриха Строителя");
+        assert_eq!(
+            fill("после {prev.род}", &n, &named),
+            "после Ульриха Строителя"
+        );
     }
 
     #[test]
     fn words_agree_with_the_sex() {
         let n = names();
         let t = "{ruler} {ruler:взошёл|взошла} на престол, {heir:он|она} в стороне";
-        let king = [("ruler", "Ульрих", Some(Sex::Male)), ("heir", "Агнесса", Some(Sex::Female))];
-        let queen = [("ruler", "Агнесса", Some(Sex::Female)), ("heir", "Ульрих", Some(Sex::Male))];
-        assert_eq!(fill(t, &n, &king), "Ульрих взошёл на престол, она в стороне");
-        assert_eq!(fill(t, &n, &queen), "Агнесса взошла на престол, он в стороне");
+        let king = [
+            ("ruler", "Ульрих", Some(Sex::Male)),
+            ("heir", "Агнесса", Some(Sex::Female)),
+        ];
+        let queen = [
+            ("ruler", "Агнесса", Some(Sex::Female)),
+            ("heir", "Ульрих", Some(Sex::Male)),
+        ];
+        assert_eq!(
+            fill(t, &n, &king),
+            "Ульрих взошёл на престол, она в стороне"
+        );
+        assert_eq!(
+            fill(t, &n, &queen),
+            "Агнесса взошла на престол, он в стороне"
+        );
         // A place by its ending.
         let lands = |p| [("province", p, None)];
         let t = "{province:пал|пала}";
@@ -139,15 +158,29 @@ mod tests {
     #[test]
     fn plurals_and_variants() {
         let years = ("год".into(), "года".into(), "лет".into());
-        let got: Vec<_> = [1, 3, 5, 11, 12, 21, 24, 111].map(|n| plural(n, &years)).into();
+        let got: Vec<_> = [1, 3, 5, 11, 12, 21, 24, 111]
+            .map(|n| plural(n, &years))
+            .into();
         assert_eq!(
             got,
-            ["1 год", "3 года", "5 лет", "11 лет", "12 лет", "21 год", "24 года", "111 лет"]
+            [
+                "1 год",
+                "3 года",
+                "5 лет",
+                "11 лет",
+                "12 лет",
+                "21 год",
+                "24 года",
+                "111 лет"
+            ]
         );
         let v: Vec<String> = vec!["а".into(), "б".into(), "в".into()];
         let picks: Vec<_> = (0..30).map(|n| pick(&v, 42, n)).collect();
         assert_eq!(picks, (0..30).map(|n| pick(&v, 42, n)).collect::<Vec<_>>());
-        assert!(["а", "б", "в"].iter().all(|x| picks.contains(x)), "{picks:?}");
+        assert!(
+            ["а", "б", "в"].iter().all(|x| picks.contains(x)),
+            "{picks:?}"
+        );
         assert_eq!(pick(&[], 1, 1), "");
     }
 }

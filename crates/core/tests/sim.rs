@@ -1232,23 +1232,43 @@ fn the_texts_do_not_move_the_main_stream() {
     let full = sim::run(end.clone(), &g.data, g.rng.clone());
     let mut plain = g.data.clone();
     let events = plain.events.iter_mut().chain(&mut plain.sim_events);
-    events.flat_map(|e| &mut e.choices).for_each(|c| c.told.clear());
+    events
+        .flat_map(|e| &mut e.choices)
+        .for_each(|c| c.told.clear());
     let t = &mut plain.sim.texts;
     (t.variants, t.fall_told, t.epithets) = Default::default();
     t.life = Default::default();
     let bare = sim::run(end, &plain, g.rng.clone());
     let outcome = |c: &Chronicle| {
-        let entries = c.entries.iter().map(|e| (e.tick, e.event.clone(), e.importance));
+        let entries = c
+            .entries
+            .iter()
+            .map(|e| (e.tick, e.event.clone(), e.importance));
         let snapshots: Vec<_> = c.entries.iter().map(|e| e.snapshot.clone()).collect();
-        let rulers = c.rulers.iter().map(|r| (r.name.clone(), r.start, r.end, r.cause.clone()));
+        let rulers = c
+            .rulers
+            .iter()
+            .map(|r| (r.name.clone(), r.start, r.end, r.cause.clone()));
         (
             (c.years, c.fall.clone(), c.kin.clone(), c.axes.clone()),
-            (entries.collect::<Vec<_>>(), snapshots, rulers.collect::<Vec<_>>()),
+            (
+                entries.collect::<Vec<_>>(),
+                snapshots,
+                rulers.collect::<Vec<_>>(),
+            ),
         )
     };
     assert_eq!(outcome(&full), outcome(&bare));
-    assert!(full.rulers.iter().all(|r| !r.biography.is_empty() && !r.epithet.is_empty()));
-    assert!(bare.rulers.iter().all(|r| r.biography.is_empty() && r.epithet.is_empty()));
+    assert!(
+        full.rulers
+            .iter()
+            .all(|r| !r.biography.is_empty() && !r.epithet.is_empty())
+    );
+    assert!(
+        bare.rulers
+            .iter()
+            .all(|r| r.biography.is_empty() && r.epithet.is_empty())
+    );
     assert_ne!(texts(&full), texts(&bare));
 }
 
@@ -1274,7 +1294,10 @@ fn golden_texts_of_seed_42() {
         fs::write(&path, &out).unwrap();
     }
     let golden = fs::read_to_string(&path).unwrap_or_default();
-    assert!(golden == out, "the texts changed; BLESS=1 to accept:\n{out}");
+    assert!(
+        golden == out,
+        "the texts changed; BLESS=1 to accept:\n{out}"
+    );
 }
 
 /// A founder whose end world bears the marks of decisions tagged so, one decision each.
@@ -1289,7 +1312,11 @@ fn founder_of(tags: &[&str], sex: Sex) -> ReignEnd {
             cause_tag: tag.to_string(),
             weight: Fx::from_int(1),
         };
-        g.world.marks.entry(MarkKey::Axis(ax("treasury"))).or_default().push(mark);
+        g.world
+            .marks
+            .entry(MarkKey::Axis(ax("treasury")))
+            .or_default()
+            .push(mark);
     }
     g.world.tick = Tick(20);
     end_now(&g)
@@ -1310,7 +1337,10 @@ fn the_epithet_follows_the_deeds() {
     assert_eq!(epithet(&builds, Sex::Female), "Строительница");
     assert_eq!(epithet(&wars, Sex::Male), "Воитель");
     // Three builds per two needed beat three wars per three.
-    assert_eq!(epithet(&[&builds[..], &wars[..]].concat(), Sex::Male), "Строитель");
+    assert_eq!(
+        epithet(&[&builds[..], &wars[..]].concat(), Sex::Male),
+        "Строитель"
+    );
     assert_eq!(epithet(&[], Sex::Male), "Тихий");
     assert_eq!(epithet(&["fort_built"], Sex::Male), "Тихий");
 }
@@ -1325,13 +1355,22 @@ fn a_life_is_told_for_an_abdication_a_death_and_a_usurpation() {
     end.cause = "abdication".into();
     let c = sim::run(end, &data, Rng::from_seed(1));
     let life = &c.rulers[0].biography;
-    assert!(life.starts_with("Ульрих принял корону в 1187 году") || life.contains("досталась Ульриху"), "{life}");
-    assert!(life.contains("Строителем") && life.contains("отрёкся от престола"), "{life}");
+    assert!(
+        life.starts_with("Ульрих принял корону в 1187 году") || life.contains("досталась Ульриху"),
+        "{life}"
+    );
+    assert!(
+        life.contains("Строителем") && life.contains("отрёкся от престола"),
+        "{life}"
+    );
     assert!((3..=6).contains(&sentences(life)), "{life}");
     let end = founder_of(&[], Sex::Female);
     let c = sim::run(end, &data, Rng::from_seed(2));
     let life = &c.rulers[0].biography;
-    assert!(life.to_lowercase().contains("болезн") && life.contains("Тихой"), "{life}");
+    assert!(
+        life.to_lowercase().contains("болезн") && life.contains("Тихой"),
+        "{life}"
+    );
     assert!((3..=6).contains(&sentences(life)), "{life}");
     // The first heir is crowned, and the usurper takes the throne at once.
     let mut end = founder_of(&[], Sex::Male);
@@ -1339,7 +1378,10 @@ fn a_life_is_told_for_an_abdication_a_death_and_a_usurpation() {
     let c = sim::run(end, &data, Rng::from_seed(1));
     assert_eq!((c.fall.clone(), c.rulers.len()), (FallReason::Usurped, 2));
     let life = &c.rulers[1].biography;
-    assert!(life.starts_with("Конрад") && life.contains("узурпатор сверг Конрада"), "{life}");
+    assert!(
+        life.starts_with("Конрад") && life.contains("узурпатор сверг Конрада"),
+        "{life}"
+    );
     assert!((3..=6).contains(&sentences(life)), "{life}");
     assert!(c.epilogue.contains("Конрад"), "{}", c.epilogue);
 }

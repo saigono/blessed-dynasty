@@ -7,11 +7,11 @@ use crate::game::{ActionId, Game, PendingEvent, ReignEnd, Step};
 use crate::rng::Rng;
 use crate::rules::add_axis;
 use crate::rules::{Choice, Effect, Event, HeirOp, NewHolder, Predicate, ProvinceField, Target};
-use crate::text;
 use crate::state::{
     Axes, AxisId, CauseTag, HeirStatus, Holder, Kin, MarkKey, NeighbourId, ProvinceId, Ruler, Sex,
     Vassal, VassalId, World,
 };
+use crate::text;
 use crate::time::Tick;
 use crate::war::WarStage;
 use serde::{Deserialize, Serialize};
@@ -381,10 +381,17 @@ fn reign_deeds(c: &Chronicle, from: usize, g: &Game, salt: u64) -> Vec<String> {
     let lower = |s: &str| {
         // The first word stays as it is when it is a name.
         let word = s.split([' ', ',', '.']).next().unwrap_or_default();
-        let named = d.names.cases.contains_key(word) || w.provinces.values().any(|p| p.name == word);
+        let named =
+            d.names.cases.contains_key(word) || w.provinces.values().any(|p| p.name == word);
         match named {
             true => s.to_string(),
-            false => s.chars().next().into_iter().flat_map(char::to_lowercase).chain(s.chars().skip(1)).collect(),
+            false => s
+                .chars()
+                .next()
+                .into_iter()
+                .flat_map(char::to_lowercase)
+                .chain(s.chars().skip(1))
+                .collect(),
         }
     };
     let mut last = None;
@@ -417,7 +424,11 @@ fn finish(c: &mut Chronicle, reign: Reign, told: Vec<String>, w: &World, d: &Dat
         *deeds.entry(format!("trait:{t}")).or_default() += 1;
     }
     let score = |e: &Epithet| {
-        let count: u32 = e.deeds.iter().map(|k| deeds.get(k).copied().unwrap_or(0)).sum();
+        let count: u32 = e
+            .deeds
+            .iter()
+            .map(|k| deeds.get(k).copied().unwrap_or(0))
+            .sum();
         let fits = count >= e.min && e.years.is_none_or(|y| years <= y);
         fits.then(|| count * 1000 / e.min.max(1))
     };
@@ -436,7 +447,11 @@ fn finish(c: &mut Chronicle, reign: Reign, told: Vec<String>, w: &World, d: &Dat
     let life = &t.life;
     let end = match &r.cause {
         Some(cause) => life.ends.get(cause),
-        None => life.falls.iter().find(|(f, _)| *f == c.fall).map(|(_, v)| v),
+        None => life
+            .falls
+            .iter()
+            .find(|(f, _)| *f == c.fall)
+            .map(|(_, v)| v),
     };
     let end = text::pick(end.map_or(&[][..], |v| v), salt, LIFE + n + 1);
     let phrases = std::iter::once(reign.accession.as_str())
@@ -609,7 +624,10 @@ fn crown(g: &mut Game, c: &mut Chronicle, salt: u64) -> Option<Reign> {
     ];
     let fill = |s: &str| text::fill(s, &d.names, &named);
     let (title, text) = &t.crowned;
-    let mut told = (fill(title), fill(&variant(t, "crowned", text, salt, c.entries.len())));
+    let mut told = (
+        fill(title),
+        fill(&variant(t, "crowned", text, salt, c.entries.len())),
+    );
     if let Some(cheer) = cheer {
         told.1 = format!("{} {cheer}", told.1);
     }
@@ -638,7 +656,10 @@ fn crown(g: &mut Game, c: &mut Chronicle, salt: u64) -> Option<Reign> {
     if !lands.is_empty() {
         let (title, text) = &g.data.sim.texts.partition;
         let text = variant(&g.data.sim.texts, "partition", text, salt, c.entries.len());
-        let told = (title.clone(), ruled(g, &text).replace("{lands}", &lands.join(", ")));
+        let told = (
+            title.clone(),
+            ruled(g, &text).replace("{lands}", &lands.join(", ")),
+        );
         c.entries.push(entry(g, told, g.data.sim.notable, vec![]));
     }
     Some(Reign {

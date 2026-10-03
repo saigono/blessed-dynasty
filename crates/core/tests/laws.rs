@@ -520,9 +520,17 @@ fn the_traits_of_a_new_ruler_shift_the_axes() {
     );
     assert_eq!(at(&e, "loyalty_people"), 50);
     let cheer = |e: &bd_core::sim::ChronicleEntry, s: &str| e.text.ends_with(&format!(". {s}"));
-    assert!(cheer(&e, "Церковь возрадовалась: новый король был набожен."), "{}", e.text);
+    assert!(
+        cheer(&e, "Церковь возрадовалась: новый король был набожен."),
+        "{}",
+        e.text
+    );
     let e = crowned(&data, F, 80, &FACTIONS);
-    assert!(cheer(&e, "Церковь возрадовалась: новая королева была набожна."), "{}", e.text);
+    assert!(
+        cheer(&e, "Церковь возрадовалась: новая королева была набожна."),
+        "{}",
+        e.text
+    );
 }
 
 fn court(id: &str) -> NeighbourId {

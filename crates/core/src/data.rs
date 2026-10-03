@@ -121,7 +121,9 @@ impl Names {
         if let Some(forms) = self.cases.get(name) {
             return forms[case].clone();
         }
-        let words = name.split(' ').map(|w| self.cases.get(w).map_or(w, |f| &f[case]));
+        let words = name
+            .split(' ')
+            .map(|w| self.cases.get(w).map_or(w, |f| &f[case]));
         words.collect::<Vec<_>>().join(" ")
     }
 

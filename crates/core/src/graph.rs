@@ -1,10 +1,11 @@
 //! The influence graph (docs/design/hidden-state.html): every axis steps toward its target,
 //! its anchor plus the `Target` edges into it; `Flow` edges add to stocks every year.
 
-use crate::data::{AxisDef, Data, ENACT, LawDef, curve};
+use crate::data::{AxisDef, Data, ENACT, LawDef, REPEAL, curve};
 use crate::fx::Fx;
-use crate::rules::add_axis;
+use crate::rules::{Ctx, Effect, add_axis};
 use crate::state::{AxisId, CauseTag, MarkKey, World};
+use crate::time::Tick;
 use serde::Deserialize;
 use std::cmp::Reverse;
 
@@ -293,13 +294,35 @@ pub fn tick(d: &Data, w: &mut World) {
     }
 }
 
-/// The world `years` on with no events, no actions ending and no rulers dying: only the
-/// yearly income into the treasury and the graph (`tick`), as `Game::passive` pays and
-/// steps them. A copy; `w` stays as it is.
+/// The world `years` on with no events and no rulers dying: the yearly income into the
+/// treasury and the graph (`tick`), as `Game::passive` pays and steps them. The actions
+/// running end in their time, and a law enacted or repealed by one is so from then on; the
+/// rest of what they do is left out. A copy; `w` stays as it is.
 pub fn forecast(d: &Data, w: &World, years: u32) -> World {
     let mut w = w.clone();
     let tpy = d.time_unit.ticks_per_year;
     for _ in 0..years * tpy {
+        w.tick = Tick(w.tick.0 + 1);
+        let all = std::mem::take(&mut w.active_actions);
+        let (done, running) = all.into_iter().partition(|a| a.ends_at <= w.tick);
+        w.active_actions = running;
+        for a in done {
+            let law = match (a.id.strip_prefix(ENACT), a.id.strip_prefix(REPEAL)) {
+                (Some(id), _) => Effect::EnactLaw(id.into()),
+                (_, Some(id)) => Effect::RepealLaw(id.into()),
+                _ => continue,
+            };
+            let (queue, target, neighbour) = (&mut vec![], None, None);
+            law.apply(
+                &mut w,
+                &mut Ctx {
+                    data: d,
+                    queue,
+                    target,
+                    neighbour,
+                },
+            );
+        }
         let income = crate::war::yearly_income(&w, d) / Fx::from_int(tpy as i64);
         add_axis(&mut w, d, &d.economy.treasury, income);
         tick(d, &mut w);
@@ -537,6 +560,27 @@ mod tests {
         // 30 years at once or in two goes: the same; 0 years: the world itself.
         assert_eq!(forecast(&d, &forecast(&d, &w, 5), 25), a);
         assert_eq!(forecast(&d, &w, 0), w);
+        // A law being brought in: its resistance holds the people down until it is in, then
+        // the law's anchors count.
+        let (_, mut g) = setup(RULES); // grain 50: only the law moves the people
+        g.active_actions.push(crate::state::ActiveAction {
+            id: format!("{ENACT}law_serfdom"),
+            target: None,
+            ends_at: Tick(g.tick.0 + 3),
+        });
+        let people = |w: &World| {
+            target(
+                &d,
+                w,
+                d.axes.iter().find(|a| a.id.0 == "loyalty_people").unwrap(),
+            )
+        };
+        assert_eq!(people(&g), Fx::from_int(40));
+        let f = forecast(&d, &g, 3);
+        assert!(f.flags.contains("law_serfdom") && f.active_actions.is_empty());
+        assert_eq!(people(&f), Fx::from_int(50));
+        assert!(!forecast(&d, &g, 2).flags.contains("law_serfdom"));
+        assert!(!g.flags.contains("law_serfdom"));
         // The treasury takes its income, as in a year of the reign.
         let income = crate::war::yearly_income(&w, &d);
         let next = forecast(&d, &w, 1).axes[&ax("treasury")];

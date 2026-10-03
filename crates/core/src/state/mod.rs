@@ -2,7 +2,7 @@
 
 mod preset;
 
-pub use preset::{Map, Preset, RealmStart, RealmsStart};
+pub use preset::{Founded, Map, Preset, RealmStart, RealmsStart};
 
 use crate::data::{CrownPowerRules, Data};
 use crate::fx::Fx;
@@ -332,7 +332,7 @@ impl World {
             capital: preset.capital.clone(),
             vassals: by_id(&preset.vassals, |v| v.id.clone()),
             ruler: preset.ruler.clone(),
-            heirs: preset.heirs.clone(),
+            heirs: Vec::new(),
             neighbours: by_id(&preset.neighbours, |n| n.id.clone()),
             active_actions: Vec::new(),
             flags: preset.flags.clone(),
@@ -352,20 +352,7 @@ impl World {
             laws: BTreeMap::new(),
             testament: None,
         };
-        let r = &world.ruler;
-        let founder = Kin {
-            heir: None,
-            name: r.name.clone(),
-            born: world.start_year.saturating_sub(r.age),
-            died: None,
-            parent: None,
-            crowned: Some(world.year()),
-            bastard: false,
-        };
-        world.kin.push(founder);
-        for h in std::mem::take(&mut world.heirs) {
-            world.add_heir(h);
-        }
+        world.found_house(preset.ruler.clone(), preset.heirs.clone());
         for (i, n) in preset.neighbours.iter().enumerate() {
             let n = world.neighbours.get_mut(&n.id).expect("from the preset");
             n.ordinal = i as u32;
@@ -392,6 +379,30 @@ impl World {
             p.distance_to_capital = hops.get(&p.id).copied().unwrap_or(u32::MAX);
         }
         world
+    }
+
+    /// A new house on the throne (a preset's, stage 27 a kingdom's new one): the ruler, crowned
+    /// now, founds the family tree, his heirs his children; nobody named, wed abroad or in a
+    /// will is left of the last house.
+    pub fn found_house(&mut self, ruler: Ruler, heirs: Vec<Heir>) {
+        let year = self.year();
+        self.kin = vec![Kin {
+            heir: None,
+            name: ruler.name.clone(),
+            born: year.saturating_sub(ruler.age),
+            died: None,
+            parent: None,
+            crowned: Some(year),
+            bastard: false,
+        }];
+        self.ruler = ruler;
+        (self.heirs, self.bastards) = (Vec::new(), Vec::new());
+        (self.designated, self.testament) = (None, None);
+        self.unions.clear();
+        self.line_from = self.next_heir_id;
+        for h in heirs {
+            self.add_heir(h);
+        }
     }
 
     /// Adds the heir under the next free id, after the ruler's children and before the

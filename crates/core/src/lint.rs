@@ -347,7 +347,7 @@ pub fn epithets(data: &Data) -> Vec<String> {
     let untold = (t.reign_ends.keys()).filter(|k| !t.life.ends.contains_key(*k));
     out.extend(untold.map(|k| format!("sim.texts.life.ends: нет {k}")));
     use FallReason::*;
-    for f in [NoHeir, CapitalLost, Usurped, NoCrownLand, Alive] {
+    for f in [NoHeir, Conquered, Usurped, NoCrownLand, Alive] {
         if !t.fall_told.iter().any(|(r, _)| *r == f) {
             out.push(format!("sim.texts.fall_told: нет {f:?}"));
         }

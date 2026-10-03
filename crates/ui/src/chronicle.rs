@@ -655,6 +655,7 @@ mod tests {
             causes: vec![],
             snapshot: w.clone(),
             chain: None,
+            news: false,
         };
         let c = Chronicle {
             entries: vec![

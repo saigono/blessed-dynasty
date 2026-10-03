@@ -3361,7 +3361,7 @@ mod tests {
         );
         // The chance of every court before the suit (here a flat 100), Нордмарк at -40 none.
         for t in [
-            "Шанс согласия: Пурпуляндия 99%, Веструм 100%",
+            "Шанс согласия: Пурпуляндия 98%, Веструм 100%",
             "Сватов не примут: Нордмарк",
         ] {
             assert!(marriage.contains(&t.to_string()), "{t}: {marriage:?}");
@@ -3375,7 +3375,7 @@ mod tests {
         let n = hover(&mut h, "Веструм");
         for t in [
             "Отношение +40: друг",
-            "Сила 45, торгует",
+            "Сила 71, торгует", // stage 27: its own army, land, stability and treasury
             "Союзов и браков нет",
             // Stage 26: the kingdom behind the numbers.
             "Правит Годфрид из дома Вестингов",

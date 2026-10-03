@@ -42,9 +42,21 @@
     // Stage 26: every neighbour a kingdom of its own, played by our rules (realm.rs). Each starts
     // as we do but for what it sets: house, capital, ruler, heirs, flags (the succession law,
     // the ruler's marriage), axes over ours, vassals and their lands (`fiefs`). `us`: the
-    // holder of our land in their worlds. They know no neighbours yet (stage 27).
+    // holder of our land in their worlds. Since stage 27 they know each other (`relations`: old feuds).
     realms: Some((
         us: "kingdom",
+        // Stage 27: a kingdom founded later: a vassal that broke away (his house on the throne)
+        // or a new house on a fallen throne (only the ruler and heirs; the kingdom keeps its
+        // axes and laws). Names from names.ron; a new state is poorer and weaker than an old one.
+        founded: Some((
+            ruler: (name: "", age: 34, health: 75, traits: [], reign_start: 0, sex: Male),
+            heirs: [
+                (name: "", age: 12, ability: 50, claim: 70, status: Home, sex: Male),
+                (name: "", age: 9, ability: 50, claim: 40, status: Home, sex: Female),
+            ],
+            flags: ["law_primogeniture", "married"],
+            axes: {"army": 25, "treasury": 80, "legitimacy": 50, "stability": 55, "bureaucracy": 20},
+        )),
         kingdoms: [
             // Warlike and old-fashioned: the eldest of the house inherits.
             (
@@ -57,6 +69,8 @@
                     (name: "Хельга", age: 19, ability: 50, claim: 40, status: Home, sex: Female),
                 ],
                 flags: ["law_seniority", "married"],
+                // Old feuds over the northern marches (stage 27).
+                relations: {"vestrum": -25, "purpur": -30},
                 axes: {"army": 70, "legitimacy": 75, "stability": 65, "loyalty_nobles": 60, "loyalty_people": 55, "bureaucracy": 35, "treasury": 200, "prestige": 60},
             ),
             // Rich and orderly, a queen on the throne by absolute primogeniture.
@@ -73,19 +87,20 @@
                 axes: {"treasury": 400, "bureaucracy": 50, "army": 55, "stability": 70, "loyalty_nobles": 60, "loyalty_church": 70, "loyalty_people": 55, "legitimacy": 80, "prestige": 80},
                 vassals: [(id: "melissin", name: "Мелиссин", loyalty: 55, strength: 5)],
                 fiefs: {"kirm": "melissin"},
+                relations: {"nordmark": -25},
             ),
             // A merchant land whose council elects the ablest of the house.
             (
                 id: "vestrum",
                 house: "Вестинги",
-                capital: "vestburg",
+                capital: "sundal",
                 ruler: (name: "Годфрид", age: 55, health: 65, traits: ["cautious"], reign_start: 0, sex: Male),
                 heirs: [
                     (name: "Арнульф", age: 30, ability: 50, claim: 60, status: Home, sex: Male),
                     (name: "Матильда", age: 26, ability: 65, claim: 60, status: Home, sex: Female),
                 ],
                 flags: ["law_elective", "married"],
-                axes: {"treasury": 350, "bureaucracy": 45, "army": 45, "stability": 65, "loyalty_nobles": 60, "loyalty_people": 60, "legitimacy": 70, "prestige": 50},
+                axes: {"treasury": 350, "bureaucracy": 45, "army": 60, "stability": 65, "loyalty_nobles": 60, "loyalty_people": 60, "legitimacy": 80, "prestige": 70},
             ),
         ],
     )),

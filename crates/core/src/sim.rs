@@ -3,12 +3,12 @@
 
 use crate::data::{Data, Epithet, LawDef, SuccessionRule, TraitRule};
 use crate::fx::Fx;
-use crate::game::{ActionId, Game, PendingEvent, ReignEnd, Step};
+use crate::game::{ActionId, Game, GameError, PendingEvent, ReignEnd, Step};
 use crate::rng::Rng;
 use crate::rules::add_axis;
 use crate::rules::{Choice, Effect, Event, HeirOp, NewHolder, Predicate, ProvinceField, Target};
 use crate::state::{
-    Axes, AxisId, CauseTag, HeirStatus, Holder, Kin, MarkKey, NeighbourId, ProvinceId, Ruler, Sex,
+    Axes, AxisId, CauseTag, HeirStatus, Holder, Kin, MarkKey, NeighbourId, Ruler, Sex,
     Vassal, VassalId, World,
 };
 use crate::testament;
@@ -75,6 +75,9 @@ pub struct ChronicleEntry {
     /// What led to the event through the influence graph (`chain`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain: Option<Chain>,
+    /// News from afar (stage 27, `realm::News`): of the world, not of the reign.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub news: bool,
 }
 
 /// A chain of the influence graph behind an event, told in the chronicle.
@@ -94,10 +97,13 @@ pub struct Chain {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum FallReason {
     NoHeir,
-    CapitalLost,
+    /// Stage 27, was `CapitalLost`: the capital, and with it at worst the last land of the
+    /// crown, is in the hands of a foreign state.
+    #[serde(alias = "CapitalLost")]
+    Conquered,
     /// `sim.usurped_flag` is set.
     Usurped,
-    /// No province is left to the crown: the realm fell apart into appanages.
+    /// The realm fell apart into appanages: the capital is a vassal's.
     NoCrownLand,
     /// Not a fall: the dynasty reached `sim.max_years`.
     Alive,
@@ -207,6 +213,7 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
         salt,
         deserted,
         fall: None,
+        house: String::new(),
     };
     while d.fall.is_none() {
         d.tick();
@@ -247,6 +254,8 @@ pub struct Dynasty {
     deserted: u32,
     /// How it ended; None while it goes on.
     pub fall: Option<FallReason>,
+    /// The ruling house of a foreign kingdom (`realm.rs`); empty for ours.
+    pub house: String,
 }
 
 impl Dynasty {
@@ -266,6 +275,7 @@ impl Dynasty {
             salt: g.rng.clone().next_u64(),
             deserted: g.world.deserted,
             fall: None,
+            house: String::new(),
             g,
         }
     }
@@ -359,7 +369,19 @@ impl Dynasty {
         let laws: Vec<String> = (g.data.laws_in_force(&g.world))
             .map(|l| l.id.clone())
             .collect();
-        let step = g.wait().expect("the reign goes on");
+        let heard = g.realms.news.len();
+        // The end comes back as an error, read from `g.ended`: no `ReignEnd` copy of the
+        // world and of every kingdom, which `sim::run` alone needs.
+        g.reported = true;
+        let step = match g.wait() {
+            Err(GameError::ReignEnded) => None,
+            step => Some(step.expect("the reign goes on")),
+        };
+        // News from afar (stage 27), told as they came.
+        for n in g.realms.news[heard..].to_vec() {
+            let e = entry(g, (n.title, n.text), n.importance, vec![]);
+            c.entries.push(ChronicleEntry { news: true, ..e });
+        }
         let w = &g.world;
         if !g.data.influences.is_empty() && w.tick.0.is_multiple_of(tpy) {
             c.nodes.push(NodeYear {
@@ -389,8 +411,8 @@ impl Dynasty {
             self.last_heir = None;
         }
         match step {
-            Step::Idle => {}
-            Step::Event(v) => {
+            Some(Step::Idle) => {}
+            Some(Step::Event(v)) => {
                 // Causes and chain as the world stood before the choice; only entries
                 // need them. An omen is told whatever its importance.
                 let p = g.pending_event.as_ref().expect("an event waits");
@@ -428,10 +450,12 @@ impl Dynasty {
                     });
                 }
             }
-            Step::ReignEnded(end) => {
-                died(&mut g.world, &g.data, Some(&end.cause));
+            Some(Step::ReignEnded(_)) => unreachable!("reported above"),
+            None => {
+                let cause = g.ended.clone().expect("the reign ended");
+                died(&mut g.world, &g.data, Some(&cause));
                 let last = c.rulers.last_mut().expect("a ruler reigned");
-                (last.end, last.cause) = (end.tick, Some(end.cause));
+                (last.end, last.cause) = (g.world.tick, Some(cause));
                 let told = reign_deeds(c, reign.from, g, salt);
                 finish(c, reign, told, &g.world, &g.data, salt);
                 return;
@@ -581,7 +605,9 @@ pub(crate) fn founder_deeds(w: &World) -> BTreeMap<String, u32> {
 fn reign_deeds(c: &Chronicle, from: usize, g: &Game, salt: u64) -> Vec<String> {
     let (d, w) = (&g.data, &g.world);
     let life = &d.sim.texts.life;
-    let mut main: Vec<usize> = (from..c.entries.len()).collect();
+    let mut main: Vec<usize> = (from..c.entries.len())
+        .filter(|i| !c.entries[*i].news)
+        .collect();
     main.sort_by_key(|i| (Reverse(c.entries[*i].importance), *i));
     main.truncate(life.deeds);
     main.sort();
@@ -1027,21 +1053,16 @@ fn record(r: &Ruler) -> RulerRecord {
     }
 }
 
+/// How the dynasty of `g` has fallen, if it has: usurped, or the capital not the crown's (a
+/// crown land, so with no crown land left too): conquered by a foreign state, else broken up.
 fn fallen(g: &Game) -> Option<FallReason> {
     let w = &g.world;
-    let crown = |id: &ProvinceId| {
-        w.provinces
-            .get(id)
-            .is_some_and(|p| p.holder == Holder::Crown)
-    };
-    if w.flags.contains(&g.data.sim.usurped_flag) {
-        Some(FallReason::Usurped)
-    } else if !w.provinces.keys().any(crown) {
-        Some(FallReason::NoCrownLand)
-    } else if !crown(&w.capital.province) {
-        Some(FallReason::CapitalLost)
-    } else {
-        None
+    let capital = w.provinces.get(&w.capital.province).map(|p| &p.holder);
+    match capital {
+        _ if w.flags.contains(&g.data.sim.usurped_flag) => Some(FallReason::Usurped),
+        Some(Holder::Crown) => None,
+        Some(Holder::Vassal(_)) => Some(FallReason::NoCrownLand),
+        _ => Some(FallReason::Conquered),
     }
 }
 
@@ -1141,6 +1162,7 @@ fn entry(
         causes,
         snapshot: g.world.snapshot(),
         chain: None,
+        news: false,
     }
 }
 

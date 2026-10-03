@@ -25,7 +25,9 @@ pub fn start(data: &Data, preset: &Preset, seed: u64, w: &mut World) -> Realms {
         return Realms::default();
     };
     let mut data = data.clone();
-    data.events.extend(data.sim_events.clone());
+    // Their pool is all of it at once: no reign of theirs is a player's.
+    let sim = std::mem::take(&mut data.sim_events);
+    data.events.extend(sim);
     let mut list = BTreeMap::new();
     for r in &start.kingdoms {
         let own = preset.realm(r);

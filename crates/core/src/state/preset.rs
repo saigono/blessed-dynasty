@@ -1,4 +1,7 @@
-use super::{Axes, Capital, Heir, Holder, Neighbour, Province, ProvinceId, Ruler, Vassal};
+use super::{
+    Axes, Capital, Heir, Holder, Neighbour, NeighbourId, Province, ProvinceId, Ruler, Vassal,
+    VassalId,
+};
 use crate::data::{Data, DataError};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -23,6 +26,39 @@ pub struct Preset {
     /// The backstory shown before the first move.
     #[serde(default)]
     pub intro: String,
+    /// Stage 26: the neighbours as kingdoms of their own (`realm.rs`); None: numbers only.
+    #[serde(default)]
+    pub realms: Option<RealmsStart>,
+}
+
+/// The foreign kingdoms of a preset. Each starts as our preset does, but for what it sets:
+/// the map is the same, its land its crown's (or its vassals', `fiefs`), ours `us`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct RealmsStart {
+    /// Our kingdom as they see it; the relation is each one's from `Preset.neighbours`.
+    pub us: Neighbour,
+    pub kingdoms: Vec<RealmStart>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct RealmStart {
+    /// Its id among `Preset.neighbours`.
+    pub id: NeighbourId,
+    /// The ruling house; its cases go to `names.ron` `forms`.
+    pub house: String,
+    pub capital: ProvinceId,
+    pub ruler: Ruler,
+    pub heirs: Vec<Heir>,
+    /// In place of the preset's: the succession law, `married`.
+    pub flags: BTreeSet<String>,
+    /// Over the preset's axes.
+    #[serde(default)]
+    pub axes: Axes,
+    #[serde(default)]
+    pub vassals: Vec<Vassal>,
+    /// Which of its provinces its vassals hold.
+    #[serde(default)]
+    pub fiefs: BTreeMap<ProvinceId, VassalId>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -46,6 +82,52 @@ impl Preset {
         preset.map = ron::from_str(map).map_err(DataError::Parse)?;
         preset.check(data).map_err(DataError::Invalid)?;
         Ok(preset)
+    }
+
+    /// The kingdom `r` sees itself: our preset with its ruler, house laws, axes and vassals,
+    /// its land its own, ours `RealmsStart.us`, the other kingdoms as we have them but at relation 0.
+    pub fn realm(&self, r: &RealmStart) -> Preset {
+        let realms = self.realms.as_ref().expect("a preset with realms");
+        let me = Holder::Foreign(r.id.clone());
+        let mut map = self.map.clone();
+        for p in &mut map.provinces {
+            p.holder = match &p.holder {
+                h if *h == me => r.fiefs.get(&p.id).map_or(Holder::Crown, |v| Holder::Vassal(v.clone())),
+                Holder::Foreign(n) => Holder::Foreign(n.clone()),
+                _ => Holder::Foreign(realms.us.id.clone()),
+            };
+        }
+        let mut us = realms.us.clone();
+        let others = (self.neighbours.iter()).filter_map(|n| match n.id == r.id {
+            true => {
+                us.relation = n.relation;
+                None
+            }
+            false => Some(Neighbour {
+                relation: Default::default(),
+                ..n.clone()
+            }),
+        });
+        let mut neighbours: Vec<Neighbour> = others.collect();
+        neighbours.push(us);
+        let mut axes = self.axes.clone();
+        axes.extend(r.axes.clone());
+        Preset {
+            start_year: self.start_year,
+            axes,
+            map,
+            capital: Capital {
+                province: r.capital.clone(),
+                ..self.capital.clone()
+            },
+            vassals: r.vassals.clone(),
+            ruler: r.ruler.clone(),
+            heirs: r.heirs.clone(),
+            neighbours,
+            flags: r.flags.clone(),
+            intro: String::new(),
+            realms: None,
+        }
     }
 
     fn check(&self, data: &Data) -> Result<(), String> {
@@ -83,6 +165,22 @@ impl Preset {
             };
             if !holder_ok {
                 return Err(format!("{}: unknown holder {:?}", p.id.0, p.holder));
+            }
+        }
+        for r in self.realms.iter().flat_map(|r| &r.kingdoms) {
+            let at = |e: String| format!("realm {}: {e}", r.id.0);
+            if !self.neighbours.iter().any(|n| n.id == r.id) {
+                return Err(at("not a neighbour".into()));
+            }
+            let own = self.realm(r);
+            own.check(data).map_err(at)?;
+            let crown = |id: &ProvinceId| own.map.provinces.iter().any(|p| p.id == *id && p.holder == Holder::Crown);
+            let own_land = |id: &ProvinceId| self.map.provinces.iter().any(|p| p.id == *id && p.holder == Holder::Foreign(r.id.clone()));
+            if !crown(&r.capital) {
+                return Err(at(format!("capital {} is not its crown's", r.capital.0)));
+            }
+            if let Some(p) = r.fiefs.keys().find(|p| !own_land(p)) {
+                return Err(at(format!("fief {} is not its land", p.0)));
             }
         }
         Ok(())

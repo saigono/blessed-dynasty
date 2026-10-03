@@ -79,11 +79,7 @@ fn reign(mut g: Game, mut act: impl FnMut(&mut Game)) -> (Game, ReignEnd) {
 
 /// The reign ends now, as it is.
 fn end_now(g: &Game) -> ReignEnd {
-    ReignEnd {
-        cause: "illness".into(),
-        tick: g.world.tick,
-        world: g.world.clone(),
-    }
+    g.reign_end("illness".into())
 }
 
 fn grant(g: &mut Game, province: &str) {

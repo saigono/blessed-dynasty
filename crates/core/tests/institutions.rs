@@ -2,7 +2,7 @@
 
 use bd_core::data::Data;
 use bd_core::fx::Fx;
-use bd_core::game::{Game, ReignEnd};
+use bd_core::game::Game;
 use bd_core::graph::{self, InfluenceKind};
 use bd_core::rng::Rng;
 use bd_core::sim;
@@ -132,11 +132,7 @@ fn a_coronation_resets_the_factions_toward_the_anchor_of_the_laws() {
     let mut g = game(&d);
     g.world.flags.insert("law_x".into());
     g.world.axes.insert(ax("loyalty_nobles"), Fx::from_int(20));
-    let end = ReignEnd {
-        cause: "illness".into(),
-        tick: g.world.tick,
-        world: g.world.clone(),
-    };
+    let end = g.reign_end("illness".into());
     let c = sim::run(end, &d, Rng::from_seed(1));
     // Halfway from 20 to 58.
     assert_eq!(
@@ -358,11 +354,7 @@ fn the_chronicle_tells_a_law_repealed_and_brought_in() {
             g.world.axes.insert(ax("loyalty_people"), Fx::from_int(5));
         }
         g.world.axes.insert(ax("treasury"), Fx::from_int(500));
-        let end = ReignEnd {
-            cause: "illness".into(),
-            tick: g.world.tick,
-            world: g.world.clone(),
-        };
+        let end = g.reign_end("illness".into());
         let c = sim::run(end, d, Rng::from_seed(1));
         let told = c.entries.into_iter().map(|e| (e.title, e.text));
         told.collect::<Vec<_>>()
@@ -385,11 +377,7 @@ fn the_chronicle_tells_a_law_repealed_and_brought_in() {
     let mut g = game(&d);
     g.world.flags.insert("law_x".into());
     g.world.axes.insert(ax("treasury"), Fx::from_int(500));
-    let end = ReignEnd {
-        cause: "illness".into(),
-        tick: g.world.tick,
-        world: g.world.clone(),
-    };
+    let end = g.reign_end("illness".into());
     let told: Vec<_> = (sim::run(end, &d, Rng::from_seed(1)).entries.into_iter())
         .map(|e| (e.title, e.text))
         .collect();

@@ -3,7 +3,7 @@
 
 use crate::data::{AxisDef, Data, DataError};
 use crate::fx::Fx;
-use crate::game::{DecisionKind, Game, ReignEnd, Step};
+use crate::game::{DecisionKind, Game, Step};
 use crate::rules::Target;
 use crate::score::{self, ScoreRules};
 use crate::sim::{self, AutoChooser, FallReason};
@@ -149,10 +149,7 @@ pub fn batch_row(
     auto: Option<&AutoChooser>,
     rules: &ScoreRules,
 ) -> Result<Row, String> {
-    let mut g = Game {
-        rng: crate::rng::Rng::from_seed(seed),
-        ..start.clone()
-    };
+    let mut g = start.reseeded(seed);
     let mut log = vec![];
     play_script(&mut g, script, true, &mut log)?;
     play(&mut g, auto, &mut log)?;
@@ -549,12 +546,7 @@ pub fn dynasty(g: &Game, rules: &ScoreRules) -> (Option<sim::Chronicle>, Option<
     let Some(cause) = g.ended.clone() else {
         return (None, None);
     };
-    let end = ReignEnd {
-        cause,
-        tick: g.world.tick,
-        world: g.world.snapshot(),
-    };
-    let c = sim::run(end, &g.data, g.rng.clone());
+    let c = sim::run(g.reign_end(cause), &g.data, g.rng.clone());
     let s = score::compute(&c, &g.decisions, rules);
     (Some(c), Some(s))
 }
@@ -1179,6 +1171,7 @@ mod tests {
             deserted: 0,
             nodes: vec![],
             epilogue: String::new(),
+            realms: Default::default(),
         };
         let war = |a, b| ("war".to_string(), a, b);
         let want = [war(Some(5), Some(5)), war(Some(35), None)];

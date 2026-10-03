@@ -42,6 +42,9 @@ pub struct Chronicle {
     /// How the dynasty ended, told (`sim.texts.fall_told`); empty without a text.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub epilogue: String,
+    /// The chronicles of the foreign kingdoms (`realm.rs`), hidden from the player.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub realms: BTreeMap<NeighbourId, Chronicle>,
 }
 
 /// The axes and the lagged sources of the influence graph after a year's tick.
@@ -132,6 +135,7 @@ impl RulerRecord {
 
 /// What a reign leaves for its ruler's life (`finish`): the sex, how he came to the throne,
 /// the deeds counted for the epithet (`data::Epithet`), the first entry of the reign.
+#[derive(Clone, Debug, PartialEq)]
 struct Reign {
     sex: Sex,
     accession: String,
@@ -150,27 +154,18 @@ impl Reign {
 /// it marks nothing. An unfinished war starts over from its declaration under the new ruler,
 /// since the deferred queue ends with the reign. The variants of the texts come from an rng
 /// of their own, seeded by a copy of `rng` (`text::pick`): the main stream stays as it was.
+/// The foreign kingdoms (`ReignEnd.realms`) go on beside it and end with it, in
+/// `Chronicle.realms`.
 pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
     let mut data = data.clone();
     data.events.extend(data.sim_events.clone());
-    let s = data.sim.clone();
     let salt = rng.clone().next_u64();
     let founder = record(&reign_end.world.ruler);
-    let mut c = Chronicle {
-        entries: Vec::new(),
-        fall: FallReason::Alive,
-        years: 0,
-        rulers: vec![RulerRecord {
-            end: reign_end.tick,
-            cause: Some(reign_end.cause),
-            ..founder
-        }],
-        kin: Vec::new(),
-        axes: Axes::new(),
-        deserted: 0,
-        nodes: Vec::new(),
-        epilogue: String::new(),
-    };
+    let mut c = chronicle(RulerRecord {
+        end: reign_end.tick,
+        cause: Some(reign_end.cause),
+        ..founder
+    });
     let mut world = reign_end.world;
     let (reign, told) = founder_reign(&world, &data, salt);
     finish(&mut c, reign, told, &world, &data, salt);
@@ -190,6 +185,7 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
         queue: Vec::new(),
         ended: None,
         reported: false,
+        realms: reign_end.realms,
     };
     if let Some(war) = &mut g.world.war {
         war.stage = WarStage::Declared;
@@ -201,165 +197,285 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
         g.queue.push((g.world.tick, p));
     }
     if let Some(told) = testament::read(&g.data, &g.world, salt, TESTAMENT) {
-        c.entries.push(entry(&g, told, s.notable, vec![]));
+        c.entries.push(entry(&g, told, g.data.sim.notable, vec![]));
     }
-    let tpy = g.world.time_unit.ticks_per_year;
-    // The death of a young first heir who was the last one, with its place in the entries:
-    // told only if no heir comes after and the dynasty ends for want of one.
-    let mut last_heir: Option<(usize, ChronicleEntry)> = None;
-    c.fall = 'dynasty: loop {
-        let Some(mut reign) = crown(&mut g, &mut c, salt) else {
-            if let Some((i, e)) = last_heir {
-                c.entries.insert(i, e);
-            }
-            break FallReason::NoHeir;
+    let mut d = Dynasty {
+        g,
+        c,
+        reign: None,
+        last_heir: None,
+        salt,
+        deserted,
+        fall: None,
+    };
+    while d.fall.is_none() {
+        d.tick();
+    }
+    d.close()
+}
+
+/// A chronicle with its first ruler.
+fn chronicle(first: RulerRecord) -> Chronicle {
+    Chronicle {
+        entries: Vec::new(),
+        fall: FallReason::Alive,
+        years: 0,
+        rulers: vec![first],
+        kin: Vec::new(),
+        axes: Axes::new(),
+        deserted: 0,
+        nodes: Vec::new(),
+        epilogue: String::new(),
+        realms: BTreeMap::new(),
+    }
+}
+
+/// A dynasty the automaton plays tick by tick: ours after the founder (`run`), every foreign
+/// kingdom from the start (`realm.rs`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Dynasty {
+    pub g: Game,
+    pub c: Chronicle,
+    /// The reign going on and its automaton; None: the throne waits for the next heir.
+    reign: Option<(Reign, AutoChooser)>,
+    /// The death of a young first heir who was the last one, with its place in the entries:
+    /// told only if no heir comes after and the dynasty ends for want of one.
+    last_heir: Option<(usize, ChronicleEntry)>,
+    /// Seeds the variants of the texts (`text::pick`).
+    pub(crate) salt: u64,
+    /// `World.deserted` when the dynasty began, for `Chronicle.deserted`.
+    deserted: u32,
+    /// How it ended; None while it goes on.
+    pub fall: Option<FallReason>,
+}
+
+impl Dynasty {
+    /// A kingdom whose ruler reigns from the start of `g`.
+    pub fn new(g: Game) -> Dynasty {
+        let r = &g.world.ruler;
+        let reign = Reign {
+            sex: r.sex,
+            accession: String::new(),
+            deeds: BTreeMap::new(),
+            from: 0,
         };
-        let base = AutoChooser::for_ruler(&g.data, &g.world.ruler);
-        let fall = loop {
-            // A ruler mindful of the testament, at its strength this year.
-            let mindful;
-            let auto = match g.world.testament.as_ref().and_then(|t| t.since) {
-                Some(_) => {
-                    mindful = testament::chooser(&base, &g.data, &g.world);
-                    &mindful
-                }
-                None => &base,
-            };
-            if let Some(fall) = fallen(&g) {
-                break fall;
+        Dynasty {
+            c: chronicle(record(r)),
+            reign: Some((reign, AutoChooser::for_ruler(&g.data, r))),
+            last_heir: None,
+            salt: g.rng.clone().next_u64(),
+            deserted: g.world.deserted,
+            fall: None,
+            g,
+        }
+    }
+
+    /// Plays up to `tick`, the next heir crowned if the reign ended on it.
+    pub fn until(&mut self, tick: Tick) {
+        while self.fall.is_none() && self.g.world.tick < tick {
+            self.tick();
+        }
+        if self.fall.is_none() && self.reign.is_none() {
+            self.crown();
+        }
+    }
+
+    /// Crowns the next heir; false and the fall `NoHeir` without one.
+    fn crown(&mut self) -> bool {
+        let Some(reign) = crown(&mut self.g, &mut self.c, self.salt) else {
+            if let Some((i, e)) = self.last_heir.take() {
+                self.c.entries.insert(i, e);
             }
-            if g.world.tick.year(g.world.time_unit) >= s.max_years {
-                break FallReason::Alive;
-            }
-            if g.world.ruler.age >= s.regency_age {
-                g.world.flags.remove(&s.regency_flag);
-            }
-            if g.world.tick.0.is_multiple_of(tpy)
-                && let Some((id, target)) = auto.action(&mut g)
-                // Listed by available_actions; only the slot may be gone.
-                && g.start(&id, target, false).is_ok()
-                && let Some(a) = g.data.actions.iter().find(|a| a.id == id)
-            {
-                reign.count(&a.cause_tag);
-                if testament::faithful_action(&g, a, &base) {
-                    keep(&mut g, &mut reign);
-                }
-            }
-            let holders: Vec<Holder> = g
-                .world
-                .provinces
-                .values()
-                .map(|p| p.holder.clone())
-                .collect();
-            let mut war = g.world.war.as_ref().map(|x| x.enemy.clone());
-            let first = successor(&g.world, &g.data).map(|i| g.world.heirs[i].clone());
-            let law = g.data.heirs.law(&g.world).map(|l| l.flag.clone());
-            let laws: Vec<String> = (g.data.laws_in_force(&g.world))
-                .map(|l| l.id.clone())
-                .collect();
-            let step = g.wait().expect("the reign goes on");
-            let w = &g.world;
-            if !g.data.influences.is_empty() && w.tick.0.is_multiple_of(tpy) {
-                c.nodes.push(NodeYear {
-                    year: w.tick.year(w.time_unit),
-                    axes: g.data.axes.iter().map(|a| w.axes[&a.id]).collect(),
-                    lagged: w.lagged.clone(),
-                });
-            }
-            // Within a tick only the yearly age risk takes an heir; events do on resolve.
-            if let Some(h) = first.filter(|h| g.world.heir_index(h.id).is_none()) {
-                let (title, text) = &s.texts.heir_died;
-                let text = variant(&s.texts, "heir_died", text, salt, c.entries.len());
-                let named = [("heir", h.name.as_str(), Some(h.sex))];
-                let fill = |t: &str| text::fill(t, &g.data.names, &named);
-                let causes = causes(&g.world, [MarkKey::Heir(h.id)].into());
-                let e = entry(&g, (fill(title), fill(&text)), s.notable, causes);
-                // `h` is from before the tick; heirs age a year before the death roll.
-                if h.age + 1 >= s.heir_death_age {
-                    c.entries.push(e);
-                    reign.count("heir_died");
-                } else if g.world.heirs.is_empty() {
-                    last_heir = Some((c.entries.len(), e));
-                }
-            }
-            if !g.world.heirs.is_empty() {
-                last_heir = None;
-            }
-            match step {
-                Step::Idle => {}
-                Step::Event(v) => {
-                    // Causes and chain as the world stood before the choice; only entries
-                    // need them. An omen is told whatever its importance.
-                    let p = g.pending_event.as_ref().expect("an event waits");
-                    let e = g.data.events.iter().find(|e| e.id == p.event_id);
-                    let e = e.expect("pending events exist");
-                    let told = (v.importance >= s.threshold || e.omen).then(|| {
-                        let keys = event_keys(&g.world, e, p);
-                        (causes(&g.world, keys), chain(&g.data, &g.world, e))
-                    });
-                    // An event a neighbour's stance offers is his move: a war it starts
-                    // is his attack, not the ruler's breach of a Peace order.
-                    let ai = &g.data.neighbour_ai;
-                    let attack = [&ai.expand, &ai.defend, &ai.trade, &ai.wait]
-                        .iter()
-                        .any(|s| s.events.iter().any(|(id, _)| *id == v.event_id));
-                    let idx = auto.choose(&mut g, &v.choices);
-                    let faithful = testament::faithful(&g, &v.choices, idx, &base);
-                    let mut past = g.told(idx).unwrap_or(v.text);
-                    reign.count(&v.choices[idx].cause_tag);
-                    g.resolve(idx, false).expect("a listed choice");
-                    if attack && war.is_none() {
-                        war = g.world.war.as_ref().map(|x| x.enemy.clone());
-                    }
-                    if faithful {
-                        keep(&mut g, &mut reign);
-                        let n = TESTAMENT + c.entries.len() as u64;
-                        past +=
-                            &format!(" {}", testament::faithful_text(&g.data, &g.world, salt, n));
-                    }
-                    if let Some((causes, chain)) = told {
-                        let e = entry(&g, (v.title, past), v.importance, causes);
-                        c.entries.push(ChronicleEntry {
-                            event: Some(v.event_id),
-                            chain,
-                            ..e
-                        });
-                    }
-                }
-                Step::ReignEnded(end) => {
-                    died(&mut g.world, &g.data, Some(&end.cause));
-                    let last = c.rulers.last_mut().expect("a ruler reigned");
-                    (last.end, last.cause) = (end.tick, Some(end.cause));
-                    let told = reign_deeds(&c, reign.from, &g, salt);
-                    finish(&mut c, reign, told, &g.world, &g.data, salt);
-                    continue 'dynasty;
-                }
-            }
-            province_entries(&g, &holders, &mut c, &mut reign, salt);
-            law_entry(&g, law, &mut c, &mut reign, salt);
-            laws_entry(&g, &laws, &mut c, &mut reign, salt);
-            if testament::broken(&g.world, &laws, &holders, war.as_ref()) {
-                breach(&mut g, &mut c, &mut reign, salt);
-            }
+            self.fall = Some(FallReason::NoHeir);
+            return false;
         };
-        // The dynasty ends under a living ruler.
+        let base = AutoChooser::for_ruler(&self.g.data, &self.g.world.ruler);
+        self.reign = Some((reign, base));
+        true
+    }
+
+    /// The dynasty ends under a living ruler.
+    fn end(&mut self, reign: Reign, fall: FallReason) {
+        let (g, c) = (&self.g, &mut self.c);
         c.rulers.last_mut().expect("a ruler reigned").end = g.world.tick;
         c.fall = fall.clone();
-        let told = reign_deeds(&c, reign.from, &g, salt);
-        finish(&mut c, reign, told, &g.world, &g.data, salt);
-        break fall;
-    };
-    let w = &g.world;
-    c.years = w.tick.year(w.time_unit);
-    c.kin = w.kin.clone();
-    c.axes = w.axes.clone();
-    c.deserted = w.deserted - deserted;
-    let last = c.rulers.last().expect("a ruler reigned");
-    let told = s.texts.fall_told.iter().find(|(f, _)| *f == c.fall);
-    let told = text::pick(told.map_or(&[][..], |(_, v)| v), salt, EPILOGUE);
-    let named = [("ruler", last.name.as_str(), Some(g.world.ruler.sex))];
-    c.epilogue = text::fill(told, &g.data.names, &named).replace("{year}", &w.year().to_string());
-    c
+        let told = reign_deeds(c, reign.from, g, self.salt);
+        finish(c, reign, told, &g.world, &g.data, self.salt);
+        self.fall = Some(fall);
+    }
+
+    /// One tick: the next heir crowned first if the throne is empty, the automaton's action at
+    /// the start of a year, its choice of the event, the entries; `fall` set once it ends.
+    fn tick(&mut self) {
+        if self.reign.is_none() && !self.crown() {
+            return;
+        }
+        let (mut reign, base) = self.reign.take().expect("crowned");
+        let salt = self.salt;
+        let (g, c) = (&mut self.g, &mut self.c);
+        let tpy = g.world.time_unit.ticks_per_year;
+        // A ruler mindful of the testament, at its strength this year.
+        let mindful;
+        let auto = match g.world.testament.as_ref().and_then(|t| t.since) {
+            Some(_) => {
+                mindful = testament::chooser(&base, &g.data, &g.world);
+                &mindful
+            }
+            None => &base,
+        };
+        let fall = match fallen(g) {
+            None if g.world.tick.year(g.world.time_unit) >= g.data.sim.max_years => {
+                Some(FallReason::Alive)
+            }
+            fall => fall,
+        };
+        if let Some(fall) = fall {
+            self.end(reign, fall);
+            return;
+        }
+        if g.world.ruler.age >= g.data.sim.regency_age {
+            g.world.flags.remove(&g.data.sim.regency_flag);
+        }
+        if g.world.tick.0.is_multiple_of(tpy)
+            && let Some((id, target)) = auto.action(g)
+            // Listed by available_actions; only the slot may be gone.
+            && g.start(&id, target, false).is_ok()
+            && let Some(a) = g.data.actions.iter().find(|a| a.id == id)
+        {
+            reign.count(&a.cause_tag);
+            if testament::faithful_action(g, a, &base) {
+                keep(g, &mut reign);
+            }
+        }
+        let holders: Vec<Holder> = g
+            .world
+            .provinces
+            .values()
+            .map(|p| p.holder.clone())
+            .collect();
+        let mut war = g.world.war.as_ref().map(|x| x.enemy.clone());
+        let first = successor(&g.world, &g.data).map(|i| g.world.heirs[i].clone());
+        let law = g.data.heirs.law(&g.world).map(|l| l.flag.clone());
+        let laws: Vec<String> = (g.data.laws_in_force(&g.world))
+            .map(|l| l.id.clone())
+            .collect();
+        let step = g.wait().expect("the reign goes on");
+        let w = &g.world;
+        if !g.data.influences.is_empty() && w.tick.0.is_multiple_of(tpy) {
+            c.nodes.push(NodeYear {
+                year: w.tick.year(w.time_unit),
+                axes: g.data.axes.iter().map(|a| w.axes[&a.id]).collect(),
+                lagged: w.lagged.clone(),
+            });
+        }
+        // Within a tick only the yearly age risk takes an heir; events do on resolve.
+        if let Some(h) = first.filter(|h| g.world.heir_index(h.id).is_none()) {
+            let s = &g.data.sim;
+            let (title, text) = &s.texts.heir_died;
+            let text = variant(&s.texts, "heir_died", text, salt, c.entries.len());
+            let named = [("heir", h.name.as_str(), Some(h.sex))];
+            let fill = |t: &str| text::fill(t, &g.data.names, &named);
+            let causes = causes(&g.world, [MarkKey::Heir(h.id)].into());
+            let e = entry(g, (fill(title), fill(&text)), s.notable, causes);
+            // `h` is from before the tick; heirs age a year before the death roll.
+            if h.age + 1 >= s.heir_death_age {
+                c.entries.push(e);
+                reign.count("heir_died");
+            } else if g.world.heirs.is_empty() {
+                self.last_heir = Some((c.entries.len(), e));
+            }
+        }
+        if !g.world.heirs.is_empty() {
+            self.last_heir = None;
+        }
+        match step {
+            Step::Idle => {}
+            Step::Event(v) => {
+                // Causes and chain as the world stood before the choice; only entries
+                // need them. An omen is told whatever its importance.
+                let p = g.pending_event.as_ref().expect("an event waits");
+                let e = g.data.events.iter().find(|e| e.id == p.event_id);
+                let e = e.expect("pending events exist");
+                let told = (v.importance >= g.data.sim.threshold || e.omen).then(|| {
+                    let keys = event_keys(&g.world, e, p);
+                    (causes(&g.world, keys), chain(&g.data, &g.world, e))
+                });
+                // An event a neighbour's stance offers is his move: a war it starts
+                // is his attack, not the ruler's breach of a Peace order.
+                let ai = &g.data.neighbour_ai;
+                let attack = [&ai.expand, &ai.defend, &ai.trade, &ai.wait]
+                    .iter()
+                    .any(|s| s.events.iter().any(|(id, _)| *id == v.event_id));
+                let idx = auto.choose(g, &v.choices);
+                let faithful = testament::faithful(g, &v.choices, idx, &base);
+                let mut past = g.told(idx).unwrap_or(v.text);
+                reign.count(&v.choices[idx].cause_tag);
+                g.resolve(idx, false).expect("a listed choice");
+                if attack && war.is_none() {
+                    war = g.world.war.as_ref().map(|x| x.enemy.clone());
+                }
+                if faithful {
+                    keep(g, &mut reign);
+                    let n = TESTAMENT + c.entries.len() as u64;
+                    past += &format!(" {}", testament::faithful_text(&g.data, &g.world, salt, n));
+                }
+                if let Some((causes, chain)) = told {
+                    let e = entry(g, (v.title, past), v.importance, causes);
+                    c.entries.push(ChronicleEntry {
+                        event: Some(v.event_id),
+                        chain,
+                        ..e
+                    });
+                }
+            }
+            Step::ReignEnded(end) => {
+                died(&mut g.world, &g.data, Some(&end.cause));
+                let last = c.rulers.last_mut().expect("a ruler reigned");
+                (last.end, last.cause) = (end.tick, Some(end.cause));
+                let told = reign_deeds(c, reign.from, g, salt);
+                finish(c, reign, told, &g.world, &g.data, salt);
+                return;
+            }
+        }
+        province_entries(g, &holders, c, &mut reign, salt);
+        law_entry(g, law, c, &mut reign, salt);
+        laws_entry(g, &laws, c, &mut reign, salt);
+        if testament::broken(&g.world, &laws, &holders, war.as_ref()) {
+            breach(g, c, &mut reign, salt);
+        }
+        self.reign = Some((reign, base));
+    }
+
+    /// The chronicle as it ends: the years, the family tree, the axes, the epilogue; a
+    /// dynasty still going on ends `Alive` under its ruler (one fallen unseen as it is), and
+    /// so do the foreign kingdoms beside it.
+    pub fn close(mut self) -> Chronicle {
+        if self.fall.is_none() {
+            let fall = fallen(&self.g).unwrap_or(FallReason::Alive);
+            match self.reign.take() {
+                Some((reign, _)) => self.end(reign, fall),
+                None => self.fall = Some(fall),
+            }
+        }
+        let (g, mut c, salt) = (self.g, self.c, self.salt);
+        c.fall = self.fall.expect("ended above");
+        let w = &g.world;
+        c.years = w.tick.year(w.time_unit);
+        c.kin = w.kin.clone();
+        c.axes = w.axes.clone();
+        c.deserted = w.deserted - self.deserted;
+        let last = c.rulers.last().expect("a ruler reigned");
+        let s = &g.data.sim;
+        let told = s.texts.fall_told.iter().find(|(f, _)| *f == c.fall);
+        let told = text::pick(told.map_or(&[][..], |(_, v)| v), salt, EPILOGUE);
+        let named = [("ruler", last.name.as_str(), Some(g.world.ruler.sex))];
+        c.epilogue =
+            text::fill(told, &g.data.names, &named).replace("{year}", &w.year().to_string());
+        c.realms = (g.realms.list.into_iter())
+            .map(|(id, r)| (id, r.close()))
+            .collect();
+        c
+    }
 }
 
 /// Namespaces of `text::pick` beside the entries (numbered by their index).

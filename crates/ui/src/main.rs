@@ -6,7 +6,7 @@ mod map;
 
 use bd_core::data::{AxisDef, Data, ENACT, LawDef, REPEAL};
 use bd_core::fx::Fx;
-use bd_core::game::{EventView, Game, GameError, ReignEnd, Step};
+use bd_core::game::{EventView, Game, GameError, Step};
 use bd_core::graph::{self, Push, Sight};
 use bd_core::link;
 use bd_core::rng::Rng;
@@ -454,11 +454,7 @@ impl App {
         let g = self.game.as_mut().expect("just started");
         l.play(g)?;
         if let Some(cause) = g.ended.clone() {
-            let end = ReignEnd {
-                cause,
-                tick: g.world.tick,
-                world: g.world.snapshot(),
-            };
+            let end = g.reign_end(cause);
             self.step(Ok(Step::ReignEnded(end)));
             self.screen = Screen::Summary;
         } else if g.pending_event.is_some() {
@@ -2471,11 +2467,7 @@ mod tests {
         assert!(!c.entries.is_empty() && h.app.entry == 0);
         // The CLI's way: the game's rng goes on into the simulation.
         let g = h.game();
-        let end = bd_core::game::ReignEnd {
-            cause: g.ended.clone().unwrap(),
-            tick: g.world.tick,
-            world: g.world.snapshot(),
-        };
+        let end = g.reign_end(g.ended.clone().unwrap());
         let want = sim::run(end, &g.data, g.rng.clone());
         assert_eq!(c, want);
         assert_eq!(s, score::compute(&c, &g.decisions, &h.app.score_rules));
@@ -3115,11 +3107,7 @@ mod tests {
         // To the end of the reign and the chronicle.
         let g = h.app.game.as_mut().unwrap();
         g.world.ruler.health = Fx(0);
-        let end = ReignEnd {
-            cause: "illness".into(),
-            tick: g.world.tick,
-            world: g.world.clone(),
-        };
+        let end = g.reign_end("illness".into());
         h.app.step(Ok(Step::ReignEnded(end)));
         let shown = settled(&mut h);
         assert!(shown.contains(&"ЗАВЕЩАНИЕ".to_string()), "{shown:?}");

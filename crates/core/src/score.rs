@@ -285,6 +285,7 @@ mod tests {
             deserted: 0,
             nodes: vec![],
             epilogue: String::new(),
+            realms: Default::default(),
         }
     }
 

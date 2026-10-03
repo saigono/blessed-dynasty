@@ -81,6 +81,8 @@ pub struct ReignEnd {
     pub cause: String,
     pub tick: Tick,
     pub world: World,
+    /// The foreign kingdoms as they stand (`Game.realms`); `sim::run` plays them on.
+    pub realms: crate::realm::Realms,
 }
 
 /// Errors of `start_action`, `wait` and `choose`.
@@ -100,7 +102,7 @@ pub enum GameError {
     ReignEnded,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Game {
     pub world: World,
     pub rng: Rng,
@@ -114,13 +116,18 @@ pub struct Game {
     pub ended: Option<String>,
     /// `wait` has returned `Step::ReignEnded`; every call errs from now on.
     pub reported: bool,
+    /// The neighbours as kingdoms of their own (stage 26), a year on at the end of each of
+    /// ours; empty for a kingdom's own game.
+    pub realms: crate::realm::Realms,
 }
 
 impl Game {
     /// `data` must already hold the events and actions.
     pub fn new(data: Data, preset: &Preset, seed: u64) -> Game {
+        let mut world = World::from_preset(&data, preset);
+        let realms = crate::realm::start(&data, preset, seed, &mut world);
         Game {
-            world: World::from_preset(&data, preset),
+            world,
             rng: Rng::from_seed(seed),
             data,
             decisions: Vec::new(),
@@ -128,6 +135,25 @@ impl Game {
             queue: Vec::new(),
             ended: None,
             reported: false,
+            realms,
+        }
+    }
+
+    /// This game anew from `seed`, the kingdoms' streams too; before its first tick.
+    pub fn reseeded(&self, seed: u64) -> Game {
+        let mut g = self.clone();
+        g.rng = Rng::from_seed(seed);
+        g.realms.reseed(seed);
+        g
+    }
+
+    /// The reign as it ends now with `cause`, for `sim::run`.
+    pub fn reign_end(&self, cause: String) -> ReignEnd {
+        ReignEnd {
+            cause,
+            tick: self.world.tick,
+            world: self.world.snapshot(),
+            realms: self.realms.clone(),
         }
     }
 
@@ -288,6 +314,7 @@ impl Game {
             if relations(&self.world) != before {
                 self.world.recompute_crown_power(&self.data);
             }
+            crate::realm::year(self);
         }
         if self.ended.is_some() {
             return self.report_end();
@@ -692,11 +719,8 @@ impl Game {
             return Err(GameError::ReignEnded);
         }
         self.reported = true;
-        Ok(Step::ReignEnded(ReignEnd {
-            cause: self.ended.clone().expect("called once the reign ended"),
-            tick: self.world.tick,
-            world: self.world.snapshot(),
-        }))
+        let cause = self.ended.clone().expect("called once the reign ended");
+        Ok(Step::ReignEnded(self.reign_end(cause)))
     }
 
     fn view(&self, p: &PendingEvent) -> EventView {

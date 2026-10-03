@@ -4519,7 +4519,7 @@ mod tests {
         let up = tip
             .iter()
             .find(|x| x.starts_with("Поднимают: "))
-            .expect("{tip:?}");
+            .unwrap_or_else(|| panic!("{tip:?}"));
         assert!(up.contains("Учредить канцелярию"), "{up}");
         assert!(
             up.contains("закон «Монастырские школы»") || !up.contains("закон"),
@@ -4528,7 +4528,7 @@ mod tests {
         let down = tip
             .iter()
             .find(|x| x.starts_with("Опускают: "))
-            .expect("{tip:?}");
+            .unwrap_or_else(|| panic!("{tip:?}"));
         assert!(down.contains("«Знать требует»"), "{down}");
         assert!(!down.contains("Учредить канцелярию"), "{down}");
         // The nobles: the chancery lowers them.

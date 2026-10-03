@@ -188,6 +188,18 @@ def seamless_x(img, overlap):
     return out
 
 
+def unpaper(img):
+    """img painted on white, as colour over transparency: the white goes, the paint stays."""
+    out = Image.new('RGBA', img.size)
+    pi, po = img.load(), out.load()
+    for y in range(img.height):
+        for x in range(img.width):
+            c = pi[x, y]
+            a = 255 - min(c)
+            po[x, y] = tuple(min(255, max(0, (v - (255 - a)) * 255 // a)) for v in c) + (a,) if a else (0, 0, 0, 0)
+    return out
+
+
 def tiles():
     raw = os.path.join(ROOT, 'raw', 'tiles')
     out = os.path.join(ROOT, 'sprites', 'tiles')
@@ -225,7 +237,15 @@ def tiles():
             band = img.crop((24, top + 10, w - 24, bottom - 10))
             band = seamless_x(band, 120)
             band.thumbnail((4 * TILE, 64), Image.Resampling.LANCZOS)
+            if name in ('border-band', 'coast'):
+                # Laid over the land and the sea: only the paint, the paper shows through.
+                band = unpaper(band)
             band.save(os.path.join(out, name + '.png'))
+            if name == 'border-band':
+                # White with the band's strength for alpha: tinted to each realm's colour.
+                mask = Image.new('RGBA', band.size, (255, 255, 255, 0))
+                mask.putalpha(band.getchannel('A'))
+                mask.save(os.path.join(out, name + '-mask.png'))
 
 
 main()

@@ -497,16 +497,16 @@
         traits: [
             (id: "greedy", percent: 35, ability_k: -0.3, studying: 0, hostage: 10,
                 axes: [("loyalty_people", -10)],
-                told: ("Народ ропщет: на троне жадный король.", "Народ ропщет: на троне жадная королева.")),
+                told: ("Народ роптал: новый король слыл скупцом.", "Народ роптал: новая королева слыла скупой.")),
             (id: "cautious", percent: 10, ability_k: 0.3, studying: 10, hostage: 15,
                 axes: [("stability", 5)],
-                told: ("Страна спокойна: на троне осторожный король.", "Страна спокойна: на троне осторожная королева.")),
+                told: ("Страна вздохнула спокойно: новый король не любил поспешных решений.", "Страна вздохнула спокойно: новая королева не любила поспешных решений.")),
             (id: "warlike", percent: 30, ability_k: 0, studying: -15, hostage: 10,
                 axes: [("loyalty_nobles", 10)],
-                told: ("Знать ликует: на троне воинственный король.", "Знать ликует: на троне воинственная королева.")),
+                told: ("Знать ликовала: новый король рвался в поход.", "Знать ликовала: новая королева рвалась в поход.")),
             (id: "pious", percent: 10, ability_k: 0, studying: 35, hostage: -5,
                 axes: [("loyalty_church", 10)],
-                told: ("Церковь ликует: на троне набожный король.", "Церковь ликует: на троне набожная королева.")),
+                told: ("Церковь возрадовалась: новый король был набожен.", "Церковь возрадовалась: новая королева была набожна.")),
         ],
         // AutoChooser: an option scores sum(weight[key] * amount) over its effects, plus a
         // roll in 0..=noise. Keys: axis ids, flag ids (+1 set, -1 cleared; only a change
@@ -547,20 +547,57 @@
                 "pious": {"loyalty_church": 1.2, "law_salic": 20},
             },
         ),
-        // (title, text) of the entries the simulation makes itself. Rulers of either sex:
-        // no gendered verb with {ruler}, and names stay in the nominative (they do not decline).
+        // (title, text) of the entries the simulation makes itself, told in the past. Names
+        // take a case and words agree with sex (text.rs): `{ruler.род}`, `{ruler:взошёл|взошла}`.
+        // `crowned`: {ruler} the new ruler, {prev} the last one with his epithet; the lands
+        // entries: {province}, {neighbour}, {ruler}; `heir_died`: {heir}; the laws: {law},
+        // {ruler}; `partition`: {lands}, {ruler}. The titles stay as they are: the UI and
+        // `cli batch` find the entries by them.
         texts: (
-            crowned: ("Новое правление", "Престол наследует {ruler}."),
-            province_lost: ("Потеря земли", "Земля {province} потеряна, ею владеет {neighbour}."),
-            province_gained: ("Земля возвращена", "Земля {province} отошла к короне. Прежний владелец: {neighbour}."),
+            crowned: ("Новое правление", "После {prev.род} на престол {ruler:взошёл|взошла} {ruler}."),
+            province_lost: ("Потеря земли", "Земля {province} отошла под руку {neighbour.род}."),
+            province_gained: ("Земля возвращена", "При {ruler.пр} земля {province}, прежде принадлежавшая {neighbour.дат}, вновь отошла к короне."),
             // The heir first in line died of age risk (heirs.death); see heir_death_age.
-            heir_died: ("Смерть наследника", "Не стало первого в очереди на престол: {heir}."),
+            heir_died: ("Смерть наследника", "{heir:Умер|Умерла} {heir}, {heir:первый|первая} в очереди на престол."),
             // The law in force changed (an action done or a choice); {law} is its name.
-            law_changed: ("Новый закон о престоле", "Отныне престол наследуют по закону «{law}»."),
+            law_changed: ("Новый закон о престоле", "{ruler} {ruler:переменил|переменила} порядок наследования: отныне престол переходил по закону «{law}»."),
             // Any other law of `laws` brought in, or repealed with none of its group instead.
-            law_enacted: ("Новый закон", "Введён закон «{law}»."),
-            law_repealed: ("Отмена закона", "Отменён закон «{law}»."),
-            partition: ("Земли поделены между братьями", "По закону о разделе младшие сыновья получили уделы: {lands}."),
+            law_enacted: ("Новый закон", "{ruler} {ruler:ввёл|ввела} закон «{law}», и его огласили на площадях всех земель."),
+            law_repealed: ("Отмена закона", "{ruler} {ruler:отменил|отменила} закон «{law}», и о нём скоро забыли."),
+            partition: ("Земли поделены между братьями", "По закону о разделе младшие братья {ruler.род} получили уделы: {lands}."),
+            // More texts of the entries above, picked by seed apart from the main rng.
+            variants: {
+                "crowned": [
+                    "Престол {prev.род} {ruler:унаследовал|унаследовала} {ruler}.",
+                    "Корону {prev.род} возложили на {ruler.вин}.",
+                ],
+                "province_lost": [
+                    "Корона лишилась земли {province}: её {neighbour:забрал|забрала} {neighbour}.",
+                    "{ruler} не {ruler:удержал|удержала} землю {province}, и над её замками поднялись знамёна {neighbour.род}.",
+                ],
+                "province_gained": [
+                    "Земля {province} вернулась под руку короны, и {neighbour} {neighbour:лишился|лишилась} её.",
+                    "Над замками земли {province} снова подняли королевское знамя, и {neighbour} {neighbour:смирился|смирилась} с потерей.",
+                ],
+                "heir_died": [
+                    "Двор облачился в траур: {heir:скончался|скончалась} {heir}, {heir:наследник|наследница} престола.",
+                    "Смерть унесла {heir.вин}, на {heir:котором|которой} держались надежды династии.",
+                ],
+                "law_changed": [
+                    "По воле {ruler.род} престол с той поры наследовали по закону «{law}».",
+                ],
+                "law_enacted": [
+                    "При {ruler.пр} в силу вошёл закон «{law}».",
+                    "Глашатаи разнесли по королевству новый закон «{law}», скреплённый печатью {ruler.род}.",
+                ],
+                "law_repealed": [
+                    "При {ruler.пр} закон «{law}» утратил силу.",
+                    "Уступив знати и клиру, {ruler} {ruler:отменил|отменила} закон «{law}».",
+                ],
+                "partition": [
+                    "Земли короны поделили между сыновьями покойного государя: {lands}.",
+                ],
+            },
             // What ended a reign (a RulerDies cause or the abdication event id) and the dynasty,
             // as shown to the player.
             reign_ends: {
@@ -579,6 +616,142 @@
                 (NoCrownLand, "распалась на уделы"),
                 (Alive, "правит до сих пор"),
             ],
+            // How the dynasty ended, told after its last entry: {ruler} the last ruler, {year}.
+            fall_told: [
+                (NoHeir, [
+                    "Со смертью {ruler.род} род пресёкся: некому было принять корону.",
+                    "{ruler} {ruler:умер|умерла}, не оставив наследника, и династия угасла.",
+                ]),
+                (CapitalLost, [
+                    "Враг вошёл в столицу, и династия, лишившись престольного града, пала.",
+                    "С падением столицы рухнула и власть рода: {ruler} {ruler:бежал|бежала}, и корона досталась чужим.",
+                ]),
+                (Usurped, [
+                    "Узурпатор сверг {ruler.вин} и прервал династию.",
+                    "Трон захватил узурпатор, и {ruler} {ruler:стал|стала} {ruler:последним|последней} в роду, кто носил корону.",
+                ]),
+                (NoCrownLand, [
+                    "Уделы один за другим ушли из-под руки короны, и у {ruler.род} не осталось своей земли: королевство распалось.",
+                ]),
+                (Alive, [
+                    "Династия правит и поныне: на троне {ruler}, и летопись ещё не дописана.",
+                ]),
+            ],
+            // Epithets by the deeds of a reign (data.rs `Epithet`): cause tags of the choices
+            // and actions, `trait:<id>`, `law`, `province_gained`, `province_lost`,
+            // `heir_died`. The most deeds per `min` wins, the first on a tie; `told` is the
+            // sentence of the life, {epithet.тв} the epithet in a case.
+            epithets: [
+                (name: ("Собиратель земель", "Собирательница земель"), min: 3,
+                    deeds: ["province_gained", "war_won_land", "war_siege_won"],
+                    told: ["{ruler} {ruler:приумножил|приумножила} владения короны, и {ruler:его|её} прозвали {epithet.тв}.",
+                        "Земли, присоединённые {ruler.тв}, надолго остались за короной, и в летописи {ruler:он вошёл|она вошла} как {ruler} {epithet}."]),
+                (name: ("Несчастный", "Несчастная"), min: 3,
+                    deeds: ["province_lost", "heir_died", "war_lost_hostage", "invasion_yielded", "revolt_conceded"],
+                    told: ["Беды не оставляли {ruler.вин} всё правление, и летописец назвал {ruler:его|её} {epithet.тв}.",
+                        "Судьба не щадила {ruler.род}: потери шли одна за другой, и {ruler:его|её} помнили как {epithet.вин}."]),
+                (name: ("Воитель", "Воительница"), min: 3,
+                    deeds: ["trait:warlike", "war_declared_by_crown", "war_accepted", "invasion_met", "war_attack", "war_storm", "war_last_stand", "war_battle", "nomads_fought", "incident_raid"],
+                    told: ["Почти всё правление {ruler} {ruler:провёл|провела} в седле, и в летописи {ruler:он остался|она осталась} {epithet.тв}.",
+                        "{ruler} редко {ruler:снимал|снимала} доспехи, и потомки звали {ruler:его|её} {epithet.тв}."]),
+                (name: ("Строитель", "Строительница"), min: 2,
+                    deeds: ["fort_built", "road_built", "market_built", "cathedral_crown", "cathedral_alms", "fire_stone", "mine_crown", "pilgrims_abbey", "flood_dikes", "golden_cathedral", "prosperity_saved"],
+                    told: ["За крепости, дороги и храмы, поставленные при {ruler.пр}, потомки прозвали {ruler:его|её} {epithet.тв}.",
+                        "{ruler} больше всего любил{ruler:|а} строить, и в народе {ruler:его|её} звали {epithet.тв}."]),
+                (name: ("Законодатель", "Законодательница"), min: 2,
+                    deeds: ["law", "golden_laws", "court_clerks"],
+                    told: ["Законы, введённые {ruler.тв}, пережили {ruler:его|её}, и потомки звали {ruler:его|её} {epithet.тв}."]),
+                (name: ("Грозный", "Грозная"), min: 3,
+                    deeds: ["plot_arrests", "plot_executed", "riot_crushed", "elder_hanged", "heresy_burned", "famine_ignored", "plague_quarantine", "peasants_crushed", "schism_crushed", "crisis_crushed", "revolt_crushed", "search_decreed", "villages_squeezed", "nobles_refused", "assembly_dictated", "runaways_returned"],
+                    told: ["Казни и расправы {ruler.род} помнили долго, и {ruler:его|её} прозвали {epithet.тв}.",
+                        "Перед {ruler.тв} трепетали и бароны, и чернь, и за {ruler.тв} навсегда осталось прозвище {epithet}."]),
+                (name: ("Набожный", "Набожная"), min: 3,
+                    deeds: ["trait:pious", "church_tithe", "church_lands", "cathedral_crypt", "festival_procession", "plague_prayer", "heresy_synod", "drought_prayer", "illness_prayer", "heir_prayer", "fever_prayer", "tutor_church", "regency_church", "vows_endowed", "disaster_prayer", "famine_monasteries", "pestilence_monks", "quarrel_church", "succession_church", "crisis_council"],
+                    told: ["{ruler} {ruler:строил|строила} обители и не {ruler:пропускал|пропускала} ни одной службы, и в народе {ruler:его|её} звали {epithet.тв}.",
+                        "Церковь не знала покровителя щедрее, и {ruler.вин} прозвали {epithet.тв}."]),
+                (name: ("Щедрый", "Щедрая"), min: 3,
+                    deeds: ["festival_people", "festival_tourney", "famine_relief", "famine_tax_relief", "people_tax_cut", "riot_bread", "fire_rebuilt", "flood_relief", "disaster_relief", "famine_granaries", "peasants_appeased", "bread_sold", "prosperity_feast", "villages_corvee_forgiven", "drought_grain"],
+                    told: ["{ruler} не {ruler:скупился|скупилась} ни на хлеб, ни на праздники, и народ прозвал {ruler:его|её} {epithet.тв}."]),
+                (name: ("Мудрый", "Мудрая"), min: 3,
+                    deeds: ["trait:cautious", "court_divide", "assembly_heard", "elder_heard", "border_arbitration", "dispute_council", "appanage_council", "plot_watched", "tutor_scholar", "embassy_treaty", "runaways_settled", "search_limited"],
+                    told: ["{ruler} {ruler:умел|умела} выслушать и знать, и простолюдинов, и {ruler:его|её} прозвали {epithet.тв}."]),
+                (name: ("Миролюбивый", "Миролюбивая"), min: 3,
+                    deeds: ["ultimatum_paid", "war_bought_off", "invasion_bought_off", "trade_opened", "border_yielded", "war_sue_for_peace", "war_draw_gifts", "nomads_paid", "incident_hushed", "neighbour_married", "heir_married_foreign"],
+                    told: ["{ruler} {ruler:предпочитал|предпочитала} войне откуп и торг, и в летописи {ruler:его|её} назвали {epithet.тв}.",
+                        "{ruler} умел{ruler:|а} откупиться от войны и сторговаться с соседом, и {ruler:его|её} прозвали {epithet.тв}."]),
+                (name: ("Недолгий", "Недолгая"), min: 0, years: 3, deeds: [],
+                    told: ["Правление {ruler.род} было так коротко, что в памяти {ruler:он остался|она осталась} {epithet.тв}."]),
+                (name: ("Тихий", "Тихая"), min: 0, deeds: [],
+                    told: ["Правление {ruler.род} прошло без громких дел, и потомки звали {ruler:его|её} {epithet.тв}.",
+                        "Летописи говорят о правлении {ruler.род} немного, и в памяти {ruler:он остался|она осталась} {epithet.тв}."]),
+            ],
+            // The life of a ruler in the family tree (data.rs `Life`): how the reign began,
+            // the epithet, the `deeds` most important entries, how it ended. {ruler}, {year}
+            // the year the phrase is about, {years} the years of the reign, {law}, {deed}.
+            life: (
+                founder: [
+                    "{ruler} {ruler:принял|приняла} корону в {year} году и {ruler:положил|положила} начало династии.",
+                    "В {year} году корона досталась {ruler.дат}, и с {ruler:него|неё} повёлся царствующий род.",
+                ],
+                regency: [
+                    "{ruler} {ruler:взошёл|взошла} на престол ребёнком в {year} году, и первые годы за {ruler:него|неё} правили регенты.",
+                    "В {year} году корону возложили на {ruler:малолетнего|малолетнюю} {ruler.вин}, и страной правил регентский совет.",
+                ],
+                designated: [
+                    "В {year} году на престол {ruler:взошёл|взошла} {ruler}, {ruler:названный|названная} наследником в обход законного права.",
+                    "{ruler} {ruler:получил|получила} корону в {year} году по воле прежнего государя, а не по закону, и многие этого не простили.",
+                ],
+                contested: [
+                    "{ruler} {ruler:взошёл|взошла} на престол в {year} году, но {ruler:его|её} право оспаривали с первого дня.",
+                    "Корона досталась {ruler.дат} в {year} году в смуте и спорах: не все признали {ruler:его|её} право.",
+                ],
+                lawful: [
+                    "{ruler} {ruler:взошёл|взошла} на престол в {year} году по закону «{law}».",
+                    "В {year} году, как велел закон «{law}», корону {ruler:принял|приняла} {ruler}.",
+                    "{ruler} {ruler:унаследовал|унаследовала} престол в {year} году бесспорно, по праву, что давал закон «{law}».",
+                ],
+                deed: [
+                    "В {year} году {deed}.",
+                    "{year} год запомнился тем, что {deed}.",
+                ],
+                same_year: [
+                    "В том же году {deed}.",
+                    "Тогда же {deed}.",
+                ],
+                deeds: 3,
+                ends: {
+                    "illness": [
+                        "{ruler} {ruler:умер|умерла} от болезни в {year} году, процарствовав {years}.",
+                        "Болезнь свела {ruler.вин} в могилу в {year} году, и {ruler:он|она} {ruler:правил|правила} {years}.",
+                    ],
+                    "old_age": [
+                        "{ruler} {ruler:скончался|скончалась} в глубокой старости в {year} году, процарствовав {years}.",
+                        "В {year} году {ruler} мирно {ruler:угас|угасла} от старости, проправив {years}.",
+                    ],
+                    "assassination": [
+                        "В {year} году {ruler} {ruler:пал|пала} от руки убийц, процарствовав {years}.",
+                        "Заговорщики оборвали жизнь {ruler.род} в {year} году, и {ruler:он|она} {ruler:правил|правила} всего {years}.",
+                    ],
+                    "war_wound": [
+                        "В {year} году {ruler} {ruler:умер|умерла} от раны, полученной в бою, процарствовав {years}.",
+                    ],
+                    "abdication": [
+                        "В {year} году {ruler} {ruler:отрёкся|отреклась} от престола, процарствовав {years}.",
+                        "Через {years} правления {ruler} {ruler:сложил|сложила} корону и {ruler:отрёкся|отреклась} от престола.",
+                    ],
+                    "monastery": [
+                        "В {year} году {ruler} {ruler:ушёл|ушла} в монастырь, оставив престол, на котором {ruler:провёл|провела} {years}.",
+                    ],
+                },
+                // A ruler alive when the dynasty fell under him, or still reigning.
+                falls: [
+                    (CapitalLost, ["В {year} году {ruler} {ruler:потерял|потеряла} столицу, и с нею пала династия."]),
+                    (Usurped, ["В {year} году узурпатор сверг {ruler.вин}, и династия пресеклась на {ruler:нём|ней}."]),
+                    (NoCrownLand, ["К {year} году у {ruler.род} не осталось ни одной своей земли: королевство распалось на уделы."]),
+                    (Alive, ["{ruler} правит и поныне, уже {years}."]),
+                ],
+                years: ("год", "года", "лет"),
+            ),
         ),
     ),
 )

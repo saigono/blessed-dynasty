@@ -368,8 +368,9 @@ fn founder_reign(w: &World, d: &Data, salt: u64) -> (Reign, Vec<String>) {
     (reign, told)
 }
 
-/// The main entries of the reign from entry `from` on, as sentences of `life.deed`: the
-/// most important first (the earliest on a tie), then in order of time.
+/// The main entries of the reign from entry `from` on, as sentences of `life.deed` (of
+/// `life.same_year` for one of the year before it): the most important first (the earliest
+/// on a tie), then in order of time.
 fn reign_deeds(c: &Chronicle, from: usize, g: &Game, salt: u64) -> Vec<String> {
     let (d, w) = (&g.data, &g.world);
     let life = &d.sim.texts.life;
@@ -386,20 +387,26 @@ fn reign_deeds(c: &Chronicle, from: usize, g: &Game, salt: u64) -> Vec<String> {
             false => s.chars().next().into_iter().flat_map(char::to_lowercase).chain(s.chars().skip(1)).collect(),
         }
     };
+    let mut last = None;
     (main.into_iter())
         .map(|i| {
             let e = &c.entries[i];
             let deed = lower(text::first_sentence(&e.text));
             let deed = deed.trim_end_matches('.');
             let year = e.tick.date(w.time_unit, w.start_year);
-            let phrase = text::pick(&life.deed, salt, LIFE + i as u64);
+            let again = last.replace(year.clone()) == Some(year.clone());
+            let phrases = match again && !life.same_year.is_empty() {
+                true => &life.same_year,
+                false => &life.deed,
+            };
+            let phrase = text::pick(phrases, salt, LIFE + i as u64);
             phrase.replace("{deed}", deed).replace("{year}", &year)
         })
         .collect()
 }
 
 /// The last ruler's life, his reign over (`end` and `cause` set; a fall under him is
-/// `c.fall`): the epithet by his deeds and the paragraph of `life`.
+/// `c.fall`): the epithet by his deeds and the paragraph of `life`; `{epithet}` names it.
 fn finish(c: &mut Chronicle, reign: Reign, told: Vec<String>, w: &World, d: &Data, salt: u64) {
     let (t, n) = (&d.sim.texts, c.rulers.len() as u64 * 16);
     let r = c.rulers.last_mut().expect("a ruler reigned");
@@ -423,7 +430,7 @@ fn finish(c: &mut Chronicle, reign: Reign, told: Vec<String>, w: &World, d: &Dat
     let female = reign.sex == Sex::Female;
     let (name, why) = best.map_or(("", ""), |(_, e)| {
         let name = if female { &e.name.1 } else { &e.name.0 };
-        (name.as_str(), e.told.as_str())
+        (name.as_str(), text::pick(&e.told, salt, LIFE + n + 2))
     });
     r.epithet = name.to_string();
     let life = &t.life;
@@ -436,11 +443,13 @@ fn finish(c: &mut Chronicle, reign: Reign, told: Vec<String>, w: &World, d: &Dat
         .chain([why])
         .chain(told.iter().map(String::as_str))
         .chain([end]);
-    let named = [("ruler", r.name.as_str(), Some(reign.sex))];
+    let named = [
+        ("ruler", r.name.as_str(), Some(reign.sex)),
+        ("epithet", name, Some(reign.sex)),
+    ];
     let year = (w.start_year + r.end.year(unit)).to_string();
     let fill = |p: &str| {
         text::fill(p, &d.names, &named)
-            .replace("{epithet}", name)
             .replace("{year}", &year)
             .replace("{years}", &text::plural(years, &life.years))
     };
@@ -629,7 +638,7 @@ fn crown(g: &mut Game, c: &mut Chronicle, salt: u64) -> Option<Reign> {
     if !lands.is_empty() {
         let (title, text) = &g.data.sim.texts.partition;
         let text = variant(&g.data.sim.texts, "partition", text, salt, c.entries.len());
-        let told = (title.clone(), text.replace("{lands}", &lands.join(", ")));
+        let told = (title.clone(), ruled(g, &text).replace("{lands}", &lands.join(", ")));
         c.entries.push(entry(g, told, g.data.sim.notable, vec![]));
     }
     Some(Reign {

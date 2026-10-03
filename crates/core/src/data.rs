@@ -985,14 +985,14 @@ pub struct Epithet {
     /// Only for a reign of at most so many years.
     #[serde(default)]
     pub years: Option<u32>,
-    /// The sentence of the life that tells it; `{ruler}`, `{epithet}`.
-    pub told: String,
+    /// The sentence of the life that tells it, variants; `{ruler}`, `{epithet}`.
+    pub told: Vec<String>,
 }
 
 /// The phrases of a life, each a list of variants: how the ruler came to the throne (the
 /// first that applies: `founder`, `regency` for a child, `designated` over the rightful heir,
 /// `contested`, `lawful` under a law `{law}`), the epithet's sentence, the main entries of the
-/// reign (`deed`: `{deed}` the first sentence of an entry, `{year}`), how it ended (`ends` by
+/// reign (`deed`, `same_year`: `{deed}` the first sentence of an entry, `{year}`), how it ended (`ends` by
 /// the cause of `sim.texts.reign_ends`, else `falls` by the fall under the ruler). `{ruler}`
 /// is the ruler, `{year}` the year the phrase is about, `{years}` the years of the reign in
 /// words of `years` (one, few, many).
@@ -1004,6 +1004,9 @@ pub struct Life {
     pub contested: Vec<String>,
     pub lawful: Vec<String>,
     pub deed: Vec<String>,
+    /// `deed` for an entry of the same year as the one told before it.
+    #[serde(default)]
+    pub same_year: Vec<String>,
     /// How many entries of the reign a life tells, the most important first.
     pub deeds: usize,
     pub ends: BTreeMap<String, Vec<String>>,

@@ -343,7 +343,8 @@ fn the_automaton_repeals_a_law_only_under_pressure() {
     assert_eq!(auto.action(&mut g), None);
 }
 
-/// A repeal goes to the chronicle: «Отменён закон «…»», as does a law brought in.
+/// A repeal goes to the chronicle («Отмена закона», the law named in its text), as does a
+/// law brought in («Новый закон»).
 #[test]
 fn the_chronicle_tells_a_law_repealed_and_brought_in() {
     let mut d = data_with(P);
@@ -363,14 +364,18 @@ fn the_chronicle_tells_a_law_repealed_and_brought_in() {
             world: g.world.clone(),
         };
         let c = sim::run(end, d, Rng::from_seed(1));
-        c.entries.into_iter().map(|e| e.text).collect::<Vec<_>>()
+        let told = c.entries.into_iter().map(|e| (e.title, e.text));
+        told.collect::<Vec<_>>()
+    };
+    let has = |told: &[(String, String)], title: &str, law: &str| {
+        (told.iter()).any(|(t, x)| t == title && x.contains(&format!("закон «{law}»")))
     };
     d.sim.auto.base = [("pressure".to_string(), Fx::from_int(100))].into();
     let told = texts(&d, true);
-    assert!(told.contains(&"Отменён закон «P».".to_string()), "{told:?}");
+    assert!(has(&told, "Отмена закона", "P"), "{told:?}");
     d.sim.auto.base = [("law_p".to_string(), Fx::from_int(100))].into();
     let told = texts(&d, false);
-    assert!(told.contains(&"Введён закон «P».".to_string()), "{told:?}");
+    assert!(has(&told, "Новый закон", "P"), "{told:?}");
     // One of a group replaced by another is no repeal.
     let mut d = data_with(&X.replace("cost: 20, years: 1", "name: \"Y\", cost: 20, years: 1"));
     (d.sim.traits, d.heirs.birth, d.sim.max_years) = (vec![], vec![], 3);
@@ -386,8 +391,8 @@ fn the_chronicle_tells_a_law_repealed_and_brought_in() {
         world: g.world.clone(),
     };
     let told: Vec<_> = (sim::run(end, &d, Rng::from_seed(1)).entries.into_iter())
-        .map(|e| e.text)
+        .map(|e| (e.title, e.text))
         .collect();
-    assert!(told.contains(&"Введён закон «Y».".to_string()), "{told:?}");
-    assert!(!told.iter().any(|t| t.starts_with("Отменён")), "{told:?}");
+    assert!(has(&told, "Новый закон", "Y"), "{told:?}");
+    assert!(!told.iter().any(|(t, _)| t == "Отмена закона"), "{told:?}");
 }

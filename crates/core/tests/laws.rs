@@ -382,10 +382,7 @@ fn the_automaton_changes_the_law_by_its_weights() {
         .iter()
         .find(|e| e.title == "Новый закон о престоле");
     let e = e.expect("the change is told");
-    assert_eq!(
-        e.text,
-        "Отныне престол наследуют по закону «Салический закон»."
-    );
+    assert!(e.text.contains("закону «Салический закон»"), "{}", e.text);
     assert!(e.snapshot.flags.contains("law_salic"));
 }
 
@@ -522,15 +519,10 @@ fn the_traits_of_a_new_ruler_shift_the_axes() {
         (65, 60)
     );
     assert_eq!(at(&e, "loyalty_people"), 50);
-    assert_eq!(
-        e.text,
-        "Престол наследует p0. Церковь ликует: на троне набожный король."
-    );
+    let cheer = |e: &bd_core::sim::ChronicleEntry, s: &str| e.text.ends_with(&format!(". {s}"));
+    assert!(cheer(&e, "Церковь возрадовалась: новый король был набожен."), "{}", e.text);
     let e = crowned(&data, F, 80, &FACTIONS);
-    assert_eq!(
-        e.text,
-        "Престол наследует p0. Церковь ликует: на троне набожная королева."
-    );
+    assert!(cheer(&e, "Церковь возрадовалась: новая королева была набожна."), "{}", e.text);
 }
 
 fn court(id: &str) -> NeighbourId {

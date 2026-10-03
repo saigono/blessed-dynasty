@@ -179,9 +179,10 @@ fn own(d: &Data, w: &World) -> AutoChooser {
     }
 }
 
-/// Choice `idx` is true to the testament: its own chooser scores it highest, at least
-/// `faithful.margin` above the lowest. Only after the founder's death.
-pub fn faithful(g: &Game, choices: &[Choice], idx: usize) -> bool {
+/// Choice `idx` is true to the testament and made for it: the testament's own chooser
+/// scores it highest, at least `faithful.margin` above the lowest, and the ruler's `base`
+/// would have scored another higher. Only after the founder's death.
+pub fn faithful(g: &Game, choices: &[Choice], idx: usize, base: &AutoChooser) -> bool {
     let (Some(r), Some(_)) = (&g.data.testament, parts(&g.data, &g.world)) else {
         return false;
     };
@@ -190,16 +191,21 @@ pub fn faithful(g: &Game, choices: &[Choice], idx: usize) -> bool {
     let (Some(&max), Some(&min)) = (max, min) else {
         return false;
     };
-    scores[idx] == max && max - min >= r.faithful.margin
+    let swayed = base.scores(g, choices);
+    let swayed = swayed.iter().any(|s| *s > swayed[idx]);
+    scores[idx] == max && max - min >= r.faithful.margin && swayed
 }
 
-/// An action started is true to the testament: its own chooser scores what it brings at
-/// least `faithful.margin`.
-pub fn faithful_action(g: &Game, a: &Action) -> bool {
+/// An action started is true to the testament and done for it: its own chooser scores what
+/// it brings at least `faithful.margin`, the ruler's `base` not above its price.
+pub fn faithful_action(g: &Game, a: &Action, base: &AutoChooser) -> bool {
     let (Some(r), Some(_)) = (&g.data.testament, parts(&g.data, &g.world)) else {
         return false;
     };
-    own(&g.data, &g.world).worth(&a.on_complete, &g.world, &g.data, None) >= r.faithful.margin
+    let (w, d) = (&g.world, &g.data);
+    let treasury = base.weights.get(&d.economy.treasury.0).copied().unwrap_or_default();
+    let worth = base.worth(&a.on_complete, w, d, None) - treasury * d.auto_cost(a);
+    own(d, w).worth(&a.on_complete, w, d, None) >= r.faithful.margin && worth <= Fx(0)
 }
 
 /// The order was broken since the world stood at `laws` (the laws then in force),

@@ -241,7 +241,7 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
                 && let Some(a) = g.data.actions.iter().find(|a| a.id == id)
             {
                 reign.count(&a.cause_tag);
-                if testament::faithful_action(&g, a) {
+                if testament::faithful_action(&g, a, &base) {
                     keep(&mut g, &mut reign);
                 }
             }
@@ -298,7 +298,7 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
                         (causes(&g.world, keys), chain(&g.data, &g.world, e))
                     });
                     let idx = auto.choose(&mut g, &v.choices);
-                    let faithful = testament::faithful(&g, &v.choices, idx);
+                    let faithful = testament::faithful(&g, &v.choices, idx, &base);
                     let mut past = g.told(idx).unwrap_or(v.text);
                     reign.count(&v.choices[idx].cause_tag);
                     g.resolve(idx, false).expect("a listed choice");

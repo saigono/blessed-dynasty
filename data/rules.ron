@@ -474,10 +474,10 @@
         precepts: [
             (id: "treasury", name: "Полная казна — крепость державы",
                 description: "Копить золото и не начинать войн без крайней нужды.",
-                weights: {"treasury": 0.4, "income": 3, "province_income": 2, "war": -25}),
+                weights: {"treasury": 0.3, "income": 2, "province_income": 1, "army": 0.15, "war": -40}),
             (id: "sword", name: "Меч кормит род",
                 description: "Держать сильное войско и добывать земли оружием.",
-                weights: {"war": 25, "army": 0.4, "province": 15, "prestige": 0.4}),
+                weights: {"war": 10, "army": 0.1, "province": 10, "prestige": 0.3}),
             (id: "faith", name: "Вера превыше всего",
                 description: "Беречь церковь и её благословение на престол.",
                 weights: {"loyalty_church": 1.2, "legitimacy": 0.5}),
@@ -489,7 +489,7 @@
                 weights: {"relation": 0.4, "war": -25, "marriage": 10}),
             (id: "law", name: "Закон превыше короля",
                 description: "Крепить приказы и законы, а не волю одного государя.",
-                weights: {"bureaucracy": 1, "law": 8, "pressure": 1, "stability": 0.5}),
+                weights: {"bureaucracy": 0.5, "law": 3, "pressure": 1, "stability": 0.5}),
         ],
         // `weight` on the law's flag, on `province`, on `war`; `what` the order in words.
         orders: (
@@ -669,7 +669,7 @@
                 // shift or resistance on a pressing faction (laws.pressure).
                 "law": -10, "pressure": 2,
                 // An heir named in a sealed will over the law (stage 24, royal_will).
-                "bequeath": -5,
+                "bequeath": -2,
             },
             traits: {
                 "greedy": {"treasury": 0.3, "income": 2, "province_income": 2},

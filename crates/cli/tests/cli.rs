@@ -848,3 +848,84 @@ fn law_profiles_differ() {
     let named = |o: &str| number(o, "# воцарения назначенных в обход закона: ");
     assert!(outs.iter().any(|o| named(o) > 0));
 }
+
+/// Stage 24: `batch` of `runs` seeds by `strategy`, the founder writing each testament of
+/// `wills` (the RON of `ScriptStep::Testament`; empty: none) at once, all spawned together;
+/// the outputs in order.
+fn testaments(runs: &str, strategy: &str, wills: &[&str]) -> Vec<String> {
+    let children: Vec<_> = (wills.iter().enumerate())
+        .map(|(i, will)| {
+            let script = format!("{}/will_{strategy}_{i}.ron", env!("CARGO_TARGET_TMPDIR"));
+            let steps = match will.is_empty() {
+                true => "[]".to_string(),
+                false => format!("[Testament(({will}))]"),
+            };
+            std::fs::write(&script, steps).unwrap();
+            Command::new(env!("CARGO_BIN_EXE_cli"))
+                .args(["batch", "--runs", runs, "--strategy", strategy, "--script", &script])
+                .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+    (children.into_iter())
+        .map(|c| stdout(c.wait_with_output().unwrap()))
+        .collect()
+}
+
+/// Wars begun after the founder per 1000 years of the dynasty.
+fn wars(out: &str) -> i64 {
+    let prefix = "# войн после основателя на 1000 лет династии: ";
+    let l = out.lines().find_map(|l| l.strip_prefix(prefix));
+    l.unwrap_or_else(|| panic!("{out}")).parse().unwrap()
+}
+
+/// Stage 24 acceptance: «Полная казна — крепость державы» over 300 dynasties: the median
+/// treasury at the end higher than without a testament, fewer wars.
+/// `cargo test --release -p cli -- --ignored treasury_precept`.
+#[test]
+#[ignore = "release only, ten seconds"]
+fn the_treasury_precept_hoards_and_wars_less() {
+    let outs = testaments("300", "neutral", &["", "precept: Some(\"treasury\")"]);
+    let treasury = |o: &str| median(o, "#   казна в конце ");
+    assert!(treasury(&outs[1]) > treasury(&outs[0]), "{} {}", outs[0], outs[1]);
+    assert!(wars(&outs[1]) < wars(&outs[0]), "{} {}", wars(&outs[0]), wars(&outs[1]));
+}
+
+const PRECEPTS: [&str; 6] = ["treasury", "sword", "faith", "land", "peace", "law"];
+
+/// Stage 24 acceptance: no precept dominates, 1000 dynasties each: the best median score at
+/// most 1.25 times the worst (the table of docs/calibration.md, stage 24).
+/// `cargo test --release -p cli -- --ignored no_precept_dominates`.
+#[test]
+#[ignore = "release only, a minute"]
+fn no_precept_dominates() {
+    let wills: Vec<String> = (PRECEPTS.iter()).map(|p| format!("precept: Some(\"{p}\")")).collect();
+    let wills: Vec<&str> = [""].into_iter().chain(wills.iter().map(String::as_str)).collect();
+    let outs = testaments("1000", "neutral", &wills);
+    let scores: Vec<i64> = outs.iter().map(|o| median(o, "#   счёт ")).collect();
+    for (o, will) in outs.iter().zip(&wills) {
+        let (_, _, _, falls) = summary(o);
+        let years = median(o, "#   лет династии ");
+        eprintln!("{will:24} счёт {} лет {years} войн {} {falls:?}", median(o, "#   счёт "), wars(o));
+    }
+    let (best, worst) = (scores[1..].iter().max().unwrap(), scores[1..].iter().min().unwrap());
+    assert!(best * 100 <= worst * 125, "{scores:?}");
+}
+
+/// Stage 24, after stage 19: the order to keep `law_charters` keeps the free towns'
+/// charters alive at the fall more often than without it, 1000 dynasties of `free_towns`.
+/// `cargo test --release -p cli -- --ignored keeps_the_charters`.
+#[test]
+#[ignore = "release only, a minute"]
+fn an_order_keeps_the_charters() {
+    let outs = testaments("1000", "free_towns", &["", "order: Some(KeepLaw(\"law_charters\"))"]);
+    let share = |o: &str| {
+        let l = o.lines().find(|l| l.contains("законы при падении:")).unwrap();
+        let at = l.split(" law_charters ").nth(1).unwrap_or("0%");
+        at.split('%').next().unwrap().parse::<i64>().unwrap()
+    };
+    eprintln!("law_charters при падении: {}% без наказа, {}% с наказом", share(&outs[0]), share(&outs[1]));
+    assert!(share(&outs[1]) > share(&outs[0]));
+}

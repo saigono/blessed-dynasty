@@ -8,13 +8,13 @@
         id: "royal_will",
         title: "Тайное завещание",
         text: "{ruler} всё больше благоволит {heir.дат}, а не старшему в очереди. Писцы шепчутся о запечатанном завещании.",
-        when: All([RulerAge(40, 200), HeirCount(2, 99)]),
-        weight: 2,
+        when: All([RulerAge(35, 200), HeirCount(2, 99)]),
+        weight: 3,
         weight_bonus: [(RulerTrait("defiant"), 6)],
         once: false,
         cooldown_years: 15,
         importance: 4,
-        target: Favourite(10),
+        target: Favourite(5),
         choices: [
             (
                 text: "Назвать любимца наследником в тайном завещании",

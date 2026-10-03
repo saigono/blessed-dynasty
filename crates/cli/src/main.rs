@@ -312,6 +312,8 @@ struct Row {
     score_at: i64,
     /// Every catastrophe of `Data.symptoms` in the chronicle (`symptom_gaps`).
     catastrophes: Vec<Gap>,
+    /// Wars begun after the founder (`war.start_event` in the chronicle), stage 24.
+    wars: u32,
 }
 
 /// The dynasty years of the second score in `batch`: most dynasties of `neutral` live to
@@ -440,6 +442,8 @@ fn batch_row(
         axis(&g.data.economy.treasury),
     );
     let designated = c.rulers.iter().filter(|r| r.designated).count() as u32;
+    let start = Some(&g.data.war.start_event);
+    let wars = c.entries.iter().filter(|e| e.event.as_ref() == start).count() as u32;
     let bastards = (c.kin.iter())
         .filter(|k| k.bastard && k.crowned.is_some())
         .count() as u32;
@@ -472,6 +476,7 @@ fn batch_row(
         deserted: c.deserted,
         fall: Some(fall),
         reign_treasury: log,
+        wars,
     })
 }
 
@@ -621,6 +626,9 @@ fn batch_report(rows: &[Row], hidden: &[&str], catastrophes: &[&str]) -> String 
         .filter(|r| r.fall != Some(FallReason::Alive))
         .count();
     out += &format!("# доля падений {}%\n", percent(fell, rows.len()));
+    let years = rows.iter().map(|r| r.years as usize).sum::<usize>();
+    let wars = (sum(|r| r.wars) * 1000).checked_div(years).unwrap_or(0);
+    out += &format!("# войн после основателя на 1000 лет династии: {wars}\n");
     if !catastrophes.is_empty() {
         out += &format!("# симптом за {SYMPTOM_YEARS}+ лет до катастрофы:");
     }
@@ -1118,6 +1126,7 @@ mod tests {
             bounds: vec![],
             shocks: (0, 0),
             score_at: score / 2,
+            wars: seed as u32,
             catastrophes: match seed {
                 1 => vec![
                     ("war".into(), Some(25), Some(25)),
@@ -1177,6 +1186,7 @@ mod tests {
                 "# закон сменён после основателя в 25% династий",
                 "# отмена закона в 25% династий; законы при падении: law_x 50%",
                 "# доля падений 75%",
+                "# войн после основателя на 1000 лет династии: 15",
                 "# причины падения:",
                 "#   Usurped 50%",
                 "#   Alive 25%",

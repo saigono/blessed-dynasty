@@ -4,6 +4,8 @@
 //   Choose(idx)        picks a choice of the pending event
 //   ChooseByTag(tag)   the first choice with this cause tag, else choice 0
 //   Abdicate           unavailable until stage 5
+//   Testament((precept: Some("treasury"), order: Some(KeepLaw("law_charters")), heir: Some(id)))
+//                      writes the founder's testament (stage 24); every part may be left out
 // A Wait or an Action while an event waits for a choice is an error.
 [
     Action("royal_progress", None),

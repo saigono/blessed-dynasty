@@ -494,3 +494,199 @@ fn chain_templates_cover_the_graph() {
         .collect();
     assert!(bad.is_empty(), "{bad:?}");
 }
+
+/// Stage 22: every choice tells the chronicle what was done, in words, without numbers.
+#[test]
+fn every_choice_is_told() {
+    let data = load_all();
+    let untold: Vec<_> = (data.events.iter().chain(&data.sim_events))
+        .flat_map(|e| e.choices.iter().map(move |c| (&e.id, c)))
+        .filter(|(_, c)| c.told.trim().is_empty() || has_digits(&c.told))
+        .map(|(id, c)| format!("{id}: {}", c.text))
+        .collect();
+    assert!(untold.is_empty(), "{untold:?}");
+}
+
+/// The `{…}` of a template that `text::fill` would leave as they are: an unknown key, an
+/// unknown case, a sex choice without two forms.
+fn bad_braces(s: &str) -> Vec<String> {
+    const KEYS: [&str; 14] = [
+        "ruler",
+        "prev",
+        "heir",
+        "province",
+        "neighbour",
+        "vassal",
+        "house",
+        "war_target",
+        "year",
+        "years",
+        "law",
+        "lands",
+        "deed",
+        "epithet",
+    ];
+    let mut bad = Vec::new();
+    for token in s
+        .split('{')
+        .skip(1)
+        .filter_map(|t| t.split_once('}'))
+        .map(|t| t.0)
+    {
+        let end = token.find(['.', ':']).unwrap_or(token.len());
+        let (key, how) = token.split_at(end);
+        let ok = KEYS.contains(&key)
+            && match how.chars().next() {
+                Some('.') => bd_core::text::CASES.contains(&&how[1..]),
+                Some(_) => how[1..].split('|').count() == 2,
+                None => true,
+            };
+        if !ok {
+            bad.push(format!("{{{token}}} in «{s}»"));
+        }
+    }
+    bad
+}
+
+/// Every template the game and the simulation fill: events, choices, `told`, the texts of
+/// the simulation, the epithets and the life.
+#[test]
+fn templates_use_known_names_cases_and_two_forms() {
+    let data = load_all();
+    let t = &data.sim.texts;
+    let mut all: Vec<&String> = Vec::new();
+    for e in data.events.iter().chain(&data.sim_events) {
+        all.extend([&e.title, &e.text]);
+        all.extend(e.choices.iter().flat_map(|c| [&c.text, &c.told]));
+    }
+    for (a, b) in [
+        &t.crowned,
+        &t.province_lost,
+        &t.province_gained,
+        &t.heir_died,
+        &t.partition,
+        &t.law_changed,
+        &t.law_enacted,
+        &t.law_repealed,
+    ] {
+        all.extend([a, b]);
+    }
+    all.extend(t.reign_ends.values().chain(t.falls.iter().map(|f| &f.1)));
+    all.extend(t.variants.values().flatten());
+    all.extend(t.fall_told.iter().flat_map(|f| &f.1));
+    all.extend(
+        t.epithets
+            .iter()
+            .flat_map(|e| e.told.iter().chain([&e.name.0, &e.name.1])),
+    );
+    all.extend(data.sim.traits.iter().flat_map(|r| [&r.told.0, &r.told.1]));
+    let l = &t.life;
+    for v in [
+        &l.founder,
+        &l.regency,
+        &l.designated,
+        &l.contested,
+        &l.lawful,
+        &l.deed,
+        &l.same_year,
+    ] {
+        assert!(!v.is_empty());
+        all.extend(v);
+    }
+    all.extend(
+        l.ends
+            .values()
+            .flatten()
+            .chain(l.falls.iter().flat_map(|f| &f.1)),
+    );
+    assert!(all.len() > 500, "{}", all.len());
+    let bad: Vec<_> = all.into_iter().flat_map(|s| bad_braces(s)).collect();
+    assert!(bad.is_empty(), "{bad:#?}");
+    // The check itself.
+    assert_eq!(bad_braces("{ruler.род} {heir:он|она} {year}").len(), 0);
+    assert_eq!(bad_braces("{king} {ruler.зв} {heir:он}").len(), 3);
+}
+
+/// Every name a text may decline has its six cases: the pools, the lands of the map, the
+/// houses and neighbours of the preset, the epithets.
+#[test]
+fn every_name_declines() {
+    let data = load_all();
+    let n = &data.names;
+    let world =
+        bd_core::state::World::from_preset(&data, &preset(&read("presets/default.ron"), &data));
+    let mut all: Vec<&str> = [&n.rulers, &n.heirs, &n.daughters, &n.vassals]
+        .into_iter()
+        .flatten()
+        .map(|s| s.as_str())
+        .collect();
+    all.extend(world.provinces.values().map(|p| p.name.as_str()));
+    all.extend(world.vassals.values().map(|v| v.name.as_str()));
+    all.extend(world.neighbours.values().map(|v| v.name.as_str()));
+    let epithets = data.sim.texts.epithets.iter();
+    all.extend(epithets.flat_map(|e| [e.name.0.as_str(), e.name.1.as_str()]));
+    assert_eq!(n.undeclined(all), Vec::<&str>::new());
+}
+
+/// A name written without its cases stays in the nominative, and the lint names it.
+#[test]
+fn a_name_without_cases_falls_back_to_the_nominative_and_is_reported() {
+    let mut data = rules();
+    let names = r#"(rulers: ["Ульрих||а|у|а|ом|е", "Тассило"], heirs: [], vassals: [])"#;
+    data.add_names(names).unwrap();
+    let n = &data.names;
+    assert_eq!(n.rulers, ["Ульрих", "Тассило"]);
+    assert_eq!(n.declined("Ульрих", 1), "Ульриха");
+    assert_eq!(n.declined("Тассило", 1), "Тассило");
+    let named = [("ruler", "Тассило", None)];
+    assert_eq!(bd_core::text::fill("у {ruler.род}", n, &named), "у Тассило");
+    assert_eq!(
+        n.undeclined(n.rulers.iter().map(|s| s.as_str())),
+        ["Тассило"]
+    );
+    // A spec of the wrong length is an error.
+    let broken = r#"(rulers: ["Ульрих||а|у"], heirs: [], vassals: [])"#;
+    assert!(matches!(
+        rules().add_names(broken),
+        Err(DataError::Invalid(_))
+    ));
+}
+
+/// The deeds an epithet counts are ones a reign counts (`Epithet`), and every way a reign
+/// ends has its phrase in a life.
+#[test]
+fn epithets_count_known_deeds_and_lives_tell_every_end() {
+    let data = load_all();
+    let t = &data.sim.texts;
+    let mut known: BTreeSet<String> = ["law", "province_gained", "province_lost", "heir_died"]
+        .map(String::from)
+        .into();
+    let choices = data
+        .events
+        .iter()
+        .chain(&data.sim_events)
+        .flat_map(|e| &e.choices);
+    known.extend(choices.map(|c| c.cause_tag.clone()));
+    known.extend(data.actions.iter().map(|a| a.cause_tag.clone()));
+    known.extend(data.sim.traits.iter().map(|r| format!("trait:{}", r.id)));
+    let unknown: Vec<_> = (t.epithets.iter())
+        .flat_map(|e| &e.deeds)
+        .filter(|d| !known.contains(*d))
+        .collect();
+    assert!(unknown.is_empty(), "{unknown:?}");
+    assert!(
+        t.epithets.iter().any(|e| e.min == 0),
+        "an epithet that always holds"
+    );
+    let untold: Vec<_> = (t.reign_ends.keys())
+        .filter(|k| !t.life.ends.contains_key(*k))
+        .collect();
+    assert!(untold.is_empty(), "{untold:?}");
+    use sim::FallReason::*;
+    for f in [NoHeir, CapitalLost, Usurped, NoCrownLand, Alive] {
+        assert!(t.fall_told.iter().any(|(r, _)| *r == f), "{f:?}");
+        // A dynasty without an heir falls after a death, which `ends` tells.
+        let told = t.life.falls.iter().any(|(r, _)| *r == f);
+        assert!(told || f == NoHeir, "{f:?}");
+    }
+}

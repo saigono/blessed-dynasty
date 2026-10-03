@@ -146,17 +146,17 @@ fn golden_seed_42_script_a() {
         [
             (
                 "Новое правление",
-                "Престол наследует Конрад.",
+                "После Ульриха Набожного на престол взошёл Конрад.",
                 hint("Основатель породнил наследника с домом своего барона."),
             ),
             (
                 "Новое правление",
-                "Престол наследует Хедвига. Страна спокойна: на троне осторожная королева.",
+                "Престол Конрада Недолгого унаследовала Хедвига. Страна вздохнула спокойно: новая королева не любила поспешных решений.",
                 None,
             ),
             (
                 "Мятеж дома Вейр",
-                "В тот год дом Вейр поднял мятеж в земле Вейр и отказался присягать короне.",
+                "Дом Вейр поднял мятеж в земле Вейр, но корона откупилась от него золотом и титулами.",
                 hint("Вассал, которому основатель доверил меч, привык к нему."),
             ),
         ]
@@ -462,7 +462,7 @@ fn the_death_of_a_grown_first_heir_is_told() {
         [crowned.clone(), (2, "Смерть наследника".into())]
     );
     let e = &c.entries[1];
-    assert_eq!(e.text, "Не стало первого в очереди на престол: h1.");
+    assert_eq!(e.text, "Умер h1, первый в очереди на престол.");
     assert_eq!(e.importance, data.sim.notable);
     assert!(e.snapshot.heirs.is_empty());
     // Dying at 13 (below sim.heir_death_age), the last heir of a living dynasty: not told.
@@ -857,13 +857,13 @@ fn lost_and_regained_provinces_are_told_with_the_hint_of_their_cause() {
             (
                 3,
                 "Потеря земли",
-                "Земля Берг потеряна, ею владеет Нордмарк.",
+                "Земля Берг отошла под руку Нордмарка.",
                 hint
             ),
             (
                 5,
                 "Земля возвращена",
-                "Земля Берг отошла к короне. Прежний владелец: Нордмарк.",
+                "Над замками земли Берг снова подняли королевское знамя, и Нордмарк смирился с потерей.",
                 hint
             ),
         ]
@@ -1221,4 +1221,167 @@ fn the_chronicle_counts_desertions_of_the_dynasty() {
         c.deserted,
         c.years
     );
+}
+
+/// Stage 22: what the chronicle tells takes nothing from the main rng. The same dynasty
+/// without any of the stage's texts (no `told`, variants, epithets, lives, epilogue) has
+/// the same entries, snapshots, rulers and end.
+#[test]
+fn the_texts_do_not_move_the_main_stream() {
+    let (g, end) = script_a(42);
+    let full = sim::run(end.clone(), &g.data, g.rng.clone());
+    let mut plain = g.data.clone();
+    let events = plain.events.iter_mut().chain(&mut plain.sim_events);
+    events
+        .flat_map(|e| &mut e.choices)
+        .for_each(|c| c.told.clear());
+    let t = &mut plain.sim.texts;
+    (t.variants, t.fall_told, t.epithets) = Default::default();
+    t.life = Default::default();
+    let bare = sim::run(end, &plain, g.rng.clone());
+    let outcome = |c: &Chronicle| {
+        let entries = c
+            .entries
+            .iter()
+            .map(|e| (e.tick, e.event.clone(), e.importance));
+        let snapshots: Vec<_> = c.entries.iter().map(|e| e.snapshot.clone()).collect();
+        let rulers = c
+            .rulers
+            .iter()
+            .map(|r| (r.name.clone(), r.start, r.end, r.cause.clone()));
+        (
+            (c.years, c.fall.clone(), c.kin.clone(), c.axes.clone()),
+            (
+                entries.collect::<Vec<_>>(),
+                snapshots,
+                rulers.collect::<Vec<_>>(),
+            ),
+        )
+    };
+    assert_eq!(outcome(&full), outcome(&bare));
+    assert!(
+        full.rulers
+            .iter()
+            .all(|r| !r.biography.is_empty() && !r.epithet.is_empty())
+    );
+    assert!(
+        bare.rulers
+            .iter()
+            .all(|r| r.biography.is_empty() && r.epithet.is_empty())
+    );
+    assert_ne!(texts(&full), texts(&bare));
+}
+
+/// Stage 22, golden: the chronicle of script A, seed 42, and every ruler's life, word for
+/// word, in `tests/golden/chronicle_42.txt`. `BLESS=1` writes the file anew.
+#[test]
+fn golden_texts_of_seed_42() {
+    let (g, end) = script_a(42);
+    let c = sim::run(end, &g.data, g.rng.clone());
+    let w = &g.world;
+    let mut out = String::new();
+    for e in &c.entries {
+        let date = e.tick.date(w.time_unit, w.start_year);
+        let hint = e.hint.as_deref().map_or(String::new(), |h| format!(" {h}"));
+        out += &format!("{date} {}. {}{hint}\n", e.title, e.text);
+    }
+    out += &format!("{}\n\n", c.epilogue);
+    for r in &c.rulers {
+        out += &format!("{}\n{}\n\n", r.full_name(), r.biography);
+    }
+    let path = dir("../crates/core/tests/golden/chronicle_42.txt");
+    if std::env::var("BLESS").is_ok() {
+        fs::write(&path, &out).unwrap();
+    }
+    let golden = fs::read_to_string(&path).unwrap_or_default();
+    assert!(
+        golden == out,
+        "the texts changed; BLESS=1 to accept:\n{out}"
+    );
+}
+
+/// A founder whose end world bears the marks of decisions tagged so, one decision each.
+fn founder_of(tags: &[&str], sex: Sex) -> ReignEnd {
+    let data = content();
+    let mut g = game(&data, 1);
+    g.world.ruler.sex = sex;
+    g.world.ruler.traits.clear();
+    for (i, tag) in tags.iter().enumerate() {
+        let mark = bd_core::state::CauseTag {
+            decision_idx: i,
+            cause_tag: tag.to_string(),
+            weight: Fx::from_int(1),
+        };
+        g.world
+            .marks
+            .entry(MarkKey::Axis(ax("treasury")))
+            .or_default()
+            .push(mark);
+    }
+    g.world.tick = Tick(20);
+    end_now(&g)
+}
+
+/// Stage 22: the epithet follows the rules of `sim.texts.epithets`: builds make a builder,
+/// wars a warrior, nothing at all a quiet one; a queen's is her own.
+#[test]
+fn the_epithet_follows_the_deeds() {
+    let data = content();
+    let epithet = |tags: &[&str], sex| {
+        let c = sim::run(founder_of(tags, sex), &data, Rng::from_seed(1));
+        c.rulers[0].epithet.clone()
+    };
+    let builds = ["fort_built", "road_built", "market_built"];
+    let wars = ["war_declared_by_crown", "war_attack", "war_storm"];
+    assert_eq!(epithet(&builds, Sex::Male), "Строитель");
+    assert_eq!(epithet(&builds, Sex::Female), "Строительница");
+    assert_eq!(epithet(&wars, Sex::Male), "Воитель");
+    // Three builds per two needed beat three wars per three.
+    assert_eq!(
+        epithet(&[&builds[..], &wars[..]].concat(), Sex::Male),
+        "Строитель"
+    );
+    assert_eq!(epithet(&[], Sex::Male), "Тихий");
+    assert_eq!(epithet(&["fort_built"], Sex::Male), "Тихий");
+}
+
+/// Stage 22: a life of 3-6 sentences for a ruler who abdicated, who died, and under whom
+/// the dynasty was usurped; it tells how he came to the throne and his epithet.
+#[test]
+fn a_life_is_told_for_an_abdication_a_death_and_a_usurpation() {
+    let data = content();
+    let sentences = |s: &str| s.matches(". ").count() + 1;
+    let mut end = founder_of(&["fort_built", "road_built"], Sex::Male);
+    end.cause = "abdication".into();
+    let c = sim::run(end, &data, Rng::from_seed(1));
+    let life = &c.rulers[0].biography;
+    assert!(
+        life.starts_with("Ульрих принял корону в 1187 году") || life.contains("досталась Ульриху"),
+        "{life}"
+    );
+    assert!(
+        life.contains("Строителем") && life.contains("отрёкся от престола"),
+        "{life}"
+    );
+    assert!((3..=6).contains(&sentences(life)), "{life}");
+    let end = founder_of(&[], Sex::Female);
+    let c = sim::run(end, &data, Rng::from_seed(2));
+    let life = &c.rulers[0].biography;
+    assert!(
+        life.to_lowercase().contains("болезн") && life.contains("Тихой"),
+        "{life}"
+    );
+    assert!((3..=6).contains(&sentences(life)), "{life}");
+    // The first heir is crowned, and the usurper takes the throne at once.
+    let mut end = founder_of(&[], Sex::Male);
+    end.world.flags.insert("usurped".into());
+    let c = sim::run(end, &data, Rng::from_seed(1));
+    assert_eq!((c.fall.clone(), c.rulers.len()), (FallReason::Usurped, 2));
+    let life = &c.rulers[1].biography;
+    assert!(
+        life.starts_with("Конрад") && life.contains("узурпатор сверг Конрада"),
+        "{life}"
+    );
+    assert!((3..=6).contains(&sentences(life)), "{life}");
+    assert!(c.epilogue.contains("Конрад"), "{}", c.epilogue);
 }

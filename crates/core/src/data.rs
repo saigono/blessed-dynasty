@@ -79,7 +79,9 @@ pub struct Data {
 
 /// Name pools (`data/names.ron`). A vassal house founded by `Effect::Grant` takes the first
 /// name of `vassals` not yet in the world; the name is also its id. `heirs` names sons,
-/// `daughters` daughters (sons' names when empty).
+/// `daughters` daughters (sons' names when empty). A name of a pool may come with its six
+/// cases, `stem|им|род|дат|вин|тв|пр` (endings after the stem, see `add_forms`); the pool
+/// keeps the nominative.
 #[derive(Debug, Clone, PartialEq, Deserialize, Default)]
 pub struct Names {
     pub rulers: Vec<String>,
@@ -87,6 +89,49 @@ pub struct Names {
     pub vassals: Vec<String>,
     #[serde(default)]
     pub daughters: Vec<String>,
+    /// The cases of other words, written so: provinces, neighbours, the preset's houses,
+    /// epithets.
+    #[serde(default)]
+    pub forms: Vec<String>,
+    /// The six cases (`text::CASES`) of every name written with them, by the nominative.
+    #[serde(skip)]
+    pub cases: BTreeMap<String, [String; 6]>,
+}
+
+impl Names {
+    /// Reads `stem|им|род|дат|вин|тв|пр` («Агнесс|а|ы|е|у|ой|е», «Ульрих||а|у|а|ом|е»,
+    /// «Отто||||||» for a name that does not decline) into `cases`; returns the nominative.
+    /// A spec without `|` is a nominative alone.
+    pub fn add_forms(&mut self, spec: &str) -> Result<String, String> {
+        let parts: Vec<&str> = spec.split('|').collect();
+        match parts.len() {
+            1 => return Ok(spec.to_string()),
+            7 => {}
+            _ => return Err(format!("{spec}: needs a stem and six endings")),
+        }
+        let forms = std::array::from_fn(|i| format!("{}{}", parts[0], parts[i + 1]));
+        let nominative = forms[0].clone();
+        self.cases.insert(nominative.clone(), forms);
+        Ok(nominative)
+    }
+
+    /// `name` in case `case` (`text::CASES`); a name not in `cases` word by word, a word not
+    /// there in the nominative.
+    pub fn declined(&self, name: &str, case: usize) -> String {
+        if let Some(forms) = self.cases.get(name) {
+            return forms[case].clone();
+        }
+        let words = name
+            .split(' ')
+            .map(|w| self.cases.get(w).map_or(w, |f| &f[case]));
+        words.collect::<Vec<_>>().join(" ")
+    }
+
+    /// The words of `names` that have no cases, for `data_lint`: they stay in the nominative.
+    pub fn undeclined<'a>(&self, names: impl IntoIterator<Item = &'a str>) -> Vec<&'a str> {
+        let words = names.into_iter().flat_map(|n| n.split(' '));
+        words.filter(|w| !self.cases.contains_key(*w)).collect()
+    }
 }
 
 /// Concurrent actions: the largest `slots` whose `threshold` the axis has reached. The
@@ -230,15 +275,23 @@ impl Data {
 
     /// Sets the name pools (`data/names.ron`). Names are unique within a pool.
     pub fn add_names(&mut self, text: &str) -> Result<(), DataError> {
-        let names: Names = parse(text)?;
-        for pool in [
-            &names.rulers,
-            &names.heirs,
-            &names.vassals,
-            &names.daughters,
-        ] {
+        let mut names: Names = parse(text)?;
+        let mut pools = [
+            std::mem::take(&mut names.rulers),
+            std::mem::take(&mut names.heirs),
+            std::mem::take(&mut names.vassals),
+            std::mem::take(&mut names.daughters),
+        ];
+        for pool in &mut pools {
+            for n in pool.iter_mut() {
+                *n = names.add_forms(n).map_err(DataError::Invalid)?;
+            }
             unique(pool.iter().map(|n| n.as_str()))?;
         }
+        for spec in names.forms.clone() {
+            names.add_forms(&spec).map_err(DataError::Invalid)?;
+        }
+        [names.rulers, names.heirs, names.vassals, names.daughters] = pools;
         self.names = names;
         Ok(())
     }
@@ -904,6 +957,63 @@ pub struct SimTexts {
     pub law_enacted: (String, String),
     #[serde(default)]
     pub law_repealed: (String, String),
+    /// More texts for the entries above, by field name («crowned», «province_lost», …): an
+    /// entry tells its own text or one of these (`text::pick`, never the main rng).
+    #[serde(default)]
+    pub variants: BTreeMap<String, Vec<String>>,
+    /// How the dynasty ended, told (`Chronicle.epilogue`): variants per fall reason;
+    /// `{ruler}`, the last ruler, `{year}`.
+    #[serde(default)]
+    pub fall_told: Vec<(FallReason, Vec<String>)>,
+    /// What a ruler is called after (`RulerRecord.epithet`), by the deeds of the reign.
+    #[serde(default)]
+    pub epithets: Vec<Epithet>,
+    /// The phrases of a ruler's life (`RulerRecord.biography`).
+    #[serde(default)]
+    pub life: Life,
+}
+
+/// An epithet and the deeds that earn it. A reign counts its deeds: the cause tags of the
+/// choices made and the actions started, `trait:<id>` of each trait of the ruler, `law` per
+/// law brought in, `province_gained`, `province_lost`, `heir_died` (the founder: his tags,
+/// traits and laws). The epithet with the most of its `deeds` per `min` wins, the first on a
+/// tie; one of `min: 0` always holds and loses to any other that holds.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Epithet {
+    /// Of a king, of a queen.
+    pub name: (String, String),
+    pub deeds: Vec<String>,
+    pub min: u32,
+    /// Only for a reign of at most so many years.
+    #[serde(default)]
+    pub years: Option<u32>,
+    /// The sentence of the life that tells it, variants; `{ruler}`, `{epithet}`.
+    pub told: Vec<String>,
+}
+
+/// The phrases of a life, each a list of variants: how the ruler came to the throne (the
+/// first that applies: `founder`, `regency` for a child, `designated` over the rightful heir,
+/// `contested`, `lawful` under a law `{law}`), the epithet's sentence, the main entries of the
+/// reign (`deed`, `same_year`: `{deed}` the first sentence of an entry, `{year}`), how it ended (`ends` by
+/// the cause of `sim.texts.reign_ends`, else `falls` by the fall under the ruler). `{ruler}`
+/// is the ruler, `{year}` the year the phrase is about, `{years}` the years of the reign in
+/// words of `years` (one, few, many).
+#[derive(Debug, Clone, PartialEq, Deserialize, Default)]
+pub struct Life {
+    pub founder: Vec<String>,
+    pub regency: Vec<String>,
+    pub designated: Vec<String>,
+    pub contested: Vec<String>,
+    pub lawful: Vec<String>,
+    pub deed: Vec<String>,
+    /// `deed` for an entry of the same year as the one told before it.
+    #[serde(default)]
+    pub same_year: Vec<String>,
+    /// How many entries of the reign a life tells, the most important first.
+    pub deeds: usize,
+    pub ends: BTreeMap<String, Vec<String>>,
+    pub falls: Vec<(FallReason, Vec<String>)>,
+    pub years: (String, String, String),
 }
 
 #[derive(Debug)]

@@ -728,8 +728,9 @@ fn known_axis(data: &Data, a: &AxisId) -> Result<(), String> {
     }
 }
 
-/// Texts may contain `{province}`, `{neighbour}`, `{heir}`, `{ruler}`, `{vassal}`,
-/// `{war_target}`; `Game` fills them in for display.
+/// Texts may contain `{province}`, `{neighbour}`, `{heir}`, `{ruler}`, `{vassal}` (also
+/// `{house}`), `{war_target}`, each also in a case and with words agreeing with its sex
+/// (`text::fill`); `Game` fills them in for display.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Event {
     pub id: String,
@@ -786,6 +787,11 @@ pub struct Choice {
     pub effects: Vec<Effect>,
     pub cause_tag: String,
     pub hint: Option<String>,
+    /// How the chronicle tells the choice made: the past tense, 1-3 sentences, the names of
+    /// the event in their cases and agreeing with sex (`text::fill`, `Game::told`) and
+    /// `{year}`. Empty: the event's own text.
+    #[serde(default)]
+    pub told: String,
 }
 
 impl Event {

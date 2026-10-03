@@ -1,7 +1,7 @@
 //! The dynasty after the founder: the same `Game` year by year, choices by `AutoChooser`,
 //! until the dynasty falls or `sim.max_years` pass. The result is a `Chronicle`.
 
-use crate::data::{Data, LawDef, SuccessionRule, TraitRule};
+use crate::data::{Data, Epithet, LawDef, SuccessionRule, TraitRule};
 use crate::fx::Fx;
 use crate::game::{ActionId, Game, PendingEvent, ReignEnd, Step};
 use crate::rng::Rng;
@@ -11,6 +11,7 @@ use crate::state::{
     Axes, AxisId, CauseTag, HeirStatus, Holder, Kin, MarkKey, NeighbourId, ProvinceId, Ruler, Sex,
     Vassal, VassalId, World,
 };
+use crate::text;
 use crate::time::Tick;
 use crate::war::WarStage;
 use serde::{Deserialize, Serialize};
@@ -37,6 +38,9 @@ pub struct Chronicle {
     /// The graph at the end of every simulated year; only with `Data.influences`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub nodes: Vec<NodeYear>,
+    /// How the dynasty ended, told (`sim.texts.fall_told`); empty without a text.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub epilogue: String,
 }
 
 /// The axes and the lagged sources of the influence graph after a year's tick.
@@ -106,16 +110,50 @@ pub struct RulerRecord {
     /// Crowned as the designated heir over the rightful one (`World.designated`).
     #[serde(default)]
     pub designated: bool,
+    /// What he is called after, by the deeds of the reign (`sim.texts.epithets`): «Строитель».
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub epithet: String,
+    /// His life in a paragraph (`sim.texts.life`): how he came to the throne, the epithet,
+    /// the main entries of the reign, how it ended.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub biography: String,
+}
+
+impl RulerRecord {
+    /// «Ульрих Строитель», or the name alone.
+    pub fn full_name(&self) -> String {
+        match self.epithet.is_empty() {
+            true => self.name.clone(),
+            false => format!("{} {}", self.name, self.epithet),
+        }
+    }
+}
+
+/// What a reign leaves for its ruler's life (`finish`): the sex, how he came to the throne,
+/// the deeds counted for the epithet (`data::Epithet`), the first entry of the reign.
+struct Reign {
+    sex: Sex,
+    accession: String,
+    deeds: BTreeMap<String, u32>,
+    from: usize,
+}
+
+impl Reign {
+    fn count(&mut self, deed: &str) {
+        *self.deeds.entry(deed.to_string()).or_default() += 1;
+    }
 }
 
 /// Plays the dynasty from the end of the founder's reign. Simulation events
 /// (`Data.sim_events`) join the pool; nothing the automaton does is a player decision, so
 /// it marks nothing. An unfinished war starts over from its declaration under the new ruler,
-/// since the deferred queue ends with the reign.
+/// since the deferred queue ends with the reign. The variants of the texts come from an rng
+/// of their own, seeded by a copy of `rng` (`text::pick`): the main stream stays as it was.
 pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
     let mut data = data.clone();
     data.events.extend(data.sim_events.clone());
     let s = data.sim.clone();
+    let salt = rng.clone().next_u64();
     let founder = record(&reign_end.world.ruler);
     let mut c = Chronicle {
         entries: Vec::new(),
@@ -130,8 +168,11 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
         axes: Axes::new(),
         deserted: 0,
         nodes: Vec::new(),
+        epilogue: String::new(),
     };
     let mut world = reign_end.world;
+    let (reign, told) = founder_reign(&world, &data, salt);
+    finish(&mut c, reign, told, &world, &data, salt);
     let deserted = world.deserted;
     died(&mut world, &data, c.rulers[0].cause.as_deref());
     let mut g = Game {
@@ -158,28 +199,30 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
     // told only if no heir comes after and the dynasty ends for want of one.
     let mut last_heir: Option<(usize, ChronicleEntry)> = None;
     c.fall = 'dynasty: loop {
-        if !crown(&mut g, &mut c) {
+        let Some(mut reign) = crown(&mut g, &mut c, salt) else {
             if let Some((i, e)) = last_heir {
                 c.entries.insert(i, e);
             }
             break FallReason::NoHeir;
-        }
+        };
         let auto = AutoChooser::for_ruler(&g.data, &g.world.ruler);
-        loop {
+        let fall = loop {
             if let Some(fall) = fallen(&g) {
-                break 'dynasty fall;
+                break fall;
             }
             if g.world.tick.year(g.world.time_unit) >= s.max_years {
-                break 'dynasty FallReason::Alive;
+                break FallReason::Alive;
             }
             if g.world.ruler.age >= s.regency_age {
                 g.world.flags.remove(&s.regency_flag);
             }
             if g.world.tick.0.is_multiple_of(tpy)
                 && let Some((id, target)) = auto.action(&mut g)
-            {
                 // Listed by available_actions; only the slot may be gone.
-                let _ = g.start(&id, target, false);
+                && g.start(&id, target, false).is_ok()
+                && let Some(a) = g.data.actions.iter().find(|a| a.id == id)
+            {
+                reign.count(&a.cause_tag);
             }
             let holders: Vec<Holder> = g
                 .world
@@ -204,15 +247,15 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
             // Within a tick only the yearly age risk takes an heir; events do on resolve.
             if let Some(h) = first.filter(|h| g.world.heir_index(h.id).is_none()) {
                 let (title, text) = &s.texts.heir_died;
-                let told = (
-                    title.replace("{heir}", &h.name),
-                    text.replace("{heir}", &h.name),
-                );
+                let text = variant(&s.texts, "heir_died", text, salt, c.entries.len());
+                let named = [("heir", h.name.as_str(), Some(h.sex))];
+                let fill = |t: &str| text::fill(t, &g.data.names, &named);
                 let causes = causes(&g.world, [MarkKey::Heir(h.id)].into());
-                let e = entry(&g, told, s.notable, causes);
+                let e = entry(&g, (fill(title), fill(&text)), s.notable, causes);
                 // `h` is from before the tick; heirs age a year before the death roll.
                 if h.age + 1 >= s.heir_death_age {
                     c.entries.push(e);
+                    reign.count("heir_died");
                 } else if g.world.heirs.is_empty() {
                     last_heir = Some((c.entries.len(), e));
                 }
@@ -233,9 +276,11 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
                         (causes(&g.world, keys), chain(&g.data, &g.world, e))
                     });
                     let idx = auto.choose(&mut g, &v.choices);
+                    let past = g.told(idx).unwrap_or(v.text);
+                    reign.count(&v.choices[idx].cause_tag);
                     g.resolve(idx, false).expect("a listed choice");
                     if let Some((causes, chain)) = told {
-                        let e = entry(&g, (v.title, v.text), v.importance, causes);
+                        let e = entry(&g, (v.title, past), v.importance, causes);
                         c.entries.push(ChronicleEntry {
                             event: Some(v.event_id),
                             chain,
@@ -247,24 +292,184 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
                     died(&mut g.world, &g.data, Some(&end.cause));
                     let last = c.rulers.last_mut().expect("a ruler reigned");
                     (last.end, last.cause) = (end.tick, Some(end.cause));
-                    break;
+                    let told = reign_deeds(&c, reign.from, &g, salt);
+                    finish(&mut c, reign, told, &g.world, &g.data, salt);
+                    continue 'dynasty;
                 }
             }
-            province_entries(&g, &holders, &mut c);
-            law_entry(&g, law, &mut c);
-            laws_entry(&g, &laws, &mut c);
-        }
+            province_entries(&g, &holders, &mut c, &mut reign, salt);
+            law_entry(&g, law, &mut c, &mut reign, salt);
+            laws_entry(&g, &laws, &mut c, &mut reign, salt);
+        };
+        // The dynasty ends under a living ruler.
+        c.rulers.last_mut().expect("a ruler reigned").end = g.world.tick;
+        c.fall = fall.clone();
+        let told = reign_deeds(&c, reign.from, &g, salt);
+        finish(&mut c, reign, told, &g.world, &g.data, salt);
+        break fall;
     };
     let w = &g.world;
     c.years = w.tick.year(w.time_unit);
     c.kin = w.kin.clone();
     c.axes = w.axes.clone();
     c.deserted = w.deserted - deserted;
-    let last = c.rulers.last_mut().expect("a ruler reigned");
-    if last.cause.is_none() {
-        last.end = w.tick;
-    }
+    let last = c.rulers.last().expect("a ruler reigned");
+    let told = s.texts.fall_told.iter().find(|(f, _)| *f == c.fall);
+    let told = text::pick(told.map_or(&[][..], |(_, v)| v), salt, EPILOGUE);
+    let named = [("ruler", last.name.as_str(), Some(g.world.ruler.sex))];
+    c.epilogue = text::fill(told, &g.data.names, &named).replace("{year}", &w.year().to_string());
     c
+}
+
+/// Namespaces of `text::pick` beside the entries (numbered by their index).
+const LIFE: u64 = 1 << 40;
+const EPILOGUE: u64 = 1 << 48;
+
+/// The text of entry kind `key`: `own` or one of its `SimTexts.variants`, by the entry's
+/// index `n`.
+fn variant(t: &crate::data::SimTexts, key: &str, own: &str, salt: u64, n: usize) -> String {
+    let all: Vec<String> = std::iter::once(own.to_string())
+        .chain(t.variants.get(key).into_iter().flatten().cloned())
+        .collect();
+    text::pick(&all, salt, n as u64).to_string()
+}
+
+/// The founder's reign as `finish` takes it, from the world at its end: his deeds by the
+/// cause tags of his decisions (the marks they left), his traits and the laws he left in
+/// force; the hints of his heaviest decisions as sentences.
+fn founder_reign(w: &World, d: &Data, salt: u64) -> (Reign, Vec<String>) {
+    let mut by: BTreeMap<usize, (Fx, &str)> = BTreeMap::new();
+    for t in w.marks.values().flatten() {
+        let m = by.entry(t.decision_idx).or_insert((Fx(0), &t.cause_tag));
+        m.0 = m.0 + t.weight;
+    }
+    let life = &d.sim.texts.life;
+    let named = [("ruler", w.ruler.name.as_str(), Some(w.ruler.sex))];
+    let year = (w.start_year + w.ruler.reign_start.year(w.time_unit)).to_string();
+    let accession = text::pick(&life.founder, salt, LIFE);
+    let mut reign = Reign {
+        sex: w.ruler.sex,
+        accession: text::fill(accession, &d.names, &named).replace("{year}", &year),
+        deeds: BTreeMap::new(),
+        from: 0,
+    };
+    by.values().for_each(|(_, tag)| reign.count(tag));
+    w.laws.keys().for_each(|_| reign.count("law"));
+    let mut heaviest: Vec<_> = by.into_values().collect();
+    heaviest.sort_by_key(|(weight, _)| Reverse(*weight));
+    let mut told: Vec<String> = vec![];
+    for (_, tag) in heaviest {
+        let hint = d.hints.get(tag).map(|h| format!("{}.", text::capital(h)));
+        if let Some(h) = hint.filter(|h| !told.contains(h)) {
+            told.push(h);
+        }
+    }
+    told.truncate(life.deeds);
+    (reign, told)
+}
+
+/// The main entries of the reign from entry `from` on, as sentences of `life.deed` (of
+/// `life.same_year` for one of the year before it): the most important first (the earliest
+/// on a tie), then in order of time.
+fn reign_deeds(c: &Chronicle, from: usize, g: &Game, salt: u64) -> Vec<String> {
+    let (d, w) = (&g.data, &g.world);
+    let life = &d.sim.texts.life;
+    let mut main: Vec<usize> = (from..c.entries.len()).collect();
+    main.sort_by_key(|i| (Reverse(c.entries[*i].importance), *i));
+    main.truncate(life.deeds);
+    main.sort();
+    let lower = |s: &str| {
+        // The first word stays as it is when it is a name.
+        let word = s.split([' ', ',', '.']).next().unwrap_or_default();
+        let named =
+            d.names.cases.contains_key(word) || w.provinces.values().any(|p| p.name == word);
+        match named {
+            true => s.to_string(),
+            false => s
+                .chars()
+                .next()
+                .into_iter()
+                .flat_map(char::to_lowercase)
+                .chain(s.chars().skip(1))
+                .collect(),
+        }
+    };
+    let mut last = None;
+    (main.into_iter())
+        .map(|i| {
+            let e = &c.entries[i];
+            let deed = lower(text::first_sentence(&e.text));
+            let deed = deed.trim_end_matches('.');
+            let year = e.tick.date(w.time_unit, w.start_year);
+            let again = last.replace(year.clone()) == Some(year.clone());
+            let phrases = match again && !life.same_year.is_empty() {
+                true => &life.same_year,
+                false => &life.deed,
+            };
+            let phrase = text::pick(phrases, salt, LIFE + i as u64);
+            phrase.replace("{deed}", deed).replace("{year}", &year)
+        })
+        .collect()
+}
+
+/// The last ruler's life, his reign over (`end` and `cause` set; a fall under him is
+/// `c.fall`): the epithet by his deeds and the paragraph of `life`; `{epithet}` names it.
+fn finish(c: &mut Chronicle, reign: Reign, told: Vec<String>, w: &World, d: &Data, salt: u64) {
+    let (t, n) = (&d.sim.texts, c.rulers.len() as u64 * 16);
+    let r = c.rulers.last_mut().expect("a ruler reigned");
+    let unit = w.time_unit;
+    let years = (r.end.0 - r.start.0) / unit.ticks_per_year;
+    let mut deeds = reign.deeds;
+    for t in &r.traits {
+        *deeds.entry(format!("trait:{t}")).or_default() += 1;
+    }
+    let score = |e: &Epithet| {
+        let count: u32 = e
+            .deeds
+            .iter()
+            .map(|k| deeds.get(k).copied().unwrap_or(0))
+            .sum();
+        let fits = count >= e.min && e.years.is_none_or(|y| years <= y);
+        fits.then(|| count * 1000 / e.min.max(1))
+    };
+    let mut best: Option<(u32, &Epithet)> = None;
+    for e in &t.epithets {
+        if let Some(s) = score(e).filter(|s| best.is_none_or(|(b, _)| *s > b)) {
+            best = Some((s, e));
+        }
+    }
+    let female = reign.sex == Sex::Female;
+    let (name, why) = best.map_or(("", ""), |(_, e)| {
+        let name = if female { &e.name.1 } else { &e.name.0 };
+        (name.as_str(), text::pick(&e.told, salt, LIFE + n + 2))
+    });
+    r.epithet = name.to_string();
+    let life = &t.life;
+    let end = match &r.cause {
+        Some(cause) => life.ends.get(cause),
+        None => life
+            .falls
+            .iter()
+            .find(|(f, _)| *f == c.fall)
+            .map(|(_, v)| v),
+    };
+    let end = text::pick(end.map_or(&[][..], |v| v), salt, LIFE + n + 1);
+    let phrases = std::iter::once(reign.accession.as_str())
+        .chain([why])
+        .chain(told.iter().map(String::as_str))
+        .chain([end]);
+    let named = [
+        ("ruler", r.name.as_str(), Some(reign.sex)),
+        ("epithet", name, Some(reign.sex)),
+    ];
+    let year = (w.start_year + r.end.year(unit)).to_string();
+    let fill = |p: &str| {
+        text::fill(p, &d.names, &named)
+            .replace("{year}", &year)
+            .replace("{years}", &text::plural(years, &life.years))
+    };
+    let all: Vec<String> = phrases.filter(|p| !p.is_empty()).map(fill).collect();
+    r.biography = all.join(" ");
 }
 
 /// The next ruler: the heir `successor` names. He keeps his name unless it is the newborn placeholder, then one from
@@ -342,11 +547,10 @@ pub fn next_heir(w: &World) -> Option<usize> {
 /// over the law (`heirs.designate_dispute`), a child (`heirs.dispute_minor`) and a weak
 /// heir (`heirs.dispute_weak`); a child
 /// reigns under the regency flag, the other heirs become the collateral line, the flags of
-/// the last reign (`sim.reign_flags`) go. False: no heir.
-fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
-    let Some(ruler) = succession(&g.world, &g.data, &mut g.rng) else {
-        return false;
-    };
+/// the last reign (`sim.reign_flags`) go. None: no heir; else the new reign, told how it
+/// began (`sim.texts.life`).
+fn crown(g: &mut Game, c: &mut Chronicle, salt: u64) -> Option<Reign> {
+    let ruler = succession(&g.world, &g.data, &mut g.rng)?;
     let (d, w, rng) = (&g.data, &mut g.world, &mut g.rng);
     let i = successor(w, d).expect("succession found one");
     let lawful = rightful(w, d) == Some(i);
@@ -412,12 +616,35 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
         w.flags.insert(d.sim.regency_flag.clone());
     }
     let cheer = coronation(w, d, heir.claim, &ruler);
-    let (title, text) = &d.sim.texts.crowned;
-    let fill = |s: &String| s.replace("{ruler}", &ruler.name);
-    let mut told = (fill(title), fill(text));
+    let t = &d.sim.texts;
+    let prev = c.rulers.last().expect("the founder reigned").full_name();
+    let named = [
+        ("ruler", ruler.name.as_str(), Some(ruler.sex)),
+        ("prev", &prev, Some(w.ruler.sex)),
+    ];
+    let fill = |s: &str| text::fill(s, &d.names, &named);
+    let (title, text) = &t.crowned;
+    let mut told = (
+        fill(title),
+        fill(&variant(t, "crowned", text, salt, c.entries.len())),
+    );
     if let Some(cheer) = cheer {
         told.1 = format!("{} {cheer}", told.1);
     }
+    let life = &t.life;
+    let contested = w.flags.contains(&d.abdication.contested_flag);
+    let accession = match () {
+        _ if ruler.age < d.sim.regency_age => &life.regency,
+        _ if !lawful => &life.designated,
+        _ if contested => &life.contested,
+        _ => &life.lawful,
+    };
+    let n = LIFE + c.rulers.len() as u64 * 16;
+    let law = d.heirs.law(w).map_or("", |l| &l.name);
+    let accession = (fill(text::pick(accession, salt, n)))
+        .replace("{law}", law)
+        .replace("{year}", &year.to_string());
+    let sex = ruler.sex;
     c.rulers.push(RulerRecord {
         designated: !lawful,
         ..record(&ruler)
@@ -428,10 +655,19 @@ fn crown(g: &mut Game, c: &mut Chronicle) -> bool {
     c.entries.push(entry(g, told, g.data.sim.notable, causes));
     if !lands.is_empty() {
         let (title, text) = &g.data.sim.texts.partition;
-        let told = (title.clone(), text.replace("{lands}", &lands.join(", ")));
+        let text = variant(&g.data.sim.texts, "partition", text, salt, c.entries.len());
+        let told = (
+            title.clone(),
+            ruled(g, &text).replace("{lands}", &lands.join(", ")),
+        );
         c.entries.push(entry(g, told, g.data.sim.notable, vec![]));
     }
-    true
+    Some(Reign {
+        sex,
+        accession,
+        deeds: BTreeMap::new(),
+        from: c.entries.len(),
+    })
 }
 
 /// The axes at a coronation (`Data.coronation`, see `CoronationRules`, then a queen's
@@ -551,6 +787,8 @@ fn record(r: &Ruler) -> RulerRecord {
         end: r.reign_start,
         cause: None,
         designated: false,
+        epithet: String::new(),
+        biography: String::new(),
     }
 }
 
@@ -574,29 +812,33 @@ fn fallen(g: &Game) -> Option<FallReason> {
 
 /// An entry for every province that left the realm (crown and vassals) or joined it since
 /// `holders` (in province order).
-fn province_entries(g: &Game, holders: &[Holder], c: &mut Chronicle) {
+fn province_entries(g: &Game, holders: &[Holder], c: &mut Chronicle, r: &mut Reign, salt: u64) {
     let t = &g.data.sim.texts;
     let w = &g.world;
     for (p, was) in w.provinces.values().zip(holders) {
-        let ((title, text), foreign) = match (was, &p.holder) {
+        let ((title, text), foreign, key) = match (was, &p.holder) {
             (Holder::Foreign(_), Holder::Foreign(_)) => continue,
-            (_, Holder::Foreign(n)) => (&t.province_lost, n),
-            (Holder::Foreign(n), _) => (&t.province_gained, n),
+            (_, Holder::Foreign(n)) => (&t.province_lost, n, "province_lost"),
+            (Holder::Foreign(n), _) => (&t.province_gained, n, "province_gained"),
             _ => continue,
         };
         let neighbour = w.neighbours.get(foreign).map_or("", |n| &n.name);
-        let fill = |s: &String| {
-            s.replace("{province}", &p.name)
-                .replace("{neighbour}", neighbour)
-        };
+        let named = [
+            ("province", p.name.as_str(), None),
+            ("neighbour", neighbour, None),
+            ("ruler", w.ruler.name.as_str(), Some(w.ruler.sex)),
+        ];
+        let fill = |s: &str| text::fill(s, &g.data.names, &named);
         let causes = causes(w, [MarkKey::Province(p.id.clone())].into());
-        let told = (fill(title), fill(text));
+        let text = variant(t, key, text, salt, c.entries.len());
+        let told = (fill(title), fill(&text));
         c.entries.push(entry(g, told, g.data.sim.notable, causes));
+        r.count(key);
     }
 }
 
 /// An entry when the law in force is no longer `was`.
-fn law_entry(g: &Game, was: Option<String>, c: &mut Chronicle) {
+fn law_entry(g: &Game, was: Option<String>, c: &mut Chronicle, r: &mut Reign, salt: u64) {
     let Some(law) = g
         .data
         .heirs
@@ -605,26 +847,40 @@ fn law_entry(g: &Game, was: Option<String>, c: &mut Chronicle) {
     else {
         return;
     };
-    let (title, text) = &g.data.sim.texts.law_changed;
-    let told = (title.clone(), text.replace("{law}", &law.name));
+    let t = &g.data.sim.texts;
+    let (title, text) = &t.law_changed;
+    let text = variant(t, "law_changed", text, salt, c.entries.len());
+    let told = (title.clone(), ruled(g, &text).replace("{law}", &law.name));
     c.entries.push(entry(g, told, g.data.sim.notable, vec![]));
+    r.count("law");
+}
+
+/// `s` with the ruler of `g` filled in.
+fn ruled(g: &Game, s: &str) -> String {
+    let r = &g.world.ruler;
+    text::fill(s, &g.data.names, &[("ruler", &r.name, Some(r.sex))])
 }
 
 /// An entry for every law other than of succession that came into force since `was` (the
 /// laws then in force), and for every one repealed with none of its group in its place.
-fn laws_entry(g: &Game, was: &[String], c: &mut Chronicle) {
+fn laws_entry(g: &Game, was: &[String], c: &mut Chronicle, r: &mut Reign, salt: u64) {
     let (d, t) = (&g.data, &g.data.sim.texts);
     let now: Vec<&LawDef> = d.laws_in_force(&g.world).collect();
     let succession = |l: &LawDef| d.heirs.laws.iter().any(|h| h.flag == l.id);
     let new = (now.iter()).filter(|l| !was.contains(&l.id) && !succession(l));
-    let new = new.map(|l| (&t.law_enacted, *l));
+    let new = new.map(|l| ((&t.law_enacted, "law_enacted"), *l));
     let gone = (was.iter().filter_map(|id| d.law(id))).filter(|l| {
         !now.iter()
             .any(|n| n.id == l.id || !l.group.is_empty() && n.group == l.group)
     });
-    for ((title, text), l) in new.chain(gone.map(|l| (&t.law_repealed, l))) {
-        let told = (title.clone(), text.replace("{law}", &l.name));
+    let gone = gone.map(|l| ((&t.law_repealed, "law_repealed"), l));
+    for (((title, text), key), l) in new.chain(gone) {
+        let text = variant(t, key, text, salt, c.entries.len());
+        let told = (title.clone(), ruled(g, &text).replace("{law}", &l.name));
         c.entries.push(entry(g, told, d.sim.notable, vec![]));
+        if key == "law_enacted" {
+            r.count("law");
+        }
     }
 }
 

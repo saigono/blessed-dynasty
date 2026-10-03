@@ -82,6 +82,7 @@ fn event(id: &str, effects: Vec<Effect>) -> Event {
             effects,
             cause_tag: id.into(),
             hint: None,
+            told: String::new(),
         }],
     }
 }

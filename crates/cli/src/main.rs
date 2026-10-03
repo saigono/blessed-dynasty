@@ -841,6 +841,17 @@ fn print_dynasty(g: &Game, c: &sim::Chronicle, s: &score::Score) {
         let hint = e.hint.as_deref().map_or(String::new(), |h| format!(" {h}"));
         println!("  {date} {}. {}{hint}", e.title, e.text);
     }
+    if !c.epilogue.is_empty() {
+        println!("  {}", c.epilogue);
+    }
+    println!("Правители:");
+    for r in &c.rulers {
+        let years = |t: bd_core::time::Tick| t.date(w.time_unit, w.start_year);
+        println!("  {}, {}–{}", r.full_name(), years(r.start), years(r.end));
+        if !r.biography.is_empty() {
+            println!("    {}", r.biography);
+        }
+    }
     println!(
         "Династия: {} лет, правителей {}, конец {:?}",
         c.years,
@@ -1231,6 +1242,7 @@ mod tests {
             axes: Default::default(),
             deserted: 0,
             nodes: vec![],
+            epilogue: String::new(),
         };
         let war = |a, b| ("war".to_string(), a, b);
         let want = [war(Some(5), Some(5)), war(Some(35), None)];

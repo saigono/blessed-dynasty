@@ -662,40 +662,8 @@ impl Game {
 
     fn view(&self, p: &PendingEvent) -> EventView {
         let e = find_event(&self.data, &p.event_id).expect("pending events exist");
-        let w = &self.world;
-        let name = match &p.target {
-            Some(Target::Province(id)) => w.provinces.get(id).map(|x| ("{province}", &x.name)),
-            Some(Target::Neighbour(id)) => w.neighbours.get(id).map(|x| ("{neighbour}", &x.name)),
-            Some(Target::Heir(id)) => (w.heir_index(*id)).map(|i| ("{heir}", &w.heirs[i].name)),
-            _ => None,
-        };
-        let behind = (p.neighbour.as_ref()).and_then(|n| w.neighbours.get(n));
-        let vassal = match &p.target {
-            Some(Target::Province(id)) => match w.provinces.get(id).map(|p| &p.holder) {
-                Some(Holder::Vassal(v)) => w.vassals.get(v),
-                _ => None,
-            },
-            _ => None,
-        };
-        let war_target = (w.war.as_ref())
-            .and_then(|x| x.target.as_ref())
-            .and_then(|id| w.provinces.get(id));
-        let names = [
-            Some(("{ruler}", &w.ruler.name)),
-            name,
-            behind.map(|n| ("{neighbour}", &n.name)),
-            vassal.map(|v| ("{vassal}", &v.name)),
-            war_target.map(|p| ("{war_target}", &p.name)),
-        ];
-        let fill = |s: &str| {
-            names
-                .iter()
-                .flatten()
-                .fold(s.to_string(), |s, (k, v)| match s.contains(k) {
-                    true => s.replace(k, v),
-                    false => s,
-                })
-        };
+        let named = self.named(p);
+        let fill = |s: &str| crate::text::fill(s, &self.data.names, &named);
         let choices = e.choices.iter().map(|c| Choice {
             text: fill(&c.text),
             hint: c.hint.as_deref().map(fill),
@@ -709,6 +677,52 @@ impl Game {
             target: p.target.clone(),
             choices: choices.collect(),
         }
+    }
+
+    /// The names an event's texts may use (`Event`): the ruler, the target, the neighbour
+    /// behind it, the holder of a target province as `vassal` and `house`, the province the
+    /// war is fought for.
+    fn named(&self, p: &PendingEvent) -> Vec<crate::text::Named<'_>> {
+        let w = &self.world;
+        let mut named = vec![("ruler", w.ruler.name.as_str(), Some(w.ruler.sex))];
+        match &p.target {
+            Some(Target::Province(id)) => {
+                let p = w.provinces.get(id);
+                named.extend(p.map(|x| ("province", x.name.as_str(), None)));
+                if let Some(Holder::Vassal(v)) = p.map(|p| &p.holder)
+                    && let Some(v) = w.vassals.get(v)
+                {
+                    named.extend([("vassal", v.name.as_str(), None), ("house", &v.name, None)]);
+                }
+            }
+            Some(Target::Neighbour(id)) => {
+                let n = w.neighbours.get(id);
+                named.extend(n.map(|x| ("neighbour", x.name.as_str(), None)));
+            }
+            Some(Target::Heir(id)) => {
+                let h = w.heir_index(*id).map(|i| &w.heirs[i]);
+                named.extend(h.map(|h| ("heir", h.name.as_str(), Some(h.sex))));
+            }
+            None => {}
+        }
+        let behind = (p.neighbour.as_ref()).and_then(|n| w.neighbours.get(n));
+        named.extend(behind.map(|n| ("neighbour", n.name.as_str(), None)));
+        let war_target = (w.war.as_ref())
+            .and_then(|x| x.target.as_ref())
+            .and_then(|id| w.provinces.get(id));
+        named.extend(war_target.map(|p| ("war_target", p.name.as_str(), None)));
+        named
+    }
+
+    /// How the chronicle tells choice `idx` of the event waiting (`Choice.told`), filled in
+    /// as the world stands now, before the choice; None without an event or a `told`.
+    pub fn told(&self, idx: usize) -> Option<String> {
+        let p = self.pending_event.as_ref()?;
+        let c = find_event(&self.data, &p.event_id)?.choices.get(idx)?;
+        let named = self.named(p);
+        let year = (self.world.year()).to_string();
+        let told = crate::text::fill(&c.told, &self.data.names, &named);
+        (!told.is_empty()).then(|| told.replace("{year}", &year))
     }
 }
 
@@ -964,6 +978,7 @@ mod tests {
                 effects,
                 cause_tag: id.into(),
                 hint: None,
+                told: String::new(),
             }],
         }
     }

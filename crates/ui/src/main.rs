@@ -4,9 +4,10 @@
 mod chronicle;
 mod map;
 
-use bd_core::data::{Data, ENACT, REPEAL};
+use bd_core::data::{AxisDef, Data, ENACT, LawDef, REPEAL};
 use bd_core::fx::Fx;
 use bd_core::game::{EventView, Game, GameError, ReignEnd, Step};
+use bd_core::graph::{self, Push, Sight};
 use bd_core::link;
 use bd_core::rng::Rng;
 use bd_core::rules::{Action, ActionTarget, Effect, HeirOp, ProvinceField, Target};
@@ -86,6 +87,10 @@ enum Cmd {
 
 /// A line of the journal or of an effect list; `Some(true)` good, `Some(false)` bad.
 type Line = (String, Option<bool>);
+
+/// Before the title of a symptom of the graph (`Event.omen`), in the year's summary and the
+/// chronicle.
+const OMEN: &str = "Знамение. ";
 
 /// The start of the treasury line every year of the journal has.
 const MONEY: &str = "Казна:";
@@ -238,7 +243,7 @@ impl App {
                     // A symptom of a loop of the graph (stage 20) is marked so.
                     let events = self.game.as_ref().map_or(&[][..], |g| &g.data.events);
                     let omen = events.iter().any(|e| e.id == v.event_id && e.omen);
-                    let mark = if omen { "Знамение. " } else { "" };
+                    let mark = if omen { OMEN } else { "" };
                     self.chosen
                         .push((format!("{mark}«{}»: {}", v.title, c.text), None));
                 }
@@ -1081,21 +1086,14 @@ fn side(ui: &mut Ui, g: &Game) {
         war_panel(ui, g, war);
     }
     heading(ui, "Состояние");
-    Grid::new("axes").show(ui, |ui| {
-        for a in d.axes.iter().filter(|a| !a.hidden) {
-            let v = w.axes[&a.id];
-            bar(ui, axis_name(d, &a.id), v, a.min, a.max, &round(v));
-        }
-    });
+    axes_panel(ui, g);
     if let Some((line, hint)) = overreach(g) {
         ui.label(RichText::new(line).color(RUBRIC));
         ui.label(RichText::new(hint).small().color(FG2));
     }
-    // The laws in force; the one of succession is told with the heirs.
-    let succession = |id: &String| d.heirs.laws.iter().any(|h| h.flag == *id);
-    let laws: Vec<_> = (d.laws_in_force(w))
-        .filter(|l| !succession(&l.id))
-        .collect();
+    // The laws in force and what each does to the graph; succession too, also told with
+    // the heirs.
+    let laws: Vec<_> = d.laws_in_force(w).collect();
     if !laws.is_empty() {
         heading(ui, "Законы");
         for l in laws {
@@ -1104,6 +1102,10 @@ fn side(ui: &mut Ui, g: &Game) {
                 ui.strong(&l.name);
                 ui.label(&l.description);
             });
+            let holds = holds(d, l);
+            if !holds.is_empty() {
+                ui.small(RichText::new(holds).color(FG2));
+            }
         }
     }
     heading(ui, "Наследники");
@@ -1218,6 +1220,192 @@ fn side(ui: &mut Ui, g: &Game) {
             });
         }
     });
+}
+
+/// Years of the trend arrow, of the forecast «через поколение» and of the far one.
+const TREND_YEARS: u32 = 5;
+const GENERATION: u32 = 30;
+const FAR: u32 = 60;
+/// A trend by the change over `TREND_YEARS`: down by 5 and more, by 1 and more, under 1 either
+/// way, up by 1, up by 5.
+const ARROWS: [&str; 5] = ["⇊", "↘", "→", "↗", "⇈"];
+/// A node open in words, by fifths of its range.
+const LEVELS: [&str; 5] = ["ничтожно", "низко", "средне", "высоко", "предельно"];
+/// What pushes from a node still closed.
+const UNCLEAR: &str = "неясная причина";
+
+/// «Состояние»: every axis as the bureaucracy shows it (`graph::sight`). In numbers: the
+/// value, the trend arrow, the target it steps to, the two largest pushes and the forecast
+/// (`graph::forecast`) in a generation, and in two once every number is open. In words: the
+/// level, the arrow, who pushes which way, the level in a generation. Closed: what
+/// bureaucracy opens it.
+fn axes_panel(ui: &mut Ui, g: &Game) {
+    let (w, d) = (&g.world, &g.data);
+    let soon = graph::forecast(d, w, TREND_YEARS);
+    let gen_ = graph::forecast(d, &soon, GENERATION - TREND_YEARS);
+    let numbers = (d.reveal.as_ref()).is_some_and(|r| w.axes[&r.axis] >= r.numbers);
+    let far = numbers.then(|| graph::forecast(d, &gen_, FAR - GENERATION));
+    let mut closed: Vec<(Fx, &str)> = vec![];
+    Grid::new("axes").show(ui, |ui| {
+        for a in &d.axes {
+            let (v, sight) = (w.axes[&a.id], graph::sight(d, w, a));
+            let arrow = arrow(soon.axes[&a.id] - v);
+            let mut notes = vec![pressing(d, w, a, sight == Sight::Numbers)];
+            let value = match sight {
+                Sight::Closed(Some(at)) => {
+                    closed.push((at, axis_name(d, &a.id)));
+                    continue;
+                }
+                Sight::Closed(None) => continue,
+                // A forecast the same as now says nothing.
+                Sight::Words => {
+                    let later = level(a, gen_.axes[&a.id]);
+                    if later != level(a, v) {
+                        notes.push(format!("через поколение {later}"));
+                    }
+                    format!("{} {arrow}", level(a, v))
+                }
+                Sight::Numbers => {
+                    let later = round(gen_.axes[&a.id]);
+                    let far = far.as_ref().map(|f| round(f.axes[&a.id]));
+                    if later != round(v) || far.as_ref().is_some_and(|f| *f != round(v)) {
+                        notes.push(format!("через поколение ≈ {later}"));
+                    }
+                    if let Some(far) = far.filter(|f| *f != later) {
+                        notes.push(format!("через два ≈ {far}"));
+                    }
+                    let to = graph::target(d, w, a);
+                    let to = (graph::step(d, a) != Fx(0) && round(to) != round(v))
+                        .then(|| format!(" к {}", round(to)));
+                    format!("{} {arrow}{}", round(v), to.unwrap_or_default())
+                }
+            };
+            ui.small(axis_name(d, &a.id));
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    if sight == Sight::Numbers {
+                        meter(ui, v, a.min, a.max);
+                    }
+                    ui.small(value);
+                });
+                notes.retain(|n| !n.is_empty());
+                if !notes.is_empty() {
+                    ui.small(RichText::new(notes.join(" · ")).color(FG2));
+                }
+            });
+            ui.end_row();
+        }
+    });
+    // By the bureaucracy that opens them, in data order within.
+    closed.sort_by_key(|(at, _)| *at);
+    let by = d
+        .reveal
+        .as_ref()
+        .map_or("", |r| axis_name(d, &r.axis))
+        .to_lowercase();
+    for group in closed.chunk_by(|x, y| x.0 == y.0) {
+        let names: Vec<&str> = group.iter().map(|(_, n)| *n).collect();
+        let line = format!(
+            "{}: ? · откроет {by} {}",
+            names.join(", "),
+            round(group[0].0)
+        );
+        ui.small(RichText::new(line).color(FG2));
+    }
+}
+
+/// The trend arrow of a change over `TREND_YEARS`.
+fn arrow(change: Fx) -> &'static str {
+    let one = Fx::SCALE;
+    ARROWS[match change.0 {
+        c if c <= -5 * one => 0,
+        c if c <= -one => 1,
+        c if c < one => 2,
+        c if c < 5 * one => 3,
+        _ => 4,
+    }]
+}
+
+/// The word of `v` on the range of `a`, by fifths.
+fn level(a: &AxisDef, v: Fx) -> &'static str {
+    let i = (v - a.min).0 * 5 / (a.max - a.min).0.max(1);
+    LEVELS[i.clamp(0, 4) as usize]
+}
+
+/// «давят Расслоение −7, Хлеб −2»: the two largest pushes on `a` (`graph::pressing`) of at
+/// least a half; without `numbers` their signs alone. Empty when nothing pushes so.
+fn pressing(d: &Data, w: &World, a: &AxisDef, numbers: bool) -> String {
+    let big = |c: &Fx| c.0.abs() >= Fx::SCALE / 2;
+    let list: Vec<String> = (graph::pressing(d, w, &a.id, 2).iter())
+        .filter(|(_, c)| big(c))
+        .map(|(p, c)| {
+            let sign = if *c > Fx(0) { "+" } else { "−" };
+            match numbers {
+                true => format!("{} {sign}{}", pusher(d, w, p), round(Fx(c.0.abs()))),
+                false => format!("{} ({sign})", pusher(d, w, p)),
+            }
+        })
+        .collect();
+    match list.len() {
+        0 => String::new(),
+        n => format!(
+            "{} {}",
+            plural(n as u32, ["давит", "давят", "давят"]),
+            list.join(", ")
+        ),
+    }
+}
+
+/// Who pushes: a law by its name, an edge by its source node, a node still closed as
+/// `UNCLEAR` with the bureaucracy that opens it.
+fn pusher(d: &Data, w: &World, p: &Push) -> String {
+    let from = match p {
+        Push::Law(l) => return l.name.clone(),
+        Push::Edge(i) => &d.influences[*i].from,
+    };
+    let def = d.axes.iter().find(|a| a.id == *from);
+    match (def.map(|a| graph::sight(d, w, a)), &d.reveal) {
+        (Some(Sight::Closed(Some(at))), Some(r)) => {
+            let by = axis_name(d, &r.axis).to_lowercase();
+            format!("{UNCLEAR} (откроет {by} {})", round(at))
+        }
+        (Some(Sight::Closed(_)), _) => UNCLEAR.into(),
+        _ => axis_name(d, from).into(),
+    }
+}
+
+/// «держит выше: Закрепощение, Знать · усиливает: Знать → Закрепощение»: what law `l` does
+/// to the graph while in force, by the names in the data: its anchor shifts up and down, the
+/// edges it strengthens (or switches on) and weakens. Empty when it does none of that.
+fn holds(d: &Data, l: &LawDef) -> String {
+    let anchors = |up: bool| {
+        let shifts = l.anchors.iter().filter(|(_, s)| (*s > Fx(0)) == up);
+        shifts
+            .map(|(a, _)| axis_name(d, a))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let edges = |up: bool| {
+        let edges = l.edges.iter().filter_map(|(id, m)| {
+            let e = d.influences.iter().find(|e| e.id == *id)?;
+            let one = Fx::from_int(1);
+            let way = (e.off || *m > one, !e.off && *m < one);
+            (way == (up, !up))
+                .then(|| format!("{} → {}", axis_name(d, &e.from), axis_name(d, &e.to)))
+        });
+        edges.collect::<Vec<_>>().join(", ")
+    };
+    let parts = [
+        ("держит выше", anchors(true)),
+        ("держит ниже", anchors(false)),
+        ("усиливает", edges(true)),
+        ("ослабляет", edges(false)),
+    ];
+    let parts = parts.iter().filter(|(_, l)| !l.is_empty());
+    parts
+        .map(|(k, l)| format!("{k}: {l}"))
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// «Сверх предела: k земель (…), штраф в год: …» and what to do about it; None within the
@@ -1353,18 +1541,23 @@ fn key_rtl(ui: &mut Ui, k: &str, v: &str) {
 /// A grid row with a labelled bar; the colour goes from bad to good with the share of the range.
 /// Returns the label's response, for a tooltip.
 fn bar(ui: &mut Ui, label: &str, v: Fx, min: Fx, max: Fx, value: &str) -> egui::Response {
+    let label = ui.small(label);
+    meter(ui, v, min, max);
+    ui.small(value);
+    ui.end_row();
+    label
+}
+
+/// The bar of `bar`.
+fn meter(ui: &mut Ui, v: Fx, min: Fx, max: Fx) {
     let share = ((v - min).0 as f32 / (max - min).0.max(1) as f32).clamp(0.0, 1.0);
     let color = match share {
         s if s < 0.35 => RUBRIC,
         s if s < 0.55 => WARN,
         _ => GOOD,
     };
-    let label = ui.small(label);
     let bar = ProgressBar::new(share).fill(color).desired_width(110.0);
     ui.add(bar.desired_height(6.0));
-    ui.small(value);
-    ui.end_row();
-    label
 }
 
 /// The axis name from rules.ron, or its id.
@@ -1987,6 +2180,89 @@ mod tests {
         );
     }
 
+    /// Stage 21: an axis shows its trend, target, the two largest pushes and the forecast; a
+    /// push from a closed node is «неясная причина» with the bureaucracy that opens it; the
+    /// bureaucracy opens the nodes in words, then in numbers with the far forecast.
+    #[test]
+    fn the_axes_tell_where_they_go_and_what_pushes_them() {
+        let mut h = Harness::new();
+        h.height = 1400.0;
+        h.app.apply(Cmd::Start(1));
+        h.click_label("Править");
+        let set = |h: &mut Harness, axes: &[(&str, i64)]| {
+            let g = h.app.game.as_mut().unwrap();
+            for (a, v) in axes {
+                g.world.axes.insert(AxisId((*a).into()), Fx::from_int(*v));
+            }
+            g.world.recompute_loyalty(&g.data);
+            texts_of(h)
+        };
+        let after = |t: &[String], k: &str| t[pos(t, k) + 1].clone();
+        // Strata 80 drags the people to 50 - 32 by e6; the bureaucracy 20 does not show it.
+        let t = set(&mut h, &[("strata", 80)]);
+        assert_eq!(after(&t, "Народ"), "50 ⇊ к 18");
+        let line = &t[pos(&t, "Народ") + 2];
+        assert!(
+            line.starts_with(
+                "давит неясная причина (откроет бюрократия 70) −32 · через поколение ≈ "
+            ),
+            "{line}"
+        );
+        // Below 70 strata is closed, listed with what opens it; grain is open in words.
+        assert!(t.contains(&"Расслоение, Подвижность сословий: ? · откроет бюрократия 70".into()));
+        assert_eq!(after(&t, "Хлебные запасы"), "средне →");
+        // The nobles over their target: down a lot, toward 50.
+        let t = set(&mut h, &[("loyalty_nobles", 90)]);
+        assert_eq!(after(&t, "Знать"), "90 ⇊ к 50");
+        // At 70 strata opens in words and names itself in the people's pushes.
+        let t = set(&mut h, &[("bureaucracy", 70)]);
+        assert!(t[pos(&t, "Народ") + 2].starts_with("давит Расслоение −32"));
+        assert_eq!(after(&t, "Расслоение"), "предельно ↘"); // back to its anchor 40
+        assert!(!t.iter().any(|x| x.contains("откроет бюрократия 70")));
+        assert!(!t.iter().any(|x| x.contains("через два")));
+        // At 85 every node in numbers, with the forecast of two generations.
+        let t = set(&mut h, &[("bureaucracy", 85)]);
+        assert!(after(&t, "Расслоение").starts_with("80 "), "{t:?}");
+        assert!(t.iter().any(|x| x.contains("через два ≈")));
+        assert!(!t.iter().any(|x| x.contains(" ? · откроет")));
+    }
+
+    /// Stage 21: a law in force says what it holds up and down and which edges it feeds,
+    /// by the names in the data.
+    #[test]
+    fn a_law_in_force_tells_what_it_holds_and_feeds() {
+        let d = load_data();
+        let law = |id: &str| holds(&d, d.law(id).unwrap());
+        assert_eq!(
+            law("law_serfdom"),
+            "держит выше: Закрепощение, Знать · усиливает: Знать → Закрепощение"
+        );
+        assert_eq!(
+            law("law_free_peasants"),
+            "держит выше: Торговля · держит ниже: Закрепощение, Знать · ослабляет: Знать → Закрепощение"
+        );
+        // An edge off without the law is switched on by it.
+        assert_eq!(
+            law("law_charters"),
+            "держит выше: Городские вольности, Грамотность · держит ниже: Знать · усиливает: Расслоение → Городские вольности"
+        );
+        assert_eq!(law("law_primogeniture"), "");
+        // In the side panel under the law.
+        let mut h = Harness::new();
+        h.height = 1400.0;
+        h.app.apply(Cmd::Start(1));
+        h.click_label("Править");
+        let w = &mut h.app.game.as_mut().unwrap().world;
+        w.flags.insert("law_serfdom".into());
+        w.axes
+            .insert(AxisId("bureaucracy".into()), Fx::from_int(85));
+        let t = texts_of(&mut h);
+        assert_eq!(t[pos(&t, "Крепостное право (?)") + 1], law("law_serfdom"));
+        // And the anchor it shifts is a push on the node.
+        let line = &t[pos(&t, "Закрепощение") + 2];
+        assert!(line.starts_with("давит Крепостное право +30"), "{line}");
+    }
+
     /// Stage 15: land over the crown's limit shows its yearly penalty and what to do.
     #[test]
     fn the_side_panel_tells_the_penalty_over_the_limit() {
@@ -2066,12 +2342,12 @@ mod tests {
             .platform_output
             .accesskit_update
             .expect("accesskit is on");
-        let node = tree
-            .nodes
-            .iter()
-            .find(|(_, n)| n.label() == Some(label) || n.value() == Some(label));
-        let b = node
-            .and_then(|(_, n)| n.bounds())
+        // The topmost of the widgets so labelled (the map legend names the neighbours too):
+        // the order of the nodes is not the order on screen.
+        let nodes = (tree.nodes.iter())
+            .filter(|(_, n)| n.label() == Some(label) || n.value() == Some(label));
+        let b = (nodes.filter_map(|(_, n)| n.bounds()))
+            .min_by(|a, b| (a.y0, a.x0).partial_cmp(&(b.y0, b.x0)).unwrap())
             .unwrap_or_else(|| panic!("no «{label}»"));
         let centre = Pos2::new((b.x0 + b.x1) as f32 / 2.0, (b.y0 + b.y1) as f32 / 2.0);
         h.frame(vec![Event::PointerMoved(centre)]);
@@ -2108,6 +2384,8 @@ mod tests {
     #[test]
     fn hovering_tells_what_actions_neighbours_and_the_law_do() {
         let mut h = Harness::new();
+        // The side panel scrolls; the neighbours come after the axes and the heirs.
+        h.height = 1000.0;
         h.app.apply(Cmd::Start(1));
         h.click_label("Править");
         let road = hover(&mut h, "Проложить дорогу");

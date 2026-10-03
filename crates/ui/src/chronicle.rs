@@ -1,7 +1,7 @@
 //! The dynasty after the founder: the chronicle with its map snapshots, then the score.
 
 use crate::map::{BG, BG2, FG, FG2, GOOD, MapView, RUBRIC, round};
-use crate::{Cmd, axis_name, change_lines, heading, plural, realm, tone};
+use crate::{Cmd, OMEN, axis_name, change_lines, heading, plural, realm, tone};
 use bd_core::data::Data;
 use bd_core::fx::Fx;
 use bd_core::game::Game;
@@ -73,7 +73,7 @@ pub fn chronicle(
                     ))
                     .strong()
                     .color(FG),
-                    false => RichText::new(format!("{date}  {}", e.title)).color(FG2),
+                    false => RichText::new(format!("{date}  {}", title(d, e))).color(FG2),
                 };
                 let resp = ui.add(Button::selectable(i == selected, text).truncate());
                 if i == selected {
@@ -120,7 +120,7 @@ pub fn chronicle(
             .color(FG2),
         );
         ui.add_space(10.0);
-        ui.label(RichText::new(&e.title).size(18.0).strong());
+        ui.label(RichText::new(title(d, e)).size(18.0).strong());
         ui.label(&e.text);
         // What led to it through the graph (stage 20).
         if let Some(chain) = &e.chain {
@@ -154,6 +154,16 @@ pub fn chronicle(
         }
     });
     cmd
+}
+
+/// The entry's title, after `OMEN` for a symptom of the graph (`Event.omen`).
+fn title(d: &Data, e: &ChronicleEntry) -> String {
+    let mut all = d.events.iter().chain(&d.sim_events);
+    let omen = e
+        .event
+        .as_ref()
+        .is_some_and(|id| all.any(|x| x.id == *id && x.omen));
+    format!("{}{}", if omen { OMEN } else { "" }, e.title)
 }
 
 /// Provinces, axes and heirs of the entry's year.
@@ -258,8 +268,38 @@ pub fn summary(
                 ui.label(hint);
             });
         }
+        let laws = founder_laws(g, c);
+        if !laws.is_empty() {
+            heading(ui, "Законы основателя");
+        }
+        for line in laws {
+            ui.label(line);
+        }
     });
     cmd
+}
+
+/// «1214  Крепостное право: основатель прикрепил крестьян к земле господ · до конца
+/// династии»: every law the founder brought in and left in force (`World.laws` at the end of
+/// his reign), with its hint and whether the dynasty kept it to the end or when it was
+/// repealed (the first entry of the chronicle without it).
+fn founder_laws(g: &Game, c: &Chronicle) -> Vec<String> {
+    let (d, w) = (&g.data, &g.world);
+    let date = |t: bd_core::time::Tick| t.date(w.time_unit, w.start_year);
+    (d.laws_in_force(w)
+        .filter_map(|l| w.laws.get(&l.id).map(|t| (l, t))))
+    .map(|(l, since)| {
+        let hint = d
+            .hints
+            .get(&l.id)
+            .map_or(String::new(), |h| format!(": {h}"));
+        let gone = c.entries.iter().find(|e| !e.snapshot.flags.contains(&l.id));
+        let fate = gone.map_or("до конца династии".into(), |e| {
+            format!("отменён в {}", date(e.tick))
+        });
+        format!("{}  {}{hint} · {fate}", date(*since), l.name)
+    })
+    .collect()
 }
 
 /// The card at the end of the founder's reign, over the last reign screen: its years and end,
@@ -485,5 +525,60 @@ mod tests {
         assert_eq!(sentence("знать помнила"), "Знать помнила.");
         let names: Vec<&str> = PART_NAMES.iter().map(|(k, _)| *k).collect();
         assert_eq!(names, bd_core::score::PARTS);
+    }
+
+    /// Stage 21: a symptom of the graph is «Знамение» in the chronicle; «Что решило судьбу»
+    /// tells the founder's laws, kept to the end or repealed.
+    #[test]
+    fn omens_are_marked_and_the_founders_laws_told_with_their_fate() {
+        use bd_core::sim::FallReason;
+        use bd_core::time::Tick;
+        let d = crate::load_data();
+        let (_, p, m) = crate::PRESETS[0];
+        let preset = bd_core::state::Preset::load_with_map(p, m, &d).unwrap();
+        let mut g = Game::new(d, &preset, 1);
+        // The founder brought in serfdom and the fairs in his 4th year; the preset's law of
+        // succession is not his.
+        for id in ["law_serfdom", "law_fairs"] {
+            g.world.flags.insert(id.into());
+            g.world.laws.insert(id.into(), Tick(3));
+        }
+        let kept = g.world.snapshot();
+        let mut gone = kept.clone();
+        gone.flags.remove("law_fairs");
+        let entry = |tick, event: Option<&str>, w: &World| ChronicleEntry {
+            tick: Tick(tick),
+            event: event.map(Into::into),
+            title: "Беглые".into(),
+            text: String::new(),
+            hint: None,
+            importance: 0,
+            causes: vec![],
+            snapshot: w.clone(),
+            chain: None,
+        };
+        let c = Chronicle {
+            entries: vec![
+                entry(40, Some("omen_runaways"), &kept),
+                entry(60, Some("prov_crop_failure"), &gone),
+            ],
+            fall: FallReason::Alive,
+            years: 300,
+            rulers: vec![],
+            kin: vec![],
+            axes: Default::default(),
+            deserted: 0,
+            nodes: vec![],
+        };
+        assert_eq!(title(&g.data, &c.entries[0]), "Знамение. Беглые");
+        assert_eq!(title(&g.data, &c.entries[1]), "Беглые");
+        let laws = founder_laws(&g, &c);
+        assert_eq!(
+            laws,
+            [
+                "1190  Крепостное право: основатель прикрепил крестьян к земле господ · до конца династии",
+                "1190  Ярмарочное право: основатель освободил ярмарки от мыта баронов · отменён в 1247",
+            ]
+        );
     }
 }

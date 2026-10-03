@@ -52,6 +52,9 @@ pub enum Predicate {
     ClaimGapBelow(Fx),
     /// The ruler has this trait.
     RulerTrait(String),
+    /// The event fired within this many years, this year included (stage 26c): the causes of
+    /// a compound event, which its texts recall as `{prev_event}` and `{then_event}`.
+    FiredWithin(String, Years),
     /// `All([])` is always true.
     All(Vec<Predicate>),
     Any(Vec<Predicate>),
@@ -81,6 +84,9 @@ impl Predicate {
                 _ => false,
             },
             Predicate::RulerTrait(t) => w.ruler.traits.contains(t),
+            Predicate::FiredWithin(id, y) => {
+                (w.last_fired.get(id)).is_some_and(|t| w.tick.0 < t.0 + y.ticks(w.time_unit).0)
+            }
             Predicate::All(ps) => ps.iter().all(|p| p.eval(w)),
             Predicate::Any(ps) => ps.iter().any(|p| p.eval(w)),
             Predicate::Not(p) => !p.eval(w),
@@ -756,6 +762,16 @@ pub struct Event {
     pub id: String,
     pub title: String,
     pub text: String,
+    /// More ways to say `text` (stage 26c): a repeat of the event reads anew (`text_now`).
+    #[serde(default)]
+    pub texts: Vec<String>,
+    /// Ways to say it only while the predicate holds: at war, under a pious ruler, ...
+    #[serde(default)]
+    pub texts_when: Vec<(Predicate, String)>,
+    /// How a later text names the event, lowercase, with its cases in names.ron: «великий
+    /// пожар». A compound event recalls it as `{prev_event}` or `{then_event}`.
+    #[serde(default)]
+    pub recalled: String,
     pub when: Predicate,
     /// 0 keeps the event out of the random pool: it only fires via `SpawnEvent`.
     pub weight: u32,
@@ -819,9 +835,39 @@ pub struct Choice {
     /// `{year}`. Empty: the event's own text.
     #[serde(default)]
     pub told: String,
+    /// More ways to tell it (stage 26c): a repeat of the event is told anew (`told_now`).
+    #[serde(default)]
+    pub retold: Vec<String>,
+}
+
+impl Choice {
+    /// `told` or one of `retold`, by the turn of event `id` (`World.retold`): a repeat of the
+    /// event is told otherwise than the time before.
+    pub fn told_now(&self, id: &str, w: &World) -> &str {
+        let all: Vec<&String> = std::iter::once(&self.told).chain(&self.retold).collect();
+        all[turn(id, w) % all.len()]
+    }
+}
+
+/// The turn of the texts of event `id`: from a hash of its id and first tick, one up every
+/// time it fires (`Game`), 0 before. Never the main rng.
+fn turn(id: &str, w: &World) -> usize {
+    w.retold.get(id).copied().unwrap_or(0) as usize
 }
 
 impl Event {
+    /// `text`, one of `texts` or of the `texts_when` that hold, by the turn of the event
+    /// (`Choice::told_now`).
+    pub fn text_now(&self, w: &World) -> &str {
+        let when = (self.texts_when.iter())
+            .filter(|(p, _)| p.eval(w))
+            .map(|(_, t)| t);
+        let all: Vec<&String> = (std::iter::once(&self.text).chain(&self.texts))
+            .chain(when)
+            .collect();
+        all[turn(&self.id, w) % all.len()]
+    }
+
     /// One choice only, nothing to choose (stage 26b): a message, out of `events_per_year`.
     pub fn is_message(&self) -> bool {
         self.choices.len() < 2
@@ -847,9 +893,8 @@ impl Event {
             return Err("an event needs at least one choice".into());
         }
         self.when.check(data)?;
-        self.weight_bonus
-            .iter()
-            .try_for_each(|(p, _)| p.check(data))?;
+        let bonus = self.weight_bonus.iter().map(|(p, _)| p);
+        (bonus.chain(self.texts_when.iter().map(|(p, _)| p))).try_for_each(|p| p.check(data))?;
         let mut effects = self.choices.iter().flat_map(|c| &c.effects);
         effects.try_for_each(|e| e.check(data))
     }

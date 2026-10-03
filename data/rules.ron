@@ -335,6 +335,9 @@
         desertion: 0.2,
         // `{war_won}`, `{war_lost}` in the war's events: «2 сражения» won and lost (stage 25).
         battles: ("сражение", "сражения", "сражений"),
+        battles_said: ["ни одного сражения", "одно сражение", "два сражения", "три сражения",
+            "четыре сражения", "пять сражений", "шесть сражений", "семь сражений",
+            "восемь сражений", "девять сражений", "десять сражений"],
     ),
 
     // Direct rule has a limit (yearly): the crown holds at most capital crown power *

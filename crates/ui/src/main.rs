@@ -158,6 +158,9 @@ struct App {
     chosen: Vec<Line>,
     /// The messages of the year in the making (`Event::is_message`), not asked (stage 26b).
     news: Vec<Line>,
+    /// The event told last this year: in the news or not, its id and target. A linked event
+    /// after it joins its line (`sim::fuse`, stage 26c).
+    told: Option<(bool, String, Option<Target>)>,
     /// The treasury before the latest year's tick, that year's income and upkeep
     /// (`war::income_parts`): its «Казна:» line.
     money: Option<(Fx, Fx, Fx)>,
@@ -232,6 +235,7 @@ impl App {
             year_start: None,
             chosen: Vec::new(),
             news: Vec::new(),
+            told: None,
             money: None,
             saved: None,
             persist: false,
@@ -314,7 +318,8 @@ impl App {
                     let mark = if omen { OMEN } else { "" };
                     let told = (self.game.as_ref().and_then(|g| g.told(i)))
                         .unwrap_or_else(|| format!("«{}»: {}", v.title, c.text));
-                    self.chosen.push((format!("{mark}{told}"), None));
+                    let (id, target) = (v.event_id.clone(), v.target.clone());
+                    self.tell(false, id, target, format!("{mark}{told}"));
                 }
             }
             _ => {}
@@ -389,10 +394,13 @@ impl App {
         // A message is not asked: it goes into the year's news (stage 26b).
         let mut res = res;
         while let Ok(Step::Event(v)) = &res
+            && let Some(g) = self.game.as_ref()
             && (g.data.events.iter()).any(|e| e.id == v.event_id && e.is_message())
         {
             let told = g.told(0).unwrap_or_else(|| v.title.clone());
-            self.news.push((told, None));
+            let (id, target) = (v.event_id.clone(), v.target.clone());
+            self.tell(true, id, target, told);
+            let g = self.game.as_mut().expect("in a game");
             res = match g.choose(0) {
                 Ok(()) if g.ended.is_some() => g.wait(),
                 r => r.map(|_| Step::Idle),
@@ -437,7 +445,42 @@ impl App {
 
     /// Puts what happened since «Подождать год» into the journal: the choices made, then
     /// the messages and what changed. A second record of the same date joins the first.
+    /// `told` of event `id` into the year's news or choices, or joined to the line of the
+    /// event told before it this year when the two are linked (`sim::fuse`).
+    fn tell(&mut self, news: bool, id: String, target: Option<Target>, told: String) {
+        let g = self.game.as_ref().expect("in a game");
+        let tick = g.world.tick;
+        let salt = g.rng.clone().next_u64();
+        let fused = self.told.as_ref().and_then(|(in_news, e, t)| {
+            let lines = if *in_news { &self.news } else { &self.chosen };
+            let told_as = |event, target, text| sim::Told {
+                event,
+                target,
+                tick,
+                root: None,
+                text,
+            };
+            let a = told_as(e.as_str(), t.as_ref(), &lines.last()?.0);
+            let b = told_as(&id, target.as_ref(), &told);
+            let (_, text) = sim::fuse(&g.data, &g.world, &a, &b, salt, tick.0 as u64)?;
+            Some((*in_news, text))
+        });
+        match fused {
+            Some((in_news, text)) => {
+                let lines = if in_news { &mut self.news } else { &mut self.chosen };
+                lines.last_mut().expect("joined to it").0 = text;
+                self.told = None;
+            }
+            None => {
+                let lines = if news { &mut self.news } else { &mut self.chosen };
+                lines.push((told, None));
+                self.told = Some((news, id, target));
+            }
+        }
+    }
+
     fn close_year(&mut self) {
+        self.told = None;
         let g = self.game.as_ref().expect("in a game");
         let chosen = std::mem::take(&mut self.chosen);
         let mut lines = std::mem::take(&mut self.news);
@@ -513,7 +556,7 @@ impl App {
         (self.intro, self.tree, self.year_start) = (true, false, None);
         (self.laws, self.will) = (false, None);
         (self.journal, self.chosen, self.money) = (Vec::new(), Vec::new(), None);
-        self.news.clear();
+        (self.news, self.told) = (Vec::new(), None);
     }
 
     fn step(&mut self, res: Result<Step, GameError>) {

@@ -836,6 +836,10 @@ pub struct WarRules {
     /// texts: the battles of the war the crown won and lost (stage 25).
     #[serde(default)]
     pub battles: (String, String, String),
+    /// The same in words by their number from 0 (stage 26c): «одно сражение», «два
+    /// сражения»; past the list, the number and `battles`.
+    #[serde(default)]
+    pub battles_said: Vec<String>,
 }
 
 /// The dynasty simulation after the reign, see `sim::run`.
@@ -886,6 +890,9 @@ pub struct TraitRule {
     /// not told.
     #[serde(default)]
     pub told: (String, String),
+    /// More ways to tell it, picked by seed (stage 26c).
+    #[serde(default)]
+    pub retold: Vec<(String, String)>,
 }
 
 /// The suit of `Effect::Marry`.
@@ -1014,6 +1021,32 @@ pub struct SimTexts {
     /// The phrases of a ruler's life (`RulerRecord.biography`).
     #[serde(default)]
     pub life: Life,
+    /// Two linked events told in one entry (stage 26c, `sim::fuse`).
+    #[serde(default)]
+    pub fuse: Fuse,
+}
+
+/// Two events of one year or of two years running, told one after the other, become one
+/// entry when linked: a pair of `pairs`, else one target (a province, a neighbour, an heir)
+/// or one root of their chains (stage 20), joined by `same_year` or `next_year`. A join
+/// has `{a}`, the first text without its full stop, and `{b}`, the second from a small
+/// letter. An omen stays an entry of its own; a fused entry takes no third.
+#[derive(Debug, Clone, PartialEq, Deserialize, Default)]
+pub struct Fuse {
+    pub same_year: Vec<String>,
+    pub next_year: Vec<String>,
+    pub pairs: Vec<FusePair>,
+}
+
+/// One of the events `first`, then one of `then`, a year apart at most: always linked,
+/// joined by `joins` under the title `title` (empty: the first's).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct FusePair {
+    pub first: Vec<String>,
+    pub then: Vec<String>,
+    #[serde(default)]
+    pub title: String,
+    pub joins: Vec<String>,
 }
 
 /// An epithet and the deeds that earn it. A reign counts its deeds: the cause tags of the
@@ -1032,6 +1065,10 @@ pub struct Epithet {
     pub years: Option<u32>,
     /// The sentence of the life that tells it, variants; `{ruler}`, `{epithet}`.
     pub told: Vec<String>,
+    /// Other names for the same, (of a king, of a queen), picked by seed (stage 26c):
+    /// «Зодчий» beside «Строитель».
+    #[serde(default)]
+    pub also: Vec<(String, String)>,
 }
 
 /// The phrases of a life, each a list of variants: how the ruler came to the throne (the
@@ -1052,6 +1089,14 @@ pub struct Life {
     /// `deed` for an entry of the same year as the one told before it.
     #[serde(default)]
     pub same_year: Vec<String>,
+    /// `deed` for an entry at most `soon_years` after the one told before it, and for one
+    /// later (stage 26c): the deeds read as a story, not a list.
+    #[serde(default)]
+    pub soon: Vec<String>,
+    #[serde(default)]
+    pub later: Vec<String>,
+    #[serde(default)]
+    pub soon_years: u32,
     /// How many entries of the reign a life tells, the most important first.
     pub deeds: usize,
     pub ends: BTreeMap<String, Vec<String>>,

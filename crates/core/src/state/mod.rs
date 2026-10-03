@@ -204,6 +204,10 @@ pub struct World {
     /// Tick each event last fired at; drives `once` and cooldowns.
     #[serde(default)]
     pub last_fired: BTreeMap<String, Tick>,
+    /// The turn of each event's texts (stage 26c, `Event::text_now`): a hash of its id and
+    /// first tick, one up every time it fires, so a repeat reads anew.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub retold: BTreeMap<String, u32>,
     /// Events with a choice fired this year (stage 26b, `Data.events_per_year`); counted
     /// anew every year, so not written out.
     #[serde(default, skip_serializing)]
@@ -337,6 +341,7 @@ impl World {
             active_actions: Vec::new(),
             flags: preset.flags.clone(),
             last_fired: BTreeMap::new(),
+            retold: BTreeMap::new(),
             events_this_year: 0,
             crown_modifiers: BTreeMap::new(),
             war: None,

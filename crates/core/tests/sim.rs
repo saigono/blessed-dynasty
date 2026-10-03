@@ -1361,7 +1361,7 @@ fn golden_texts_of_seed_42() {
     let c = sim::run(end, &g.data, g.rng.clone());
     let w = &g.world;
     let mut out = String::new();
-    for e in &c.entries {
+    for e in c.entries.iter().filter(|e| !e.joined) {
         let date = e.tick.date(w.time_unit, w.start_year);
         let hint = e.hint.as_deref().map_or(String::new(), |h| format!(" {h}"));
         out += &format!("{date} {}. {}{hint}\n", e.title, e.text);

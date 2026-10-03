@@ -75,6 +75,10 @@ pub struct ChronicleEntry {
     /// What led to the event through the influence graph (`chain`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain: Option<Chain>,
+    /// Told in the entry before it (stage 26c, `fuse`): kept for the score and the counts,
+    /// shown no more.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub joined: bool,
 }
 
 /// A chain of the influence graph behind an event, told in the chronicle.
@@ -204,6 +208,7 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
         c,
         reign: None,
         last_heir: None,
+        told: None,
         salt,
         deserted,
         fall: None,
@@ -241,6 +246,8 @@ pub struct Dynasty {
     /// The death of a young first heir who was the last one, with its place in the entries:
     /// told only if no heir comes after and the dynasty ends for want of one.
     last_heir: Option<(usize, ChronicleEntry)>,
+    /// The last entry, if an event's not fused yet (`fuse`), and the event's target.
+    told: Option<(usize, Option<Target>)>,
     /// Seeds the variants of the texts (`text::pick`).
     pub(crate) salt: u64,
     /// `World.deserted` when the dynasty began, for `Chronicle.deserted`.
@@ -263,6 +270,7 @@ impl Dynasty {
             c: chronicle(record(r)),
             reign: Some((reign, AutoChooser::for_ruler(&g.data, r))),
             last_heir: None,
+            told: None,
             salt: g.rng.clone().next_u64(),
             deserted: g.world.deserted,
             fall: None,
@@ -421,11 +429,30 @@ impl Dynasty {
                 }
                 if let Some((causes, chain)) = told {
                     let e = entry(g, (v.title, past), v.importance, causes);
-                    c.entries.push(ChronicleEntry {
+                    let e = ChronicleEntry {
                         event: Some(v.event_id),
                         chain,
                         ..e
+                    };
+                    let last = (self.told.take()).filter(|(i, _)| i + 1 == c.entries.len());
+                    let n = FUSE + c.entries.len() as u64;
+                    let fused = last.and_then(|(i, at)| {
+                        let a = c.entries[i].told(at.as_ref());
+                        let (title, text) =
+                            fuse(&g.data, &g.world, &a, &e.told(v.target.as_ref()), salt, n)?;
+                        Some((i, title, text))
                     });
+                    let joined = fused.is_some();
+                    if let Some((i, title, text)) = fused {
+                        let a = &mut c.entries[i];
+                        a.text = text;
+                        if !title.is_empty() {
+                            a.title = title;
+                        }
+                    } else {
+                        self.told = Some((c.entries.len(), v.target));
+                    }
+                    c.entries.push(ChronicleEntry { joined, ..e });
                 }
             }
             Step::ReignEnded(end) => {
@@ -482,6 +509,65 @@ impl Dynasty {
 const LIFE: u64 = 1 << 40;
 const TESTAMENT: u64 = 1 << 44;
 const EPILOGUE: u64 = 1 << 48;
+const FUSE: u64 = 1 << 52;
+
+/// An event told, as `fuse` joins it.
+pub struct Told<'a> {
+    pub event: &'a str,
+    pub target: Option<&'a Target>,
+    pub tick: Tick,
+    /// The start of its chain (`Chain.nodes`).
+    pub root: Option<&'a AxisId>,
+    pub text: &'a str,
+}
+
+impl ChronicleEntry {
+    /// The entry of an event about `target`, as `fuse` takes it.
+    pub fn told<'a>(&'a self, target: Option<&'a Target>) -> Told<'a> {
+        Told {
+            event: self.event.as_deref().unwrap_or_default(),
+            target,
+            tick: self.tick,
+            root: self.chain.as_ref().and_then(|c| c.nodes.first()),
+            text: &self.text,
+        }
+    }
+}
+
+/// `b` told after `a` in one text, and the title of the pair (empty: keep the first's), when
+/// they are linked a year apart at most (`SimTexts.fuse`); None: two entries. The join is
+/// picked by `salt` and `n`, never the main rng.
+pub fn fuse(
+    d: &Data,
+    w: &World,
+    a: &Told,
+    b: &Told,
+    salt: u64,
+    n: u64,
+) -> Option<(String, String)> {
+    let f = &d.sim.texts.fuse;
+    let omen = |t: &Told| (d.events.iter().chain(&d.sim_events)).any(|e| e.id == t.event && e.omen);
+    let years = (b.tick.0 - a.tick.0) / w.time_unit.ticks_per_year;
+    if a.event.is_empty() || b.event.is_empty() || omen(a) || omen(b) || years > 1 {
+        return None;
+    }
+    let pair = (f.pairs.iter())
+        .find(|p| p.first.iter().any(|e| e == a.event) && p.then.iter().any(|e| e == b.event));
+    let target = a.target.is_some() && a.target == b.target;
+    let root = a.root.is_some() && a.root == b.root;
+    let joins = match pair {
+        Some(p) => &p.joins,
+        None if !target && !root => return None,
+        None if years == 0 => &f.same_year,
+        None => &f.next_year,
+    };
+    let join = Some(text::pick(joins, salt, n)).filter(|j| !j.is_empty())?;
+    let first = a.text.trim_end().trim_end_matches('.');
+    let text = join
+        .replace("{a}", first)
+        .replace("{b}", &lower(d, w, b.text));
+    Some((pair.map_or(String::new(), |p| p.title.clone()), text))
+}
 
 /// A decision true to the testament: `testament.faithful` shifts times its strength.
 fn keep(g: &mut Game, reign: &mut Reign) {
@@ -578,45 +664,49 @@ pub(crate) fn founder_deeds(w: &World) -> BTreeMap<String, u32> {
 /// The main entries of the reign from entry `from` on, as sentences of `life.deed` (of
 /// `life.same_year` for one of the year before it): the most important first (the earliest
 /// on a tie), then in order of time.
-fn reign_deeds(c: &Chronicle, from: usize, g: &Game, salt: u64) -> Vec<String> {
+fn reign_deeds<'a>(c: &Chronicle, from: usize, g: &'a Game, salt: u64) -> Vec<String> {
     let (d, w) = (&g.data, &g.world);
     let life = &d.sim.texts.life;
-    let mut main: Vec<usize> = (from..c.entries.len()).collect();
+    let mut main: Vec<usize> = (from..c.entries.len())
+        .filter(|i| !c.entries[*i].joined)
+        .collect();
     main.sort_by_key(|i| (Reverse(c.entries[*i].importance), *i));
     main.truncate(life.deeds);
     main.sort();
-    let lower = |s: &str| {
-        // The first word stays as it is when it is a name.
-        let word = s.split([' ', ',', '.']).next().unwrap_or_default();
-        let named =
-            d.names.cases.contains_key(word) || w.provinces.values().any(|p| p.name == word);
-        match named {
-            true => s.to_string(),
-            false => s
-                .chars()
-                .next()
-                .into_iter()
-                .flat_map(char::to_lowercase)
-                .chain(s.chars().skip(1))
-                .collect(),
-        }
-    };
-    let mut last = None;
+    let mut last: Option<u32> = None;
     (main.into_iter())
         .map(|i| {
             let e = &c.entries[i];
-            let deed = lower(text::first_sentence(&e.text));
+            let deed = lower(d, w, text::first_sentence(&e.text));
             let deed = deed.trim_end_matches('.');
             let year = e.tick.date(w.time_unit, w.start_year);
-            let again = last.replace(year.clone()) == Some(year.clone());
-            let phrases = match again && !life.same_year.is_empty() {
-                true => &life.same_year,
-                false => &life.deed,
+            let at = e.tick.year(w.time_unit);
+            let gap = last.replace(at).map(|y| at - y);
+            let some = |v: &'a Vec<String>| (!v.is_empty()).then_some(v);
+            let phrases = match gap {
+                None => None,
+                Some(0) => some(&life.same_year),
+                Some(g) if g <= life.soon_years => some(&life.soon),
+                Some(_) => some(&life.later),
             };
+            let phrases = phrases.unwrap_or(&life.deed);
             let phrase = text::pick(phrases, salt, LIFE + i as u64);
             phrase.replace("{deed}", deed).replace("{year}", &year)
         })
         .collect()
+}
+
+/// `s` from a small letter, unless its first word is a name.
+fn lower(d: &Data, w: &World, s: &str) -> String {
+    let word = s.split([' ', ',', '.']).next().unwrap_or_default();
+    let named = d.names.cases.contains_key(word) || w.provinces.values().any(|p| p.name == word);
+    match named {
+        true => s.to_string(),
+        false => (s.chars().next().into_iter())
+            .flat_map(char::to_lowercase)
+            .chain(s.chars().skip(1))
+            .collect(),
+    }
 }
 
 /// The last ruler's life, his reign over (`end` and `cause` set; a fall under him is
@@ -647,7 +737,10 @@ fn finish(c: &mut Chronicle, reign: Reign, told: Vec<String>, w: &World, d: &Dat
     }
     let female = reign.sex == Sex::Female;
     let (name, why) = best.map_or(("", ""), |(_, e)| {
-        let name = if female { &e.name.1 } else { &e.name.0 };
+        // One of its names, by seed apart from the main rng, as `text::pick`.
+        let all: Vec<_> = std::iter::once(&e.name).chain(&e.also).collect();
+        let k = Rng::from_seed(salt ^ (LIFE + n + 4)).range(0, all.len() as i64) as usize;
+        let name = if female { &all[k].1 } else { &all[k].0 };
         (name.as_str(), text::pick(&e.told, salt, LIFE + n + 2))
     });
     r.epithet = name.to_string();
@@ -837,7 +930,7 @@ fn crown(g: &mut Game, c: &mut Chronicle, salt: u64) -> Option<Reign> {
     if ruler.age < d.sim.regency_age {
         w.flags.insert(d.sim.regency_flag.clone());
     }
-    let cheer = coronation(w, d, heir.claim, &ruler);
+    let cheer = coronation(w, d, heir.claim, &ruler, salt ^ c.entries.len() as u64);
     let t = &d.sim.texts;
     let prev = c.rulers.last().expect("the founder reigned").full_name();
     let named = [
@@ -907,7 +1000,7 @@ fn crown(g: &mut Game, c: &mut Chronicle, salt: u64) -> Option<Reign> {
 
 /// The axes at a coronation (`Data.coronation`, see `CoronationRules`, then a queen's
 /// `Law.female_heir`) for a new ruler of `claim`. Returns how the chronicle tells the trait that moved an axis most, if it is told.
-fn coronation(w: &mut World, d: &Data, claim: Fx, ruler: &Ruler) -> Option<String> {
+fn coronation(w: &mut World, d: &Data, claim: Fx, ruler: &Ruler, salt: u64) -> Option<String> {
     let c = &d.coronation;
     for f in &d.factions {
         let def = d
@@ -944,9 +1037,12 @@ fn coronation(w: &mut World, d: &Data, claim: Fx, ruler: &Ruler) -> Option<Strin
         }
     }
     w.recompute_loyalty(d);
-    let (king, queen) = &most?.1.told;
-    let told = if ruler.sex == Sex::Male { king } else { queen };
-    (!told.is_empty()).then(|| told.clone())
+    let t = most?.1;
+    let all: Vec<String> = (std::iter::once(&t.told).chain(&t.retold))
+        .map(|(king, queen)| if ruler.sex == Sex::Male { king } else { queen }.clone())
+        .collect();
+    let told = text::pick(&all, salt, LIFE);
+    (!told.is_empty()).then(|| told.to_string())
 }
 
 /// `SuccessionRule::Partition`: each son, eldest first, gets the crown province farthest from
@@ -1141,6 +1237,7 @@ fn entry(
         causes,
         snapshot: g.world.snapshot(),
         chain: None,
+        joined: false,
     }
 }
 

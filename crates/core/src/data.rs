@@ -330,7 +330,13 @@ impl Data {
         for spec in names.forms.clone() {
             names.add_forms(&spec).map_err(DataError::Invalid)?;
         }
-        [names.rulers, names.heirs, names.vassals, names.daughters, names.houses] = pools;
+        [
+            names.rulers,
+            names.heirs,
+            names.vassals,
+            names.daughters,
+            names.houses,
+        ] = pools;
         self.names = names;
         Ok(())
     }
@@ -1315,8 +1321,7 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
     .chain(data.realm.iter().flat_map(|r| {
         let curves = r.strength.axes.iter().map(|(a, _)| a);
         curves.chain(r.usurper.iter().map(|(a, _)| a))
-    }))
-    {
+    })) {
         if !is_axis(a) || (data.is_derived(a) && c.penalty.iter().any(|(p, _)| p == a)) {
             return Err(DataError::Invalid(format!("unknown axis {}", a.0)));
         }

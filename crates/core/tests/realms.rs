@@ -4,8 +4,8 @@ use bd_core::batch::{self, Files};
 use bd_core::game::Game;
 use bd_core::sim::{Chronicle, Dynasty, FallReason};
 use bd_core::state::{Holder, NeighbourId, ProvinceId, World};
-use std::collections::BTreeMap;
 use bd_core::time::Tick;
+use std::collections::BTreeMap;
 
 const PRESET: &str = "presets/default.ron";
 const MAP: &str = "maps/default.ron";
@@ -134,7 +134,11 @@ fn a_link_from_before_the_stage_plays_the_same() {
         (28, 297, "Usurped", 114, 25261)
     );
     assert_eq!(format!("{hash:016x}"), "5fbf9fa0ad8835b8");
-    assert_eq!(c.realms.len(), 5, "the kingdoms play beside it, two of them new");
+    assert_eq!(
+        c.realms.len(),
+        5,
+        "the kingdoms play beside it, two of them new"
+    );
 }
 
 /// Acceptance: the same seed gives the whole world byte for byte, ours and every kingdom's,
@@ -239,7 +243,10 @@ fn the_streams_of_the_kingdoms_are_apart() {
     assert_eq!(rng(&g, "purpur"), rng(&g2, "purpur"));
     assert_eq!(rng(&g, "nordmark"), rng(&g2, "nordmark"));
     assert_ne!(rng(&g, "nordmark"), rng(&g3, "nordmark"));
-    assert_ne!(g.realms.list[&id("nordmark")], g2.realms.list[&id("nordmark")]);
+    assert_ne!(
+        g.realms.list[&id("nordmark")],
+        g2.realms.list[&id("nordmark")]
+    );
     let streams: std::collections::BTreeSet<_> = (g.realms.list.values())
         .map(|d| format!("{:?}", d.g.rng))
         .collect();
@@ -270,7 +277,9 @@ fn to_year_end(g: &mut Game) {
     let tpy = g.world.time_unit.ticks_per_year;
     let end = (g.world.tick.0 / tpy + 1) * tpy;
     while g.world.tick.0 < end {
-        if g.wait().is_ok_and(|s| matches!(s, bd_core::game::Step::Event(_))) {
+        if g.wait()
+            .is_ok_and(|s| matches!(s, bd_core::game::Step::Event(_)))
+        {
             g.choose(0).unwrap();
         }
     }
@@ -409,7 +418,10 @@ fn kingdom_dynasties_live_80_to_150_years() {
         println!("{id}: {} / {} / {} {falls:?}", v[24], v[49], v[74]);
     }
     realms.sort();
-    println!("kingdoms at the end: {} / {} / {}", realms[24], realms[49], realms[74]);
+    println!(
+        "kingdoms at the end: {} / {} / {}",
+        realms[24], realms[49], realms[74]
+    );
     println!("news per world: {news:?}");
     for (id, mut v) in lives {
         v.sort();
@@ -432,7 +444,10 @@ fn apply(g: &mut Game, realm: &str, effect: &str) {
 }
 
 /// The titles of the news of a kind (`rules.ron` `realm.news`) told so far.
-fn news<'a>(g: &'a Game, kind: impl Fn(&bd_core::data::NewsRules) -> &bd_core::data::NewsKind) -> Vec<&'a str> {
+fn news<'a>(
+    g: &'a Game,
+    kind: impl Fn(&bd_core::data::NewsRules) -> &bd_core::data::NewsKind,
+) -> Vec<&'a str> {
     let title = &kind(&g.data.realm.as_ref().unwrap().news).title;
     (g.realms.news.iter())
         .filter(|n| n.title == *title)
@@ -471,17 +486,33 @@ fn kingdoms_at_war_take_border_land_and_the_map_follows() {
     let loser = &before.owners[&p];
     // A war between the two was on in one of their worlds.
     let at_war = |a: &NeighbourId, b: &NeighbourId| {
-        before.list[a].g.world.war.as_ref().is_some_and(|w| w.enemy == *b)
+        before.list[a]
+            .g
+            .world
+            .war
+            .as_ref()
+            .is_some_and(|w| w.enemy == *b)
     };
     assert!(at_war(&winner, loser) || at_war(loser, &winner));
     // The province lay on the winner's border.
     let w = &before.list[&winner].g.world;
-    let border = w.provinces[&p].neighbours.iter().any(|q| before.owners[q] == winner);
+    let border = w.provinces[&p]
+        .neighbours
+        .iter()
+        .any(|q| before.owners[q] == winner);
     assert!(border, "{p:?}");
     one_map(g);
-    assert_eq!(g.realms.list[&winner].g.world.provinces[&p].holder, Holder::Crown);
+    assert_eq!(
+        g.realms.list[&winner].g.world.provinces[&p].holder,
+        Holder::Crown
+    );
     let name = &g.world.provinces[&p].name;
-    assert!(news(g, |n| &n.capture).iter().any(|t| t.contains(name.as_str())), "{name}");
+    assert!(
+        news(g, |n| &n.capture)
+            .iter()
+            .any(|t| t.contains(name.as_str())),
+        "{name}"
+    );
 }
 
 /// Stage 27 acceptance: a vassal of a foreign kingdom that breaks away (`Effect::Secede`)
@@ -500,12 +531,24 @@ fn a_foreign_vassal_that_breaks_away_founds_a_kingdom() {
     assert_eq!(w.heirs.len(), 2);
     assert_eq!(w.capital.province, ProvinceId("kirm".into()));
     assert_eq!(w.provinces[&w.capital.province].holder, Holder::Crown);
-    assert_eq!(w.axes[&bd_core::state::AxisId("army".into())], bd_core::fx::Fx::from_int(25));
+    assert_eq!(
+        w.axes[&bd_core::state::AxisId("army".into())],
+        bd_core::fx::Fx::from_int(25)
+    );
     assert!(w.neighbours[&id("purpur")].relation < bd_core::fx::Fx(0));
     one_map(&g);
     let v = g.world.neighbours[&melissin].realm.as_ref().unwrap();
-    assert_eq!((v.house.as_str(), v.ruler.as_str()), ("Мелиссин", w.ruler.name.as_str()));
-    assert!(g.realms.list[&id("nordmark")].g.world.neighbours.contains_key(&melissin));
+    assert_eq!(
+        (v.house.as_str(), v.ruler.as_str()),
+        ("Мелиссин", w.ruler.name.as_str())
+    );
+    assert!(
+        g.realms.list[&id("nordmark")]
+            .g
+            .world
+            .neighbours
+            .contains_key(&melissin)
+    );
     assert_eq!(news(&g, |n| &n.breakaway).len(), 1);
 }
 
@@ -524,7 +567,12 @@ fn a_kingdom_without_land_is_no_more_and_its_land_goes_by_rule() {
         }
         to_year_end(&mut g);
         assert!(!g.realms.list.contains_key(&id("purpur")));
-        let falls: Vec<_> = g.realms.falls.iter().map(|(id, _, f)| (id.0.as_str(), f)).collect();
+        let falls: Vec<_> = g
+            .realms
+            .falls
+            .iter()
+            .map(|(id, _, f)| (id.0.as_str(), f))
+            .collect();
         assert_eq!(falls, [("purpur", &FallReason::Conquered)]);
         assert_eq!(news(&g, |n| &n.fallen).len(), 1);
         one_map(&g);
@@ -540,7 +588,10 @@ fn a_kingdom_without_land_is_no_more_and_its_land_goes_by_rule() {
     let g = lost(&f);
     assert_eq!(g.realms.owners[&kirm], id("melissin"));
     assert_eq!(g.realms.list[&id("melissin")].house, "Мелиссин");
-    assert_eq!(g.realms.owners[&ProvinceId("amaran".into())], id("nordmark"));
+    assert_eq!(
+        g.realms.owners[&ProvinceId("amaran".into())],
+        id("nordmark")
+    );
 }
 
 /// Stage 27 acceptance: a kingdom whose dynasty ends keeps its throne under a new house, as a
@@ -553,7 +604,10 @@ fn a_fallen_dynasty_leaves_its_throne_to_a_new_house() {
     nordmark.g.world.heirs.clear();
     nordmark.g.ended = Some("old_age".into());
     to_year_end(&mut g);
-    assert_eq!(g.realms.falls, [(id("nordmark"), Tick(0), FallReason::NoHeir)]);
+    assert_eq!(
+        g.realms.falls,
+        [(id("nordmark"), Tick(0), FallReason::NoHeir)]
+    );
     let d = &g.realms.list[&id("nordmark")];
     assert!(d.fall.is_none());
     assert_ne!(d.house, "Эрлинги");

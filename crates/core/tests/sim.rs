@@ -1169,7 +1169,14 @@ fn year_changes_of_seed_42_script_a() {
             vec![born("Аделина"), Change::HeirGone("Освальд".into())],
         ),
         // Stage 27: the founder's reign as it was; Нордмарк takes Порфир from Пурпуляндия.
-        (1198, vec![Change::Holder(pid("porfir"), foreign("purpur"), foreign("nordmark"))]),
+        (
+            1198,
+            vec![Change::Holder(
+                pid("porfir"),
+                foreign("purpur"),
+                foreign("nordmark"),
+            )],
+        ),
         (1203, vec![axis("loyalty_church", 5)]),
         (1205, vec![axis("legitimacy", 6), axis("prestige", 15)]),
         (1215, vec![axis("loyalty_church", 5)]),

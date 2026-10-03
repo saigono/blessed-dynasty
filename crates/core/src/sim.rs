@@ -8,8 +8,8 @@ use crate::rng::Rng;
 use crate::rules::add_axis;
 use crate::rules::{Choice, Effect, Event, HeirOp, NewHolder, Predicate, ProvinceField, Target};
 use crate::state::{
-    Axes, AxisId, CauseTag, HeirStatus, Holder, Kin, MarkKey, NeighbourId, Ruler, Sex,
-    Vassal, VassalId, World,
+    Axes, AxisId, CauseTag, HeirStatus, Holder, Kin, MarkKey, NeighbourId, Ruler, Sex, Vassal,
+    VassalId, World,
 };
 use crate::testament;
 use crate::text;

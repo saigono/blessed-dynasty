@@ -163,7 +163,9 @@ fn owner(h: &Holder, me: &NeighbourId) -> NeighbourId {
 
 /// The name our world knows a state by.
 fn name(w: &World, id: &NeighbourId) -> String {
-    w.neighbours.get(id).map_or(id.0.clone(), |n| n.name.clone())
+    w.neighbours
+        .get(id)
+        .map_or(id.0.clone(), |n| n.name.clone())
 }
 
 /// A year of every kingdom up to our tick, then the world drawn anew (see the module). Called
@@ -217,7 +219,11 @@ pub(crate) fn year(g: &mut Game) {
         let (from, to) = (&realms.owners[p], &owners[p]);
         if realms.list.contains_key(from) && realms.list.contains_key(to) {
             let (a, b) = (name(ours, to), name(ours, from));
-            let named = [("realm", a.as_str()), ("enemy", &b), ("province", &ours.provinces[p].name)];
+            let named = [
+                ("realm", a.as_str()),
+                ("enemy", &b),
+                ("province", &ours.provinces[p].name),
+            ];
             tell(&rules.news.capture, &named);
         }
     }
@@ -227,7 +233,9 @@ pub(crate) fn year(g: &mut Game) {
         .cloned()
         .collect();
     for id in new {
-        let Some(from) = (by.iter()).find(|(p, _)| owners[*p] == id).map(|(_, me)| me.clone())
+        let Some(from) = (by.iter())
+            .find(|(p, _)| owners[*p] == id)
+            .map(|(_, me)| me.clone())
         else {
             continue;
         };
@@ -238,7 +246,11 @@ pub(crate) fn year(g: &mut Game) {
         let called = name(&src, &id);
         if found(realms, ours, &owners, (&id, &called), &src, &from) && from != realms.us {
             let (lord, province) = (name(ours, &from), capital_name(realms, &id));
-            let named = [("realm", called.as_str()), ("enemy", &lord), ("province", &province)];
+            let named = [
+                ("realm", called.as_str()),
+                ("enemy", &lord),
+                ("province", &province),
+            ];
             tell(&rules.news.breakaway, &named);
         }
     }
@@ -259,7 +271,10 @@ pub(crate) fn year(g: &mut Game) {
         if crown {
             let (old, house) = rehouse(realms, &owners, &id, data, &rules.usurper);
             ours.unions.remove(&id);
-            tell(&rules.news.house, &[("realm", &realm), ("house", &house), ("old", &old)]);
+            tell(
+                &rules.news.house,
+                &[("realm", &realm), ("house", &house), ("old", &old)],
+            );
             continue;
         }
         tell(&rules.news.fallen, &[("realm", &realm)]);
@@ -275,7 +290,9 @@ pub(crate) fn year(g: &mut Game) {
                 (Some(c), _) => c.clone(),
                 (None, Holder::Vassal(v)) => {
                     let taken = |n: &NeighbourId| {
-                        *n == realms.us || realms.list.contains_key(n) || ours.neighbours.contains_key(n)
+                        *n == realms.us
+                            || realms.list.contains_key(n)
+                            || ours.neighbours.contains_key(n)
                     };
                     (states.entry(v.clone()).or_insert_with(|| {
                         let mut n = NeighbourId(v.0.clone());
@@ -293,7 +310,11 @@ pub(crate) fn year(g: &mut Game) {
             let called = w.vassals.get(&v).map_or(v.0.clone(), |v| v.name.clone());
             if found(realms, ours, &owners, (&n, &called), &w, &id) {
                 let province = capital_name(realms, &n);
-                let named = [("realm", called.as_str()), ("enemy", &realm), ("province", &province)];
+                let named = [
+                    ("realm", called.as_str()),
+                    ("enemy", &realm),
+                    ("province", &province),
+                ];
                 tell(&rules.news.breakaway, &named);
             }
         }
@@ -405,7 +426,11 @@ fn found(
     };
     let mut w = World::from_preset(&f.data, &preset);
     (w.start_year, w.tick, w.ruler.reign_start) = (ours.start_year, ours.tick, ours.tick);
-    if let Some(lord) = ours.neighbours.get(from).filter(|_| realms.list.contains_key(from)) {
+    if let Some(lord) = ours
+        .neighbours
+        .get(from)
+        .filter(|_| realms.list.contains_key(from))
+    {
         let grudge = f.data.sim.secession_relation;
         w.neighbours.insert(from.clone(), stranger(lord, grudge));
     }
@@ -414,17 +439,19 @@ fn found(
     realms.list.insert(id.clone(), d);
     let ordinal = (ours.neighbours.values().map(|n| n.ordinal + 1).max()).unwrap_or(0);
     // Our own vassal that broke away has his entry already (`Effect::Secede`).
-    ours.neighbours.entry(id.clone()).or_insert_with(|| Neighbour {
-        id: id.clone(),
-        name: name.to_string(),
-        relation: Fx(0),
-        strength: Fx(0),
-        stance: Stance::Wait,
-        per_province: Fx(0),
-        ordinal,
-        marks: Default::default(),
-        realm: None,
-    });
+    ours.neighbours
+        .entry(id.clone())
+        .or_insert_with(|| Neighbour {
+            id: id.clone(),
+            name: name.to_string(),
+            relation: Fx(0),
+            strength: Fx(0),
+            stance: Stance::Wait,
+            per_province: Fx(0),
+            ordinal,
+            marks: Default::default(),
+            realm: None,
+        });
     true
 }
 
@@ -515,7 +542,11 @@ fn rehouse(
     ruler.reign_start = w.tick;
     w.found_house(ruler, heirs);
     let d_ = &g.data;
-    for flag in [&d_.sim.usurped_flag, &d_.abdication.contested_flag, &d_.sim.regency_flag] {
+    for flag in [
+        &d_.sim.usurped_flag,
+        &d_.abdication.contested_flag,
+        &d_.sim.regency_flag,
+    ] {
         w.flags.remove(flag);
     }
     for flag in &d_.sim.reign_flags {
@@ -572,9 +603,13 @@ fn meet(realms: &mut Realms, ours: &mut World, r: &RealmStrength) {
     let strength: BTreeMap<NeighbourId, Fx> = (realms.list.iter())
         .map(|(id, d)| {
             let (w, data) = (&d.g.world, &d.g.data);
-            let axes = (r.axes.iter()).fold(Fx(0), |s, (a, c)| s + crate::data::curve(c, w.axes[a]));
+            let axes =
+                (r.axes.iter()).fold(Fx(0), |s, (a, c)| s + crate::data::curve(c, w.axes[a]));
             let land = Fx::from_int(held.get(id).copied().unwrap_or(0)) * r.province;
-            (id.clone(), (w.axes[&data.war.army] * r.army + land + axes).max(Fx(0)))
+            (
+                id.clone(),
+                (w.axes[&data.war.army] * r.army + land + axes).max(Fx(0)),
+            )
         })
         .collect();
     for (id, d) in &realms.list {
@@ -590,7 +625,10 @@ fn meet(realms: &mut Realms, ours: &mut World, r: &RealmStrength) {
     for (id, d) in &mut realms.list {
         let w = &mut d.g.world;
         for n in known.iter().filter(|n| n.id != *id) {
-            let e = w.neighbours.entry(n.id.clone()).or_insert_with(|| n.clone());
+            let e = w
+                .neighbours
+                .entry(n.id.clone())
+                .or_insert_with(|| n.clone());
             (e.name, e.strength, e.ordinal) = (n.name.clone(), n.strength, n.ordinal);
             e.per_province = Fx(0);
         }

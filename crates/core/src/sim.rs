@@ -280,6 +280,21 @@ impl Dynasty {
         }
     }
 
+    /// Kingdom `g` under a new house (`realm.rs`): its chronicle `c` goes on with the new
+    /// ruler, his deeds told from now on.
+    pub fn under(c: Chronicle, g: Game) -> Dynasty {
+        let mut d = Dynasty::new(g);
+        let ruler = d.c.rulers.pop();
+        d.c = Chronicle {
+            rulers: c.rulers.into_iter().chain(ruler).collect(),
+            ..c
+        };
+        if let Some((r, _)) = &mut d.reign {
+            r.from = d.c.entries.len();
+        }
+        d
+    }
+
     /// Plays up to `tick`, the next heir crowned if the reign ended on it.
     pub fn until(&mut self, tick: Tick) {
         while self.fall.is_none() && self.g.world.tick < tick {

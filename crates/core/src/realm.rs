@@ -565,7 +565,7 @@ fn rehouse(
     w.recompute_loyalty(d_);
     w.recompute_crown_power(d_);
     (g.queue, g.pending_event, g.ended, g.reported) = (Vec::new(), None, None, false);
-    let mut d = Dynasty::new(d.g);
+    let mut d = Dynasty::under(d.c, d.g);
     d.house = house.clone();
     realms.list.insert(id.clone(), d);
     (old, house)

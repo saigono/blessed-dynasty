@@ -47,7 +47,7 @@
         us: "kingdom",
         // Stage 27: a kingdom founded later: a vassal that broke away (his house on the throne)
         // or a new house on a fallen throne (only the ruler and heirs; the kingdom keeps its
-        // axes and laws). Names from names.ron; a new state is poorer and weaker than an old one.
+        // axes and laws). Names from names.ron; a new state is armed as an old one, but poorer.
         founded: Some((
             ruler: (name: "", age: 34, health: 75, traits: [], reign_start: 0, sex: Male),
             heirs: [
@@ -55,7 +55,7 @@
                 (name: "", age: 9, ability: 50, claim: 40, status: Home, sex: Female),
             ],
             flags: ["law_primogeniture", "married"],
-            axes: {"army": 25, "treasury": 80, "legitimacy": 50, "stability": 55, "bureaucracy": 20},
+            axes: {"army": 70, "treasury": 80, "legitimacy": 50, "stability": 55, "bureaucracy": 20},
         )),
         kingdoms: [
             // Warlike and old-fashioned: the eldest of the house inherits.

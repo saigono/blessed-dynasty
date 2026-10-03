@@ -105,7 +105,7 @@ fn the_kingdoms_reach_us_only_through_the_realm_rules() {
 /// Stage 26b: it opens to the same reign; the dynasty after it goes another way (the queue
 /// of events by importance, one more action for the automaton), re-pinned. Stage 27: the same
 /// reign again, the dynasty after it re-pinned: the neighbours' strength is their kingdoms'
-/// own now, their wars and houses move it, and a usurper ends the dynasty in its 297th year.
+/// own now, their wars and houses move it, and a usurper ends the dynasty in its 205th year.
 #[test]
 fn a_link_from_before_the_stage_plays_the_same() {
     let link = "AQdkZWZhdWx0Kh0AASMAAQABAQABAQABAQABAQABAQAAAQABAgABAQAAAQABAQABAQABAgABAQABAQABAQABAQ\
@@ -131,9 +131,9 @@ fn a_link_from_before_the_stage_plays_the_same() {
             c.entries.len(),
             s.total
         ),
-        (28, 297, "Usurped", 114, 25261)
+        (28, 205, "Usurped", 85, 15882)
     );
-    assert_eq!(format!("{hash:016x}"), "5fbf9fa0ad8835b8");
+    assert_eq!(format!("{hash:016x}"), "dafed280dd3a5764");
     assert_eq!(
         c.realms.len(),
         5,
@@ -533,7 +533,7 @@ fn a_foreign_vassal_that_breaks_away_founds_a_kingdom() {
     assert_eq!(w.provinces[&w.capital.province].holder, Holder::Crown);
     assert_eq!(
         w.axes[&bd_core::state::AxisId("army".into())],
-        bd_core::fx::Fx::from_int(25)
+        bd_core::fx::Fx::from_int(70)
     );
     assert!(w.neighbours[&id("purpur")].relation < bd_core::fx::Fx(0));
     one_map(&g);
@@ -613,6 +613,9 @@ fn a_fallen_dynasty_leaves_its_throne_to_a_new_house() {
     assert_ne!(d.house, "Эрлинги");
     assert!(g.data.names.houses.contains(&d.house));
     assert_ne!(d.g.world.ruler.name, "Харальд");
+    // Its chronicle goes on: the old house's ruler, then the new one.
+    let rulers: Vec<_> = d.c.rulers.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(rulers, ["Харальд", d.g.world.ruler.name.as_str()]);
     assert_eq!(d.g.world.heirs.len(), 2);
     let legitimacy = d.g.world.axes[&bd_core::state::AxisId("legitimacy".into())];
     assert_eq!(legitimacy, bd_core::fx::Fx::from_int(30));
@@ -621,4 +624,35 @@ fn a_fallen_dynasty_leaves_its_throne_to_a_new_house() {
     let told = news(&g, |n| &n.house);
     assert_eq!(told.len(), 1);
     assert!(told[0].contains("Эрлинг"), "{}", told[0]);
+}
+
+/// Stage 27: the preset names relations with other kingdoms only, and the profile of a new
+/// kingdom only axes the rules know.
+#[test]
+fn the_preset_of_the_kingdoms_is_checked() {
+    let bad = [
+        with_preset(|p| {
+            p.replacen(
+                r#"relations: {"nordmark": -25}"#,
+                r#"relations: {"purpur": -25}"#,
+                1,
+            )
+        }),
+        with_preset(|p| {
+            p.replacen(
+                r#"relations: {"nordmark": -25}"#,
+                r#"relations: {"kingdom": -25}"#,
+                1,
+            )
+        }),
+        with_preset(|p| p.replacen(r#"axes: {"army": 70,"#, r#"axes: {"armee": 70,"#, 1)),
+    ];
+    for (f, want) in bad.iter().zip([
+        "relation with purpur",
+        "relation with kingdom",
+        "founded: unknown axis armee",
+    ]) {
+        let e = batch::load(f, PRESET, MAP, 0).unwrap_err().join("\n");
+        assert!(e.contains(want), "{e}");
+    }
 }

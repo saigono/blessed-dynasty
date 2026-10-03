@@ -311,7 +311,9 @@ pub fn buildings(data: &Data) -> Vec<String> {
     let events = data.events.iter().chain(&data.sim_events);
     let choices = events.flat_map(|e| e.choices.iter().map(move |c| (&e.id, &c.effects)));
     let actions = data.actions.iter().map(|a| (&a.id, &a.on_complete));
-    let effects = choices.chain(actions).flat_map(|(id, es)| es.iter().map(move |e| (id, e)));
+    let effects = choices
+        .chain(actions)
+        .flat_map(|(id, es)| es.iter().map(move |e| (id, e)));
     effects
         .filter_map(|(at, e)| match e {
             Effect::Build(_, b) if !data.buildings.iter().any(|d| d.id == *b) => {

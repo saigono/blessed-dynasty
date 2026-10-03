@@ -327,7 +327,11 @@ fn a_link_of_an_automaton_game_plays_the_same() {
         let l = bd_core::link::decode(&bd_core::link::encode("default", seed, &g)).unwrap();
         let mut again = start.clone();
         l.play(&mut again).unwrap();
-        assert_eq!(batch::world_hash(&again), batch::world_hash(&g), "seed {seed}");
+        assert_eq!(
+            batch::world_hash(&again),
+            batch::world_hash(&g),
+            "seed {seed}"
+        );
         assert_eq!(again.rng, g.rng);
     }
 }

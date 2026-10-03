@@ -668,15 +668,17 @@ impl App {
                     _ => None,
                 })
                 .collect();
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                map::legend(ui, &g.world, &g.data);
-                let clicked = self.map.show(ui, &g.world, &g.data, &marked);
-                if let (Some(id), Some((action, _))) = (clicked, &self.picking)
-                    && marked.contains(&id)
-                {
-                    cmd = Some(Cmd::Act(action.clone(), Some(Target::Province(id))));
-                }
-            });
+            // A panel, not a bottom-up layout: the legend wraps into rows that must stay visible.
+            egui::Panel::bottom("legend")
+                .resizable(false)
+                .frame(egui::Frame::NONE)
+                .show(ui, |ui| map::legend(ui, &g.world, &g.data));
+            let clicked = self.map.show(ui, &g.world, &g.data, &marked);
+            if let (Some(id), Some((action, _))) = (clicked, &self.picking)
+                && marked.contains(&id)
+            {
+                cmd = Some(Cmd::Act(action.clone(), Some(Target::Province(id))));
+            }
         });
         cmd
     }
@@ -1115,7 +1117,9 @@ fn change_lines(g: &Game, before: &World, w: &World) -> Vec<Line> {
     let mut lines: Vec<Line> = (w.changes(before, d).into_iter())
         .filter_map(|c| match c {
             // Whole numbers: «Знать +7.84» read as noise (stage 26b).
-            Change::Axis(a, v) => Some((format!("{} {}", axis_name(d, &a), plus(v)), Some(v > Fx(0)))),
+            Change::Axis(a, v) => {
+                Some((format!("{} {}", axis_name(d, &a), plus(v)), Some(v > Fx(0))))
+            }
             Change::Born(name) => Some((format!("Рождение: {name}"), Some(true))),
             Change::HeirGone(name) => Some(heir_gone(g, before, w, &name)),
             Change::Holder(..) => None,
@@ -1136,12 +1140,17 @@ fn change_lines(g: &Game, before: &World, w: &World) -> Vec<Line> {
 pub(crate) fn lands(d: &Data, before: &World, w: &World) -> Option<Line> {
     let own = |w: &World| {
         let all = w.provinces.values();
-        all.filter(|p| !matches!(p.holder, Holder::Foreign(_))).count() as i64
+        all.filter(|p| !matches!(p.holder, Holder::Foreign(_)))
+            .count() as i64
     };
     // Who got them, in the order the provinces come: (holder, names).
     let mut got: Vec<(&Holder, Vec<&str>)> = vec![];
     for p in w.provinces.values() {
-        if before.provinces.get(&p.id).is_none_or(|b| b.holder == p.holder) {
+        if before
+            .provinces
+            .get(&p.id)
+            .is_none_or(|b| b.holder == p.holder)
+        {
             continue;
         }
         match got.iter_mut().find(|(h, _)| **h == p.holder) {
@@ -1177,7 +1186,12 @@ pub(crate) fn lands(d: &Data, before: &World, w: &World) -> Option<Line> {
     let delta = own(w) - own(before);
     let text = match delta {
         0 => format!("Земли: {}", parts.join(", ")),
-        _ => format!("Земли: {}{} — {}", if delta > 0 { "+" } else { "−" }, delta.abs(), parts.join(", ")),
+        _ => format!(
+            "Земли: {}{} — {}",
+            if delta > 0 { "+" } else { "−" },
+            delta.abs(),
+            parts.join(", ")
+        ),
     };
     Some((text, (delta != 0).then_some(delta > 0)))
 }
@@ -1942,16 +1956,22 @@ fn movers(d: &Data, w: &World, a: &AxisId) -> Vec<String> {
     let own = |x: &&Action| !x.id.starts_with(ENACT) && !x.id.starts_with(REPEAL);
     for act in d.actions.iter().filter(own) {
         let s = sides(&[&act.on_complete[..], &act.yearly[..]].concat());
-        (0..2).filter(|&k| s[k]).for_each(|k| by[k].push(named(w, &act.name)));
+        (0..2)
+            .filter(|&k| s[k])
+            .for_each(|k| by[k].push(named(w, &act.name)));
     }
     for l in &d.laws.list {
         let mut s = sides(&l.on_complete);
         let mut shift = |v: Fx| s[(v < Fx(0)) as usize] |= v != Fx(0);
-        (l.anchors.iter()).filter(|(x, _)| x == a).for_each(|(_, v)| shift(*v));
+        (l.anchors.iter())
+            .filter(|(x, _)| x == a)
+            .for_each(|(_, v)| shift(*v));
         if *a == d.economy.treasury {
             shift(l.treasury);
         }
-        (0..2).filter(|&k| s[k]).for_each(|k| by[k].push(format!("закон «{}»", l.name)));
+        (0..2)
+            .filter(|&k| s[k])
+            .for_each(|k| by[k].push(format!("закон «{}»", l.name)));
     }
     let mut pool: Vec<&bd_core::rules::Event> = d.events.iter().filter(|e| e.weight > 0).collect();
     pool.sort_by_key(|e| std::cmp::Reverse(e.weight));
@@ -1966,7 +1986,9 @@ fn movers(d: &Data, w: &World, a: &AxisId) -> Vec<String> {
     }
     let verbs = ["Поднимают", "Опускают"].into_iter().zip(by);
     let lines = verbs.filter(|(_, l)| !l.is_empty());
-    lines.map(|(v, l)| format!("{v}: {}", l.join(", "))).collect()
+    lines
+        .map(|(v, l)| format!("{v}: {}", l.join(", ")))
+        .collect()
 }
 
 /// The most frequent events `movers` names each way.
@@ -2869,14 +2891,18 @@ mod tests {
         let want = vec![
             (
                 "1188",
-                vec![line("Отряды Нордмарка перешли границу и жгли сёла земли Арден, но королевское войско отбросило их.", None)],
-                vec![
-                    money("+27: доход +32, расходы -5"),
-                ],
+                vec![line(
+                    "Отряды Нордмарка перешли границу и жгли сёла земли Арден, но королевское войско отбросило их.",
+                    None,
+                )],
+                vec![money("+27: доход +32, расходы -5")],
             ),
             (
                 "1189",
-                vec![line("Бароны потребовали подтвердить их старые вольности, и Ульрих скрепил грамоту. Руки короны стали короче.", None)],
+                vec![line(
+                    "Бароны потребовали подтвердить их старые вольности, и Ульрих скрепил грамоту. Руки короны стали короче.",
+                    None,
+                )],
                 vec![
                     money("+28: доход +32, расходы -4"),
                     line("Бюрократия -5", Some(false)),
@@ -2886,7 +2912,10 @@ mod tests {
             ),
             (
                 "1190",
-                vec![line("Купцы Веструма получили право торговать на ярмарках королевства.", None)],
+                vec![line(
+                    "Купцы Веструма получили право торговать на ярмарках королевства.",
+                    None,
+                )],
                 vec![
                     money("+54: доход +33, расходы -4, действия и события +25"),
                     line("Рождение: Генрих", Some(true)),
@@ -2894,7 +2923,10 @@ mod tests {
             ),
             (
                 "1191",
-                vec![line("Знать съехалась в столицу на собор, и Ульрих выслушал лучших людей королевства.", None)],
+                vec![line(
+                    "Знать съехалась в столицу на собор, и Ульрих выслушал лучших людей королевства.",
+                    None,
+                )],
                 vec![
                     money("+28: доход +33, расходы -4"),
                     line("Знать +8", Some(true)),
@@ -2902,7 +2934,10 @@ mod tests {
             ),
             (
                 "1192",
-                vec![line("Дозор Веструма сжёг пограничную мельницу и убил людей, и корона потребовала виру за убитых.", None)],
+                vec![line(
+                    "Дозор Веструма сжёг пограничную мельницу и убил людей, и корона потребовала виру за убитых.",
+                    None,
+                )],
                 vec![
                     money("+44: доход +33, расходы -4, действия и события +15"),
                     line("Рождение: Освальд", Some(true)),
@@ -2910,7 +2945,10 @@ mod tests {
             ),
             (
                 "1193",
-                vec![line("Купцы Веструма получили право торговать на ярмарках королевства.", None)],
+                vec![line(
+                    "Купцы Веструма получили право торговать на ярмарках королевства.",
+                    None,
+                )],
                 vec![
                     money("+54: доход +33, расходы -4, действия и события +25"),
                     line("Умер в детстве королевский сын Генрих", Some(false)),
@@ -2947,7 +2985,10 @@ mod tests {
         (g.world.war, g.queue) = (None, vec![]);
         h.app.apply(Cmd::Wait);
         let quiet = vec![money("+28: доход +33, расходы -4")];
-        assert_eq!(h.app.journal.last().unwrap(), &("1194".to_string(), vec![], quiet));
+        assert_eq!(
+            h.app.journal.last().unwrap(),
+            &("1194".to_string(), vec![], quiet)
+        );
         assert!(texts_of(&mut h).contains(&"Тихий год".to_string()));
     }
 
@@ -3535,7 +3576,10 @@ mod tests {
             );
         }
         // Stage 26b: the land in one line, who got which province.
-        let land = shown.iter().find(|t| t.starts_with("Земли:")).expect("the land line");
+        let land = shown
+            .iter()
+            .find(|t| t.starts_with("Земли:"))
+            .expect("the land line");
         assert!(land.contains("вассалу Вейр Гарт"), "{land}");
         // The founder's life, and the successor as the chronicle crowned him.
         assert!(shown.contains(&c.rulers[0].full_name()), "{shown:?}");
@@ -4377,11 +4421,19 @@ mod tests {
         let berg = ProvinceId("berg".into());
         let p = g.world.provinces.get_mut(&berg).unwrap();
         p.buildings = ["fort", "market"].map(String::from).into();
-        h.app.apply(Cmd::Act("build_road".into(), Some(Target::Province(berg))));
+        h.app
+            .apply(Cmd::Act("build_road".into(), Some(Target::Province(berg))));
         let out = h.frame(vec![]);
         let at = h.province_on_screen("berg");
         let d = load_data();
-        let icon = |id: &str| d.buildings.iter().find(|b| b.id == id).unwrap().icon.clone();
+        let icon = |id: &str| {
+            d.buildings
+                .iter()
+                .find(|b| b.id == id)
+                .unwrap()
+                .icon
+                .clone()
+        };
         let near: Vec<(String, egui::Color32)> = (colored_texts(&out).into_iter())
             .filter(|(t, p, _)| d.buildings.iter().any(|b| b.icon == *t) && p.distance(at) < 40.0)
             .map(|(t, _, c)| (t, c))
@@ -4389,9 +4441,27 @@ mod tests {
         let pale = FG.gamma_multiply(map::UNDERWAY_ALPHA);
         assert_eq!(
             near,
-            [(icon("fort"), FG), (icon("road"), pale), (icon("market"), FG)]
+            [
+                (icon("fort"), FG),
+                (icon("road"), pale),
+                (icon("market"), FG)
+            ]
         );
-        h.ctx.global_style_mut(|s| s.interaction.tooltip_delay = 0.0);
+        // The legend names every icon, its last row not clipped away under the map panel.
+        let last = d
+            .buildings
+            .last()
+            .map(|b| format!("{} {}", b.icon, b.name))
+            .unwrap();
+        let shown = out.shapes.iter().any(|c| match &c.shape {
+            egui::Shape::Text(t) => {
+                t.galley.text() == last && c.clip_rect.contains_rect(t.visual_bounding_rect())
+            }
+            _ => false,
+        });
+        assert!(shown, "{last}");
+        h.ctx
+            .global_style_mut(|s| s.interaction.tooltip_delay = 0.0);
         h.frame(vec![Event::PointerMoved(Pos2::new(1.0, 1.0))]);
         h.frame(vec![Event::PointerMoved(at)]);
         settle(&mut h);
@@ -4408,13 +4478,21 @@ mod tests {
         let ctx = egui::Context::default();
         let mut fonts = egui::FontDefinitions::empty();
         let font = egui::FontData::from_static(FONT);
-        fonts.font_data.insert("dejavu".into(), std::sync::Arc::new(font));
+        fonts
+            .font_data
+            .insert("dejavu".into(), std::sync::Arc::new(font));
         let family = egui::FontFamily::Name("dejavu".into());
         fonts.families.insert(family.clone(), vec!["dejavu".into()]);
-        fonts.families.insert(egui::FontFamily::Proportional, vec!["dejavu".into()]);
-        fonts.families.insert(egui::FontFamily::Monospace, vec!["dejavu".into()]);
+        fonts
+            .families
+            .insert(egui::FontFamily::Proportional, vec!["dejavu".into()]);
+        fonts
+            .families
+            .insert(egui::FontFamily::Monospace, vec!["dejavu".into()]);
         ctx.set_fonts(fonts);
-        ctx.run_ui(RawInput::default(), |_| {}).textures_delta.clear();
+        ctx.run_ui(RawInput::default(), |_| {})
+            .textures_delta
+            .clear();
         let d = load_data();
         assert!(d.buildings.len() >= 6);
         // A glyph not in the font has no width (egui's `has_glyph` says no for every glyph
@@ -4438,10 +4516,19 @@ mod tests {
         let t = texts_of(&mut h);
         let value = t[pos(&t, "Бюрократия") + 1].clone();
         let tip = hover(&mut h, &value);
-        let up = tip.iter().find(|x| x.starts_with("Поднимают: ")).expect("{tip:?}");
+        let up = tip
+            .iter()
+            .find(|x| x.starts_with("Поднимают: "))
+            .expect("{tip:?}");
         assert!(up.contains("Учредить канцелярию"), "{up}");
-        assert!(up.contains("закон «Монастырские школы»") || !up.contains("закон"), "{up}");
-        let down = tip.iter().find(|x| x.starts_with("Опускают: ")).expect("{tip:?}");
+        assert!(
+            up.contains("закон «Монастырские школы»") || !up.contains("закон"),
+            "{up}"
+        );
+        let down = tip
+            .iter()
+            .find(|x| x.starts_with("Опускают: "))
+            .expect("{tip:?}");
         assert!(down.contains("«Знать требует»"), "{down}");
         assert!(!down.contains("Учредить канцелярию"), "{down}");
         // The nobles: the chancery lowers them.
@@ -4467,7 +4554,11 @@ mod tests {
         holder(&mut before, "skala", Holder::Crown);
         holder(&mut g.world, "frostad", Holder::Crown);
         holder(&mut g.world, "nordheim", Holder::Crown);
-        holder(&mut g.world, "berg", Holder::Vassal(bd_core::state::VassalId("weir".into())));
+        holder(
+            &mut g.world,
+            "berg",
+            Holder::Vassal(bd_core::state::VassalId("weir".into())),
+        );
         h.app.year_start = Some(before);
         h.app.apply(Cmd::Wait);
         let want = "Земли: +1 — вассалу Вейр Берг, короне Фростад и Нордхейм, Нордмарк взял Скалу";
@@ -4500,13 +4591,18 @@ mod tests {
         let g = h.game();
         assert!(g.pending_event.is_none());
         let last = g.decisions.last().unwrap();
-        assert!(matches!(&last.kind, bd_core::game::DecisionKind::EventChoice { event_id, .. } if event_id == "cap_festival"));
+        assert!(
+            matches!(&last.kind, bd_core::game::DecisionKind::EventChoice { event_id, .. } if event_id == "cap_festival")
+        );
         let (_, chosen, lines) = h.app.journal.last().unwrap();
         assert!(chosen.is_empty(), "{chosen:?}");
         let told = "В день святого покровителя Ульрих устроил турнир";
         assert!(lines.iter().any(|(t, _)| t.starts_with(told)), "{lines:?}");
         let shown = texts_of(&mut h);
-        assert!(shown.iter().any(|t| t.starts_with(&format!("· {told}"))), "{shown:?}");
+        assert!(
+            shown.iter().any(|t| t.starts_with(&format!("· {told}"))),
+            "{shown:?}"
+        );
     }
 
     /// Slow: builds the release wasm and tells its size. `cargo test -p ui -- --ignored`.

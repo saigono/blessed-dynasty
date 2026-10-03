@@ -202,7 +202,11 @@ impl MapView {
             let left = (icons.len() as f32 - 1.0) * size * 0.6;
             for (k, (b, built)) in icons.iter().enumerate() {
                 let at = self.to_screen(c) + vec2(k as f32 * size * 1.2 - left, size * 1.1);
-                let color = if *built { FG } else { FG.gamma_multiply(UNDERWAY_ALPHA) };
+                let color = if *built {
+                    FG
+                } else {
+                    FG.gamma_multiply(UNDERWAY_ALPHA)
+                };
                 let (center, icon) = (eframe::egui::Align2::CENTER_CENTER, b.icon.clone());
                 painter.text(at, center, icon, font.clone(), color);
             }

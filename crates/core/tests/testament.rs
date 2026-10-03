@@ -459,4 +459,3 @@ fn an_order_kept_a_hundred_years_is_a_legacy() {
     w.testament.as_mut().unwrap().broken = Some(Tick(10));
     assert_eq!(legacy(&broken, &rules), legacy(&c, &none));
 }
-

@@ -569,6 +569,7 @@ mod tests {
             axes: Default::default(),
             deserted: 0,
             nodes: vec![],
+            epilogue: String::new(),
         };
         assert_eq!(title(&g.data, &c.entries[0]), "Знамение. Беглые");
         assert_eq!(title(&g.data, &c.entries[1]), "Беглые");

@@ -274,6 +274,7 @@ mod tests {
             axes: Default::default(),
             deserted: 0,
             nodes: vec![],
+            epilogue: String::new(),
         }
     }
 

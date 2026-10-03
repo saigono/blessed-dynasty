@@ -9,5 +9,6 @@ pub mod rules;
 pub mod score;
 pub mod sim;
 pub mod state;
+pub mod text;
 pub mod time;
 pub mod war;

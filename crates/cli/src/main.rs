@@ -1100,6 +1100,7 @@ mod tests {
             designated: (seed == 1) as u32,
             bastards: 2 * (seed == 2) as u32,
             nodes: vec![],
+            epilogue: String::new(),
             bounds: vec![],
             shocks: (0, 0),
             score_at: score / 2,
@@ -1231,6 +1232,7 @@ mod tests {
             axes: Default::default(),
             deserted: 0,
             nodes: vec![],
+            epilogue: String::new(),
         };
         let war = |a, b| ("war".to_string(), a, b);
         let want = [war(Some(5), Some(5)), war(Some(35), None)];

@@ -645,6 +645,7 @@ impl Effect {
                     per_province: vassal.strength,
                     ordinal: (w.neighbours.values().map(|n| n.ordinal + 1).max()).unwrap_or(0),
                     marks: Default::default(),
+                    realm: None,
                 };
                 w.neighbours.insert(id, n);
             }

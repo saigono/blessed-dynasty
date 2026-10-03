@@ -81,21 +81,15 @@ pub fn run_batch(
 /// `cli trace --seed` with an empty script, `--node` if given.
 pub fn run_trace(seed: u32, node: Option<&str>) -> Result<String, String> {
     with(|l| {
-        let g = Game {
-            rng: bd_core::rng::Rng::from_seed(seed as u64),
-            ..l.start.clone()
-        };
-        batch::trace_of(g, &l.rules, &[], node)
+        let g = l.start.reseeded(seed as u64);
+        batch::trace_of(g, &l.rules, &[], node, None)
     })
 }
 
 /// The chronicle of a neutral game of `seed`, as `cli run --strategy neutral` tells it.
 pub fn run_chronicle(seed: u32) -> Result<String, String> {
     with(|l| {
-        let mut g = Game {
-            rng: bd_core::rng::Rng::from_seed(seed as u64),
-            ..l.start.clone()
-        };
+        let mut g = l.start.reseeded(seed as u64);
         batch::play(&mut g, None, &mut vec![])?;
         match batch::dynasty(&g, &l.rules).0 {
             Some(c) => Ok(batch::chronicle_text(&g, &c)),

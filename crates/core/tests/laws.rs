@@ -2,7 +2,7 @@
 
 use bd_core::data::Data;
 use bd_core::fx::Fx;
-use bd_core::game::{Game, ReignEnd};
+use bd_core::game::Game;
 use bd_core::rng::Rng;
 use bd_core::rules::Target;
 use bd_core::sim::{self, AutoChooser, FallReason};
@@ -121,11 +121,7 @@ fn salic_law_without_men_ends_the_dynasty() {
     let mut data = data();
     data.heirs.birth = vec![];
     let g = game(&data, "law_salic", &[FAMILY[0], FAMILY[3]]);
-    let end = ReignEnd {
-        cause: "illness".into(),
-        tick: g.world.tick,
-        world: g.world.clone(),
-    };
+    let end = g.reign_end("illness".into());
     let c = sim::run(end.clone(), &data, Rng::from_seed(1));
     assert_eq!((c.fall, c.rulers.len()), (FallReason::NoHeir, 1));
     // The same women under absolute primogeniture: a queen.
@@ -175,11 +171,7 @@ fn a_brother_crowned_by_seniority_brings_his_own_children() {
         "law_seniority",
         &[(M, 10, true, 50), (M, 24, false, 50)],
     );
-    let end = ReignEnd {
-        cause: "illness".into(),
-        tick: g.world.tick,
-        world: g.world.clone(),
-    };
+    let end = g.reign_end("illness".into());
     let c = sim::run(end, &data, Rng::from_seed(1));
     assert_eq!(c.rulers[1].name, "p1");
     let w = &c.entries[0].snapshot;
@@ -213,11 +205,7 @@ fn partition_gives_the_younger_sons_a_province_each() {
             .collect()
     };
     let before = crown(&g.world);
-    let end = ReignEnd {
-        cause: "illness".into(),
-        tick: g.world.tick,
-        world: g.world.clone(),
-    };
+    let end = g.reign_end("illness".into());
     let c = sim::run(end, &data, Rng::from_seed(1));
     assert_eq!(c.rulers[1].name, "p0");
     let e = c
@@ -372,11 +360,7 @@ fn the_automaton_changes_the_law_by_its_weights() {
     data.sim.max_years = 10;
     // A firm claim: no dispute to close the change.
     g.world.heirs[0].claim = Fx::from_int(100);
-    let end = ReignEnd {
-        cause: "illness".into(),
-        tick: g.world.tick,
-        world: g.world.clone(),
-    };
+    let end = g.reign_end("illness".into());
     let c = sim::run(end, &data, Rng::from_seed(1));
     let e = c
         .entries
@@ -397,11 +381,7 @@ fn crowned(data: &Data, sex: Sex, claim: i64, axes: &[(&str, i64)]) -> sim::Chro
     for (a, v) in axes {
         g.world.axes.insert(AxisId((*a).into()), Fx::from_int(*v));
     }
-    let end = ReignEnd {
-        cause: "illness".into(),
-        tick: g.world.tick,
-        world: g.world.clone(),
-    };
+    let end = g.reign_end("illness".into());
     sim::run(end, &data, Rng::from_seed(1)).entries.remove(0)
 }
 
@@ -723,11 +703,7 @@ fn a_ruler_is_crowned_with_his_marriage_and_his_unions() {
         g.world.unions.insert(court("vestrum"), union(None));
         g.world.unions.insert(court("purpur"), union(Some(id)));
         g.data.sim.max_years = 1;
-        let end = ReignEnd {
-            cause: "illness".into(),
-            tick: g.world.tick,
-            world: g.world.clone(),
-        };
+        let end = g.reign_end("illness".into());
         sim::run(end, &g.data, Rng::from_seed(1))
             .entries
             .remove(0)
@@ -753,11 +729,7 @@ fn crown_under(data: &Data, law: &str, people: &[Person]) -> sim::ChronicleEntry
     (data.heirs.birth, data.sim.max_years) = (vec![], 1);
     data.sim.traits.clear();
     let g = game(&data, law, people);
-    let end = ReignEnd {
-        cause: "illness".into(),
-        tick: g.world.tick,
-        world: g.world.clone(),
-    };
+    let end = g.reign_end("illness".into());
     sim::run(end, &data, Rng::from_seed(1)).entries.remove(0)
 }
 
@@ -841,11 +813,7 @@ fn next_reign(g: &Game) -> sim::Chronicle {
     let mut data = g.data.clone();
     (data.heirs.birth, data.sim.max_years) = (vec![], g.world.tick.0 + 1);
     data.sim.traits.clear();
-    let end = ReignEnd {
-        cause: "illness".into(),
-        tick: g.world.tick,
-        world: g.world.clone(),
-    };
+    let end = g.reign_end("illness".into());
     sim::run(end, &data, Rng::from_seed(1))
 }
 
@@ -1030,11 +998,7 @@ fn bastards_are_out_of_the_line() {
     // A year on he is alive still, and the ruler dies with no heir.
     let mut data = g.data.clone();
     data.heirs.birth = vec![];
-    let end = ReignEnd {
-        cause: "illness".into(),
-        tick: g.world.tick,
-        world: g.world.clone(),
-    };
+    let end = g.reign_end("illness".into());
     let c = sim::run(end, &data, Rng::from_seed(1));
     assert_eq!((c.fall, c.rulers.len()), (FallReason::NoHeir, 1));
 }
@@ -1095,11 +1059,7 @@ fn children_before_the_coronation_are_lawful_only_in_wedlock() {
         let mut g = game(&data, "law_primogeniture", &[(M, 30, true, 50)]);
         let h = &mut g.world.heirs[0];
         (h.married, h.married_in) = (married_in.is_some(), married_in);
-        let end = ReignEnd {
-            cause: "illness".into(),
-            tick: g.world.tick,
-            world: g.world.clone(),
-        };
+        let end = g.reign_end("illness".into());
         let w = sim::run(end, &data, Rng::from_seed(1))
             .entries
             .remove(0)

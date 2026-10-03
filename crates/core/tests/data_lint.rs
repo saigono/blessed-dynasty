@@ -476,14 +476,20 @@ fn templates_use_known_names_cases_and_two_forms() {
 }
 
 /// Every name a text may decline has its six cases: the pools, the lands of the map, the
-/// houses and neighbours of the preset, the epithets.
+/// houses and neighbours of the preset, the epithets, the houses and rulers of the kingdoms.
 #[test]
 fn every_name_declines() {
     let data = load_all();
-    let world =
-        bd_core::state::World::from_preset(&data, &preset(&read("presets/default.ron"), &data));
+    let p = preset(&read("presets/default.ron"), &data);
+    let world = bd_core::game::Game::new(data.clone(), &p, 0).world;
     assert_eq!(lint::names(&data, &world), Vec::<String>::new());
     assert_eq!(lint::lint(&data, &world), Vec::<String>::new());
+    let mut bare = data.clone();
+    bare.names.cases.remove("Эрлинги");
+    assert_eq!(
+        lint::names(&bare, &world),
+        ["Эрлинги: нет падежей (names.ron forms)"]
+    );
 }
 
 /// A name written without its cases stays in the nominative, and the lint names it.

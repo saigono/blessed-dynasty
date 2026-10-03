@@ -3,7 +3,7 @@
 
 use bd_core::data::Data;
 use bd_core::fx::Fx;
-use bd_core::game::{DecisionKind, Game, ReignEnd};
+use bd_core::game::{DecisionKind, Game};
 use bd_core::rng::Rng;
 use bd_core::rules::{Choice, Effect, HeirOp};
 use bd_core::sim::{self, AutoChooser, Chronicle};
@@ -72,11 +72,7 @@ fn dynasty(data: &Data, seed: u64, t: Option<Testament>) -> Chronicle {
     if let Some(t) = t {
         g.write_testament(t).unwrap();
     }
-    let end = ReignEnd {
-        cause: "illness".into(),
-        tick: g.world.tick,
-        world: g.world.clone(),
-    };
+    let end = g.reign_end("illness".into());
     sim::run(end, data, Rng::from_seed(seed))
 }
 

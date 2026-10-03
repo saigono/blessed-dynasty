@@ -225,7 +225,7 @@ impl MapView {
         let hovered = resp.hover_pos().and_then(|pos| self.province_at(pos));
         if let Some(p) = hovered.and_then(|id| w.provinces.get(id)) {
             resp.on_hover_ui_at_pointer(|ui| {
-                crate::target_tip(ui, w, &Target::Province(p.id.clone()));
+                crate::target_tip(ui, w, data, &Target::Province(p.id.clone()));
                 if war_target == Some(&p.id) {
                     ui.label(eframe::egui::RichText::new("Цель войны").color(RUBRIC));
                 }

@@ -294,6 +294,8 @@ pub fn names(data: &Data, world: &World) -> Vec<String> {
     all.extend(world.provinces.values().map(|p| p.name.as_str()));
     all.extend(world.vassals.values().map(|v| v.name.as_str()));
     all.extend(world.neighbours.values().map(|v| v.name.as_str()));
+    let realms = world.neighbours.values().filter_map(|n| n.realm.as_ref());
+    all.extend(realms.flat_map(|r| [r.house.as_str(), r.ruler.as_str()]));
     let epithets = data.sim.texts.epithets.iter();
     all.extend(epithets.flat_map(|e| [e.name.0.as_str(), e.name.1.as_str()]));
     let undeclined = n.undeclined(all).into_iter();

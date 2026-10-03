@@ -2,7 +2,7 @@
 
 mod preset;
 
-pub use preset::{Map, Preset};
+pub use preset::{Map, Preset, RealmStart, RealmsStart};
 
 use crate::data::{CrownPowerRules, Data};
 use crate::fx::Fx;
@@ -24,7 +24,7 @@ pub struct ProvinceId(pub String);
 #[serde(transparent)]
 pub struct VassalId(pub String);
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[serde(transparent)]
 pub struct NeighbourId(pub String);
 
@@ -150,6 +150,24 @@ pub struct Neighbour {
     /// What decisions remember of this state (`Effect::Mark`, `Event::unmarked`).
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub marks: BTreeSet<String>,
+    /// The state as a kingdom of its own (`realm.rs`), seen from here; None: numbers only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub realm: Option<RealmView>,
+}
+
+/// What the crown sees of a foreign kingdom, set every year from its own world
+/// (`realm::project`). Display only: nothing of ours reads it.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct RealmView {
+    pub house: String,
+    pub ruler: String,
+    /// The succession law in force, its flag; empty without one.
+    pub law: String,
+    /// Its `Data.stability` axis, 0 without one.
+    pub stability: Fx,
+    /// The dynasty has fallen and the kingdom plays no more (until stage 27).
+    #[serde(default)]
+    pub fallen: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

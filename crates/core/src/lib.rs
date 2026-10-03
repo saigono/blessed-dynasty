@@ -6,6 +6,7 @@ pub mod graph;
 pub mod link;
 pub mod lint;
 pub mod neighbour;
+pub mod realm;
 pub mod rng;
 pub mod rules;
 pub mod score;

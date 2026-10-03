@@ -1,6 +1,6 @@
 //! The province map: polygons from the map file painted by holder. Floats are display only.
 
-use bd_core::data::Data;
+use bd_core::data::{BuildingDef, Data};
 use bd_core::rules::{ActionTarget, Effect, Target};
 use bd_core::state::{Holder, ProvinceId, World};
 use eframe::egui::{Color32, Mesh, Pos2, Rect, Sense, Shape, Stroke, Ui, pos2, vec2};
@@ -33,6 +33,8 @@ pub const GOOD: Color32 = Color32::from_rgb(0x3f, 0x8f, 0x5e);
 pub const WARN: Color32 = Color32::from_rgb(0xc4, 0x8a, 0x2a);
 
 const WEAK_ALPHA: f32 = 0.45;
+/// A building being built, pale on the map.
+pub const UNDERWAY_ALPHA: f32 = 0.3;
 
 pub struct MapView {
     /// Outline in map coordinates and its triangles.
@@ -127,12 +129,8 @@ impl MapView {
             .map(|a| a.min_crown_power)
             .min()
             .unwrap_or_default();
-        let builds = |id: &str| {
-            let def = data.actions.iter().find(|a| a.id == id);
-            def.is_some_and(|a| a.on_complete.iter().any(|e| matches!(e, Effect::Build(..))))
-        };
         let building: BTreeSet<&str> = (w.active_actions.iter())
-            .filter(|a| builds(&a.id))
+            .filter(|a| !built_by(data, &a.id).is_empty())
             .filter_map(|a| a.target.as_deref())
             .collect();
 
@@ -198,6 +196,16 @@ impl MapView {
         }
         for (id, p) in &w.provinces {
             let Some(c) = self.centre(id) else { continue };
+            // Its buildings in a row under the name, those being built pale (stage 26b).
+            let icons = buildings(w, data, id);
+            let font = eframe::egui::FontId::proportional(size);
+            let left = (icons.len() as f32 - 1.0) * size * 0.6;
+            for (k, (b, built)) in icons.iter().enumerate() {
+                let at = self.to_screen(c) + vec2(k as f32 * size * 1.2 - left, size * 1.1);
+                let color = if *built { FG } else { FG.gamma_multiply(UNDERWAY_ALPHA) };
+                let (center, icon) = (eframe::egui::Align2::CENTER_CENTER, b.icon.clone());
+                painter.text(at, center, icon, font.clone(), color);
+            }
             let color = if matches!(p.holder, Holder::Foreign(_)) {
                 FG2
             } else {
@@ -235,6 +243,38 @@ impl MapView {
     }
 }
 
+/// The buildings of province `id` the data name (`Data.buildings`), in their order: built
+/// (true) and being built (false) by an action; in the capital also those told by flags.
+pub fn buildings<'a>(w: &World, data: &'a Data, id: &ProvinceId) -> Vec<(&'a BuildingDef, bool)> {
+    let Some(p) = w.provinces.get(id) else {
+        return vec![];
+    };
+    let started = (w.active_actions.iter())
+        .filter(|a| a.target.as_deref() == Some(id.0.as_str()))
+        .flat_map(|a| built_by(data, &a.id));
+    let started: BTreeSet<&str> = started.collect();
+    let capital = *id == w.capital.province;
+    let flag = |f: &Option<String>| capital && f.as_ref().is_some_and(|f| w.flags.contains(f));
+    (data.buildings.iter())
+        .filter_map(|b| match p.buildings.contains(&b.id) || flag(&b.flag) {
+            true => Some((b, true)),
+            false => (started.contains(b.id.as_str()) || flag(&b.underway)).then_some((b, false)),
+        })
+        .collect()
+}
+
+/// The buildings action `id` puts up when done (`Effect::Build`).
+fn built_by<'a>(data: &'a Data, id: &str) -> Vec<&'a str> {
+    let def = data.actions.iter().find(|a| a.id == id);
+    let effects = def.map_or(&[][..], |a| &a.on_complete);
+    (effects.iter())
+        .filter_map(|e| match e {
+            Effect::Build(_, b) => Some(b.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
 /// «корона», «вассал Вейр», «Нордмарк».
 pub fn holder_name(w: &World, h: &Holder) -> String {
     match h {
@@ -260,7 +300,7 @@ pub(crate) fn holder_color(w: &World, h: &Holder) -> Color32 {
 }
 
 /// Swatches with captions under the map: the crown, every vassal house, every state.
-pub fn legend(ui: &mut Ui, w: &World) {
+pub fn legend(ui: &mut Ui, w: &World, data: &Data) {
     ui.horizontal_wrapped(|ui| {
         let holders = (w.vassals.keys().map(|v| Holder::Vassal(v.clone())))
             .chain(w.neighbours.keys().map(|n| Holder::Foreign(n.clone())));
@@ -271,7 +311,7 @@ pub fn legend(ui: &mut Ui, w: &World) {
         items.extend(holders.map(|h| (holder_color(w, &h), holder_name(w, &h))));
         items.extend([
             (UNREST, "волнения".into()),
-            (FG, "стройка (пунктир)".into()),
+            (FG, "стройка (пунктир, бледный значок)".into()),
             (BORDER, "граница владений".into()),
         ]);
         if w.war.is_some() {
@@ -281,6 +321,9 @@ pub fn legend(ui: &mut Ui, w: &World) {
             let (r, _) = ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
             ui.painter().rect_filled(r, 0.0, color);
             ui.small(text);
+        }
+        for b in &data.buildings {
+            ui.small(format!("{} {}", b.icon, b.name));
         }
     });
 }

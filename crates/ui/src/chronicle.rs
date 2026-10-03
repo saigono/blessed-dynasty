@@ -1,13 +1,13 @@
 //! The dynasty after the founder: the chronicle with its map snapshots, then the score.
 
 use crate::map::{BG, BG2, FG, FG2, GOOD, MapView, RUBRIC, round};
-use crate::{Cmd, OMEN, axis_name, change_lines, heading, plural, realm, tone};
+use crate::{Cmd, OMEN, axis_name, heading, lands, plural, realm, tone};
 use bd_core::data::Data;
 use bd_core::fx::Fx;
 use bd_core::game::Game;
 use bd_core::score::Score;
 use bd_core::sim::{Chronicle, ChronicleEntry, RulerRecord};
-use bd_core::state::{Change, Kin, World};
+use bd_core::state::{Kin, World};
 use bd_core::testament;
 use bd_core::time::TimeUnit;
 use eframe::egui::{self, Button, Grid, RichText, Ui, vec2};
@@ -425,13 +425,11 @@ pub fn reign_over(
                     ui.label(RichText::new(text).color(tone(up)));
                 }
                 heading(ui, "Земли");
-                ui.label(format!("Провинций: {} → {}", realm(start), realm(w)));
-                let land = change_lines(g, start, w);
-                let moved = (w.changes(start, d).into_iter().zip(land))
-                    .filter(|(c, _)| matches!(c, Change::Holder(..)));
-                for (_, (text, up)) in moved {
-                    ui.small(RichText::new(text).color(tone(up)));
-                }
+                match lands(d, start, w) {
+                    Some((text, up)) => ui.label(RichText::new(text).color(tone(up))),
+                    None => ui.label("Земли без перемен"),
+                };
+                ui.small(RichText::new(format!("Теперь земель {}", realm(w))).color(FG2));
                 heading(ui, "Состояние");
                 Grid::new("reign-axes").show(ui, |ui| {
                     for a in d.axes.iter().filter(|a| !a.hidden) {

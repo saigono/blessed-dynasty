@@ -112,6 +112,9 @@ const NUMBERS: &str = "в цифрах ℹ";
 /// The header of the numbers of a year of the journal, open by a click (stage 25).
 const YEAR_NUMBERS: &str = "Изменения за год";
 
+/// Over the messages of a year in the journal (stage 26b).
+const NEWS: &str = "Вести";
+
 /// After a word or a number with a tip, the same mark all over the game (stage 25).
 const INFO: &str = "ℹ";
 
@@ -146,12 +149,15 @@ struct App {
     laws: bool,
     /// The testament card is up with its draft (stage 24).
     will: Option<Testament>,
-    /// What happened, year by year: the date and its lines, oldest first.
-    journal: Vec<(String, Vec<Line>)>,
+    /// What happened, year by year, oldest first: the date, the choices made, the rest (the
+    /// news in words and the numbers).
+    journal: Vec<(String, Vec<Line>, Vec<Line>)>,
     /// The world when «Подождать год» was pressed, and the choices made since: the year's
     /// record in the making.
     year_start: Option<World>,
     chosen: Vec<Line>,
+    /// The messages of the year in the making (`Event::is_message`), not asked (stage 26b).
+    news: Vec<Line>,
     /// The treasury before the latest year's tick, that year's income and upkeep
     /// (`war::income_parts`): its «Казна:» line.
     money: Option<(Fx, Fx, Fx)>,
@@ -225,6 +231,7 @@ impl App {
             journal: Vec::new(),
             year_start: None,
             chosen: Vec::new(),
+            news: Vec::new(),
             money: None,
             saved: None,
             persist: false,
@@ -379,6 +386,18 @@ impl App {
                 unreachable!("handled above")
             }
         };
+        // A message is not asked: it goes into the year's news (stage 26b).
+        let mut res = res;
+        while let Ok(Step::Event(v)) = &res
+            && (g.data.events.iter()).any(|e| e.id == v.event_id && e.is_message())
+        {
+            let told = g.told(0).unwrap_or_else(|| v.title.clone());
+            self.news.push((told, None));
+            res = match g.choose(0) {
+                Ok(()) if g.ended.is_some() => g.wait(),
+                r => r.map(|_| Step::Idle),
+            };
+        }
         self.step(res);
         // A year waiting on its event is not recorded yet: its money line comes with it.
         let closed = closes_year && matches!(self.screen, Screen::Reign);
@@ -392,39 +411,46 @@ impl App {
 
     /// «Казна за год +N: доход +X, расходы -Y, действия и события -Z» first in the latest
     /// year's record: N from before its tick to now, the last what the actions and choices
-    /// since took.
+    /// since took, left out when nothing.
     fn money_line(&mut self) {
         let (Some(g), Some((start, income, upkeep))) = (&self.game, self.money) else {
             return;
         };
-        let Some((_, lines)) = self.journal.last_mut() else {
+        let Some((_, _, lines)) = self.journal.last_mut() else {
             return;
         };
         let now = g.world.axes[&g.data.economy.treasury];
         let spent = now - start - income + upkeep;
-        let text = format!(
-            "{MONEY} {}: доход {}, расходы {}, действия и события {}",
+        let mut text = format!(
+            "{MONEY} {}: доход {}, расходы {}",
             plus(now - start),
             plus(income),
             plus(Fx(0) - upkeep),
-            plus(spent),
         );
+        // Nothing spent or got by the actions and the choices: no «0» to puzzle over.
+        if round(spent) != "0" && round(spent) != "-0" {
+            text += &format!(", действия и события {}", plus(spent));
+        }
         lines.retain(|(t, _)| !t.starts_with(MONEY));
         lines.insert(0, (text, Some(now >= start)));
     }
 
     /// Puts what happened since «Подождать год» into the journal: the choices made, then
-    /// what changed. A second record of the same date joins the first.
+    /// the messages and what changed. A second record of the same date joins the first.
     fn close_year(&mut self) {
         let g = self.game.as_ref().expect("in a game");
-        let mut lines = std::mem::take(&mut self.chosen);
+        let chosen = std::mem::take(&mut self.chosen);
+        let mut lines = std::mem::take(&mut self.news);
         if let Some(before) = self.year_start.take() {
             lines.extend(change_lines(g, &before, &g.world));
         }
         let date = g.world.tick.date(g.world.time_unit, g.world.start_year);
         match self.journal.last_mut() {
-            Some((d, l)) if *d == date => l.extend(lines),
-            _ => self.journal.push((date, lines)),
+            Some((d, c, l)) if *d == date => {
+                c.extend(chosen);
+                l.extend(lines);
+            }
+            _ => self.journal.push((date, chosen, lines)),
         }
         // Once a year, the game so far (stage 25); a reign over is no game to go on with.
         if g.ended.is_none() {
@@ -487,6 +513,7 @@ impl App {
         (self.intro, self.tree, self.year_start) = (true, false, None);
         (self.laws, self.will) = (false, None);
         (self.journal, self.chosen, self.money) = (Vec::new(), Vec::new(), None);
+        self.news.clear();
     }
 
     fn step(&mut self, res: Result<Step, GameError>) {
@@ -642,7 +669,7 @@ impl App {
                 })
                 .collect();
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                map::legend(ui, &g.world);
+                map::legend(ui, &g.world, &g.data);
                 let clicked = self.map.show(ui, &g.world, &g.data, &marked);
                 if let (Some(id), Some((action, _))) = (clicked, &self.picking)
                     && marked.contains(&id)
@@ -1082,37 +1109,77 @@ fn acted(w: &World, def: &Action, key: Option<&str>) -> String {
     }
 }
 
-/// What changed from `before` to `w`, as journal lines.
+/// What changed from `before` to `w`, as journal lines; the land moved in one line (`lands`).
 fn change_lines(g: &Game, before: &World, w: &World) -> Vec<Line> {
     let d = &g.data;
-    let province = |id: &ProvinceId| w.provinces.get(id).map_or(id.0.clone(), |p| p.name.clone());
-    (w.changes(before, d).into_iter())
-        .map(|c| match c {
-            Change::Axis(a, v) => signed(axis_name(d, &a), v),
-            Change::Born(name) => (format!("Рождение: {name}"), Some(true)),
-            Change::HeirGone(name) => heir_gone(g, before, w, &name),
-            Change::Holder(id, from, to) => {
-                let p = province(&id);
-                match (&from, &to) {
-                    (_, Holder::Foreign(_)) => {
-                        let to = holder_name(w, &to);
-                        (format!("Потеряна земля {p}: теперь {to}"), Some(false))
-                    }
-                    (Holder::Foreign(_), _) => {
-                        let from = holder_name(before, &from);
-                        (format!("Присоединена земля {p}, прежде {from}"), Some(true))
-                    }
-                    (_, Holder::Crown) => (format!("{p} снова под короной"), None),
-                    _ => (format!("{p} отошла: {}", holder_name(w, &to)), None),
-                }
-            }
+    let mut lines: Vec<Line> = (w.changes(before, d).into_iter())
+        .filter_map(|c| match c {
+            // Whole numbers: «Знать +7.84» read as noise (stage 26b).
+            Change::Axis(a, v) => Some((format!("{} {}", axis_name(d, &a), plus(v)), Some(v > Fx(0)))),
+            Change::Born(name) => Some((format!("Рождение: {name}"), Some(true))),
+            Change::HeirGone(name) => Some(heir_gone(g, before, w, &name)),
+            Change::Holder(..) => None,
             Change::Done(id, key) => {
                 let def = d.actions.iter().find(|a| a.id == id);
                 let what = def.map_or(id.clone(), |a| acted(w, a, key.as_deref()));
-                (format!("Завершено: {what}"), None)
+                Some((format!("Завершено: {what}"), None))
             }
         })
-        .collect()
+        .collect();
+    lines.extend(lands(d, before, w));
+    lines
+}
+
+/// «Земли: +2 — короне Ольховка, вассалу Вейр Броды», «Земли: −1 — Нордмарк взял Скалу»
+/// (stage 26b): the change in the land of the crown and its vassals, then who got which
+/// province; without a change in number (a grant) no number. None when no land moved.
+pub(crate) fn lands(d: &Data, before: &World, w: &World) -> Option<Line> {
+    let own = |w: &World| {
+        let all = w.provinces.values();
+        all.filter(|p| !matches!(p.holder, Holder::Foreign(_))).count() as i64
+    };
+    // Who got them, in the order the provinces come: (holder, names).
+    let mut got: Vec<(&Holder, Vec<&str>)> = vec![];
+    for p in w.provinces.values() {
+        if before.provinces.get(&p.id).is_none_or(|b| b.holder == p.holder) {
+            continue;
+        }
+        match got.iter_mut().find(|(h, _)| **h == p.holder) {
+            Some((_, names)) => names.push(&p.name),
+            None => got.push((&p.holder, vec![&p.name])),
+        }
+    }
+    if got.is_empty() {
+        return None;
+    }
+    let and = |names: Vec<String>| match names.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} и {last}", rest.join(", ")),
+        _ => names.concat(),
+    };
+    let parts: Vec<String> = (got.into_iter())
+        .map(|(h, names)| {
+            let names = names.into_iter();
+            match h {
+                Holder::Crown => format!("короне {}", and(names.map(String::from).collect())),
+                Holder::Vassal(v) => {
+                    let house = w.vassals.get(v).map_or(&v.0, |v| &v.name);
+                    format!("вассалу {house} {}", and(names.map(String::from).collect()))
+                }
+                Holder::Foreign(n) => {
+                    let n = w.neighbours.get(n).map_or(&n.0, |n| &n.name);
+                    let took = bd_core::text::fill("{n:взял|взяла}", &d.names, &[("n", n, None)]);
+                    let names = names.map(|p| d.names.declined(p, 3)).collect();
+                    format!("{n} {took} {}", and(names))
+                }
+            }
+        })
+        .collect();
+    let delta = own(w) - own(before);
+    let text = match delta {
+        0 => format!("Земли: {}", parts.join(", ")),
+        _ => format!("Земли: {}{} — {}", if delta > 0 { "+" } else { "−" }, delta.abs(), parts.join(", ")),
+    };
+    Some((text, (delta != 0).then_some(delta > 0)))
 }
 
 /// An heir gone from the list, told as the chronicle tells it (`sim.heir_death_age`, aged
@@ -1150,14 +1217,15 @@ fn signed(name: &str, v: Fx) -> Line {
     (format!("{name} {sign}{v}"), Some(v > Fx(0)))
 }
 
-/// The journal, the latest year on top and stressed.
-fn journal(ui: &mut Ui, journal: &[(String, Vec<Line>)]) {
+/// The journal, the latest year on top and stressed: the choices, then the news in one
+/// block (stage 26b), then the numbers.
+fn journal(ui: &mut Ui, journal: &[(String, Vec<Line>, Vec<Line>)]) {
     heading(ui, "Итоги года");
     if journal.is_empty() {
         let hint = "Здесь появится, что случилось за год, после «Подождать год».";
         ui.small(RichText::new(hint).color(FG2));
     }
-    for (i, (date, lines)) in journal.iter().rev().enumerate() {
+    for (i, (date, chosen, lines)) in journal.iter().rev().enumerate() {
         if i == 1 {
             heading(ui, "Прежние годы");
         }
@@ -1172,10 +1240,16 @@ fn journal(ui: &mut Ui, journal: &[(String, Vec<Line>)]) {
         let (numbers, words): (Vec<_>, Vec<_>) = lines
             .iter()
             .partition(|(t, _)| t.chars().any(|c| c.is_ascii_digit()));
-        for (text, up) in words.iter().copied() {
+        for (text, up) in chosen {
             ui.small(RichText::new(text).color(tone(*up)));
         }
-        if words.is_empty() {
+        if !words.is_empty() {
+            ui.small(RichText::new(NEWS).color(FG2).strong());
+        }
+        for (text, up) in words.iter().copied() {
+            ui.small(RichText::new(format!("· {text}")).color(tone(*up)));
+        }
+        if words.is_empty() && chosen.is_empty() {
             ui.small(RichText::new("Тихий год").color(FG2));
         }
         if !numbers.is_empty() {
@@ -1510,6 +1584,17 @@ pub(crate) fn target_tip(ui: &mut Ui, w: &World, d: &Data, t: &Target) {
             ui.label(format!("Население {}", p.population));
             ui.label(format!("Лояльность {}", round(p.loyalty)));
             ui.label(format!("Сила короны {}", round(p.crown_power)));
+            // In words what the map shows as icons (stage 26b).
+            let all = map::buildings(w, d, id);
+            for (built, what) in [(true, "Постройки"), (false, "Строится")] {
+                let names: Vec<String> = (all.iter())
+                    .filter(|(_, b)| *b == built)
+                    .map(|(b, _)| format!("{} {}", b.icon, b.name))
+                    .collect();
+                if !names.is_empty() {
+                    ui.label(format!("{what}: {}", names.join(", ")));
+                }
+            }
             if let Holder::Foreign(n) = &p.holder
                 && let Some(n) = w.neighbours.get(n)
             {
@@ -1780,6 +1865,7 @@ fn axes_panel(ui: &mut Ui, g: &Game) {
             };
             if !matches!(sight, Sight::Closed(_)) {
                 notes.extend(pressing(d, w, a, sight == Sight::Numbers));
+                notes.extend(movers(d, w, &a.id));
             }
             ui.small(axis_name(d, &a.id));
             ui.horizontal(|ui| {
@@ -1840,6 +1926,69 @@ fn pressing(d: &Data, w: &World, a: &AxisDef, numbers: bool) -> Vec<String> {
     let up = group(true, ["Держит", "Держат", "Держат"]);
     let down = group(false, ["Давит", "Давят", "Давят"]);
     up.into_iter().chain(down).collect()
+}
+
+/// «Поднимают: Учредить канцелярию, закон «Свод законов», «Интриги при дворе»» and
+/// «Опускают: …» (stage 26b): the actions, the laws (their anchors and what they do once in)
+/// and the most frequent events of the random pool (`MOVERS`, by weight) that move axis `a`,
+/// all read from the data.
+fn movers(d: &Data, w: &World, a: &AxisId) -> Vec<String> {
+    let sides = |es: &[Effect]| {
+        let mut s = [false; 2];
+        signs(es, a, &mut s);
+        s
+    };
+    let mut by: [Vec<String>; 2] = Default::default();
+    let own = |x: &&Action| !x.id.starts_with(ENACT) && !x.id.starts_with(REPEAL);
+    for act in d.actions.iter().filter(own) {
+        let s = sides(&[&act.on_complete[..], &act.yearly[..]].concat());
+        (0..2).filter(|&k| s[k]).for_each(|k| by[k].push(named(w, &act.name)));
+    }
+    for l in &d.laws.list {
+        let mut s = sides(&l.on_complete);
+        let mut shift = |v: Fx| s[(v < Fx(0)) as usize] |= v != Fx(0);
+        (l.anchors.iter()).filter(|(x, _)| x == a).for_each(|(_, v)| shift(*v));
+        if *a == d.economy.treasury {
+            shift(l.treasury);
+        }
+        (0..2).filter(|&k| s[k]).for_each(|k| by[k].push(format!("закон «{}»", l.name)));
+    }
+    let mut pool: Vec<&bd_core::rules::Event> = d.events.iter().filter(|e| e.weight > 0).collect();
+    pool.sort_by_key(|e| std::cmp::Reverse(e.weight));
+    for (k, list) in by.iter_mut().enumerate() {
+        let moving = pool.iter().filter(|e| {
+            let all: Vec<Effect> = e.choices.iter().flat_map(|c| c.effects.clone()).collect();
+            sides(&all)[k]
+        });
+        let titles = moving.map(|e| e.title.split(['{', ':']).next().unwrap_or_default().trim());
+        let titles = titles.filter(|t| !t.is_empty()).take(MOVERS);
+        list.extend(titles.map(|t| format!("«{t}»")));
+    }
+    let verbs = ["Поднимают", "Опускают"].into_iter().zip(by);
+    let lines = verbs.filter(|(_, l)| !l.is_empty());
+    lines.map(|(v, l)| format!("{v}: {}", l.join(", "))).collect()
+}
+
+/// The most frequent events `movers` names each way.
+const MOVERS: usize = 3;
+
+/// Which way effects move axis `a`: `[up, down]`, every branch of a chance or a suit.
+fn signs(es: &[Effect], a: &AxisId, s: &mut [bool; 2]) {
+    for e in es {
+        match e {
+            Effect::Axis(x, v) if x == a && *v != Fx(0) => s[(*v < Fx(0)) as usize] = true,
+            Effect::Chance(c) => {
+                signs(&c.then, a, s);
+                signs(&c.otherwise, a, s);
+            }
+            Effect::Marry { then, otherwise } => {
+                signs(then, a, s);
+                signs(otherwise, a, s);
+            }
+            Effect::IfFriendly(es) => signs(es, a, s),
+            _ => {}
+        }
+    }
 }
 
 /// Who pushes: a law by its name, an edge by its source node, a node still closed as
@@ -2133,11 +2282,11 @@ pub(crate) fn axis_name<'a>(d: &'a Data, id: &'a AxisId) -> &'a str {
         .map_or(&id.0, |a| &a.name)
 }
 
-/// «10 · короне 6»: provinces of the crown and its vassals, then of the crown alone.
+/// «10, из них у короны 6»: provinces of the crown and its vassals, then of the crown alone.
 pub(crate) fn realm(w: &World) -> String {
     let own = (w.provinces.values()).filter(|p| !matches!(p.holder, Holder::Foreign(_)));
     let crown = own.clone().filter(|p| p.holder == Holder::Crown).count();
-    format!("{} · короне {crown}", own.count())
+    format!("{}, из них у короны {crown}", own.count())
 }
 
 fn action_name(w: &World, d: &Data, id: &str) -> String {
@@ -2720,22 +2869,16 @@ mod tests {
         let want = vec![
             (
                 "1188",
+                vec![line("Отряды Нордмарка перешли границу и жгли сёла земли Арден, но королевское войско отбросило их.", None)],
                 vec![
-                    money("+27: доход +32, расходы -5, действия и события 0"),
-                    line(
-                        "Отряды Нордмарка перешли границу и жгли сёла земли Арден, но королевское войско отбросило их.",
-                        None,
-                    ),
+                    money("+27: доход +32, расходы -5"),
                 ],
             ),
             (
                 "1189",
+                vec![line("Бароны потребовали подтвердить их старые вольности, и Ульрих скрепил грамоту. Руки короны стали короче.", None)],
                 vec![
-                    money("+28: доход +32, расходы -4, действия и события 0"),
-                    line(
-                        "Бароны потребовали подтвердить их старые вольности, и Ульрих скрепил грамоту. Руки короны стали короче.",
-                        None,
-                    ),
+                    money("+28: доход +32, расходы -4"),
                     line("Бюрократия -5", Some(false)),
                     line("Знать +11", Some(true)),
                     line("Завершено: Проложить дорогу (Берг)", None),
@@ -2743,57 +2886,47 @@ mod tests {
             ),
             (
                 "1190",
+                vec![line("Купцы Веструма получили право торговать на ярмарках королевства.", None)],
                 vec![
                     money("+54: доход +33, расходы -4, действия и события +25"),
-                    line(
-                        "Купцы Веструма получили право торговать на ярмарках королевства.",
-                        None,
-                    ),
                     line("Рождение: Генрих", Some(true)),
                 ],
             ),
             (
                 "1191",
+                vec![line("Знать съехалась в столицу на собор, и Ульрих выслушал лучших людей королевства.", None)],
                 vec![
-                    money("+28: доход +33, расходы -4, действия и события 0"),
-                    line(
-                        "Знать съехалась в столицу на собор, и Ульрих выслушал лучших людей королевства.",
-                        None,
-                    ),
-                    line("Знать +7.84", Some(true)),
+                    money("+28: доход +33, расходы -4"),
+                    line("Знать +8", Some(true)),
                 ],
             ),
             (
                 "1192",
+                vec![line("Дозор Веструма сжёг пограничную мельницу и убил людей, и корона потребовала виру за убитых.", None)],
                 vec![
                     money("+44: доход +33, расходы -4, действия и события +15"),
-                    line(
-                        "Дозор Веструма сжёг пограничную мельницу и убил людей, и корона потребовала виру за убитых.",
-                        None,
-                    ),
                     line("Рождение: Освальд", Some(true)),
                 ],
             ),
             (
                 "1193",
+                vec![line("Купцы Веструма получили право торговать на ярмарках королевства.", None)],
                 vec![
                     money("+54: доход +33, расходы -4, действия и события +25"),
-                    line(
-                        "Купцы Веструма получили право торговать на ярмарках королевства.",
-                        None,
-                    ),
                     line("Умер в детстве королевский сын Генрих", Some(false)),
                 ],
             ),
         ];
         let got: Vec<_> = (h.app.journal.iter())
-            .map(|(d, l)| (d.as_str(), l.clone()))
+            .map(|(d, c, l)| (d.as_str(), c.clone(), l.clone()))
             .collect();
         assert_eq!(got, want);
         let texts = texts(&h.frame(vec![]));
         let (latest, older) = (pos(&texts, "1193"), pos(&texts, "1192"));
         assert!(latest < older, "the latest year comes first");
-        assert!(texts.contains(&"Умер в детстве королевский сын Генрих".to_string()));
+        // The news of a year in one block under its header (stage 26b).
+        let news = pos(&texts, "· Умер в детстве королевский сын Генрих");
+        assert_eq!(texts[news - 1], NEWS);
         assert!(
             !texts.iter().any(|t| t.contains("Смерть наследника")),
             "{texts:?}"
@@ -2813,8 +2946,8 @@ mod tests {
         (g.data.quiet_weight, g.data.heirs.birth) = (1_000_000, vec![]);
         (g.world.war, g.queue) = (None, vec![]);
         h.app.apply(Cmd::Wait);
-        let quiet = vec![money("+28: доход +33, расходы -4, действия и события 0")];
-        assert_eq!(h.app.journal.last().unwrap(), &("1194".to_string(), quiet));
+        let quiet = vec![money("+28: доход +33, расходы -4")];
+        assert_eq!(h.app.journal.last().unwrap(), &("1194".to_string(), vec![], quiet));
         assert!(texts_of(&mut h).contains(&"Тихий год".to_string()));
     }
 
@@ -3401,10 +3534,9 @@ mod tests {
                 "{t}"
             );
         }
-        assert!(
-            shown.contains(&"Гарт отошла: вассал Вейр".to_string()),
-            "{shown:?}"
-        );
+        // Stage 26b: the land in one line, who got which province.
+        let land = shown.iter().find(|t| t.starts_with("Земли:")).expect("the land line");
+        assert!(land.contains("вассалу Вейр Гарт"), "{land}");
         // The founder's life, and the successor as the chronicle crowned him.
         assert!(shown.contains(&c.rulers[0].full_name()), "{shown:?}");
         assert!(shown.contains(&c.rulers[0].biography), "{shown:?}");
@@ -3736,7 +3868,7 @@ mod tests {
         }
         assert!(h.game().world.war.is_none());
         // Stage 25: the year's summary says why the war ended, by the battles.
-        let mut lines = (h.app.journal.iter()).flat_map(|(_, l)| l);
+        let mut lines = (h.app.journal.iter()).flat_map(|(_, c, l)| c.iter().chain(l));
         assert!(
             lines.any(|(t, _)| t.contains(" сражени")),
             "{:?}",
@@ -4216,6 +4348,165 @@ mod tests {
             (num(2.0), num(2.5), num(0.0)),
             ("2".into(), "2,5".into(), "0".into())
         );
+    }
+
+    /// Every text shape with its position and colour.
+    fn colored_texts(out: &egui::FullOutput) -> Vec<(String, Pos2, egui::Color32)> {
+        fn walk(s: &egui::Shape, out: &mut Vec<(String, Pos2, egui::Color32)>) {
+            match s {
+                egui::Shape::Text(t) => {
+                    out.push((t.galley.text().to_string(), t.pos, t.fallback_color))
+                }
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        let mut all = Vec::new();
+        out.shapes.iter().for_each(|c| walk(&c.shape, &mut all));
+        all
+    }
+
+    /// Acceptance, stage 26b: a province with a fort and a market shows their two icons on
+    /// the map, a building going up shows pale; its tip names them in words.
+    #[test]
+    fn the_map_shows_the_buildings_of_a_province() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(1));
+        h.click_label("Править");
+        let g = h.app.game.as_mut().unwrap();
+        let berg = ProvinceId("berg".into());
+        let p = g.world.provinces.get_mut(&berg).unwrap();
+        p.buildings = ["fort", "market"].map(String::from).into();
+        h.app.apply(Cmd::Act("build_road".into(), Some(Target::Province(berg))));
+        let out = h.frame(vec![]);
+        let at = h.province_on_screen("berg");
+        let d = load_data();
+        let icon = |id: &str| d.buildings.iter().find(|b| b.id == id).unwrap().icon.clone();
+        let near: Vec<(String, egui::Color32)> = (colored_texts(&out).into_iter())
+            .filter(|(t, p, _)| d.buildings.iter().any(|b| b.icon == *t) && p.distance(at) < 40.0)
+            .map(|(t, _, c)| (t, c))
+            .collect();
+        let pale = FG.gamma_multiply(map::UNDERWAY_ALPHA);
+        assert_eq!(
+            near,
+            [(icon("fort"), FG), (icon("road"), pale), (icon("market"), FG)]
+        );
+        h.ctx.global_style_mut(|s| s.interaction.tooltip_delay = 0.0);
+        h.frame(vec![Event::PointerMoved(Pos2::new(1.0, 1.0))]);
+        h.frame(vec![Event::PointerMoved(at)]);
+        settle(&mut h);
+        let tip = texts_of(&mut h);
+        let line = |s: &str| tip.contains(&s.to_string());
+        assert!(line("Постройки: ♜ крепость, ⚖ рынок"), "{tip:?}");
+        assert!(line("Строится: ═ дорога"), "{tip:?}");
+    }
+
+    /// Stage 26b: every building icon is a glyph of the game's own font, DejaVu Sans, not of
+    /// egui's fallbacks.
+    #[test]
+    fn building_icons_are_in_the_game_font() {
+        let ctx = egui::Context::default();
+        let mut fonts = egui::FontDefinitions::empty();
+        let font = egui::FontData::from_static(FONT);
+        fonts.font_data.insert("dejavu".into(), std::sync::Arc::new(font));
+        let family = egui::FontFamily::Name("dejavu".into());
+        fonts.families.insert(family.clone(), vec!["dejavu".into()]);
+        fonts.families.insert(egui::FontFamily::Proportional, vec!["dejavu".into()]);
+        fonts.families.insert(egui::FontFamily::Monospace, vec!["dejavu".into()]);
+        ctx.set_fonts(fonts);
+        ctx.run_ui(RawInput::default(), |_| {}).textures_delta.clear();
+        let d = load_data();
+        assert!(d.buildings.len() >= 6);
+        // A glyph not in the font has no width (egui's `has_glyph` says no for every glyph
+        // of a family of one font: that font is also its replacement).
+        let id = egui::FontId::new(14.0, family);
+        let has = |c: char| ctx.fonts_mut(|f| f.glyph_width(&id, c)) > 0.0;
+        for b in &d.buildings {
+            assert!(b.icon.chars().all(has), "{}", b.id);
+        }
+        assert!(!has('⛪'), "the check checks");
+    }
+
+    /// Acceptance, stage 26b: the tip of an axis tells what raises it and what lowers it,
+    /// read from the data: the bureaucracy names «Учредить канцелярию» among those raising it.
+    #[test]
+    fn an_axis_tells_what_raises_and_lowers_it() {
+        let mut h = Harness::new();
+        h.height = 1400.0;
+        h.app.apply(Cmd::Start(1));
+        h.click_label("Править");
+        let t = texts_of(&mut h);
+        let value = t[pos(&t, "Бюрократия") + 1].clone();
+        let tip = hover(&mut h, &value);
+        let up = tip.iter().find(|x| x.starts_with("Поднимают: ")).expect("{tip:?}");
+        assert!(up.contains("Учредить канцелярию"), "{up}");
+        assert!(up.contains("закон «Монастырские школы»") || !up.contains("закон"), "{up}");
+        let down = tip.iter().find(|x| x.starts_with("Опускают: ")).expect("{tip:?}");
+        assert!(down.contains("«Знать требует»"), "{down}");
+        assert!(!down.contains("Учредить канцелярию"), "{down}");
+        // The nobles: the chancery lowers them.
+        let d = load_data();
+        let w = &h.game().world;
+        let nobles = movers(&d, w, &AxisId("loyalty_nobles".into()));
+        assert!(nobles[1].starts_with("Опускают: ") && nobles[1].contains("Учредить канцелярию"));
+    }
+
+    /// Acceptance, stage 26b: the land of a year in one line under «Изменения за год»: the
+    /// count and who got which province.
+    #[test]
+    fn the_land_line_names_the_provinces_and_who_got_them() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(1));
+        h.click_label("Править");
+        let g = h.app.game.as_mut().unwrap();
+        (g.data.quiet_weight, g.data.heirs.birth) = (1_000_000, vec![]);
+        let holder = |w: &mut World, id: &str, h: Holder| {
+            w.provinces.get_mut(&ProvinceId(id.into())).unwrap().holder = h;
+        };
+        let mut before = g.world.clone();
+        holder(&mut before, "skala", Holder::Crown);
+        holder(&mut g.world, "frostad", Holder::Crown);
+        holder(&mut g.world, "nordheim", Holder::Crown);
+        holder(&mut g.world, "berg", Holder::Vassal(bd_core::state::VassalId("weir".into())));
+        h.app.year_start = Some(before);
+        h.app.apply(Cmd::Wait);
+        let want = "Земли: +1 — вассалу Вейр Берг, короне Фростад и Нордхейм, Нордмарк взял Скалу";
+        let (_, _, lines) = h.app.journal.last().unwrap();
+        assert!(lines.contains(&(want.to_string(), Some(true))), "{lines:?}");
+        assert!(!texts_of(&mut h).contains(&want.to_string()), "folded");
+        h.click_label(YEAR_NUMBERS);
+        assert!(settled(&mut h).contains(&want.to_string()));
+    }
+
+    /// Stage 26b: an event of one choice is a message: not asked in a card, it goes into the
+    /// year's news, its choice made and recorded.
+    #[test]
+    fn a_message_goes_into_the_news_unasked() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(1));
+        h.click_label("Править");
+        let g = h.app.game.as_mut().unwrap();
+        for e in &mut g.data.events {
+            match e.id == "cap_festival" {
+                true => {
+                    (e.weight, e.when) = (1_000_000, bd_core::rules::Predicate::All(vec![]));
+                    e.choices.truncate(1);
+                }
+                false => e.weight = 0,
+            }
+        }
+        h.app.apply(Cmd::Wait);
+        assert!(matches!(h.app.screen, Screen::Reign));
+        let g = h.game();
+        assert!(g.pending_event.is_none());
+        let last = g.decisions.last().unwrap();
+        assert!(matches!(&last.kind, bd_core::game::DecisionKind::EventChoice { event_id, .. } if event_id == "cap_festival"));
+        let (_, chosen, lines) = h.app.journal.last().unwrap();
+        assert!(chosen.is_empty(), "{chosen:?}");
+        let told = "В день святого покровителя Ульрих устроил турнир";
+        assert!(lines.iter().any(|(t, _)| t.starts_with(told)), "{lines:?}");
+        let shown = texts_of(&mut h);
+        assert!(shown.iter().any(|t| t.starts_with(&format!("· {told}"))), "{shown:?}");
     }
 
     /// Slow: builds the release wasm and tells its size. `cargo test -p ui -- --ignored`.

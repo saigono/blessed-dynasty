@@ -4,6 +4,7 @@
 use crate::data::{AxisDef, Data, DataError};
 use crate::fx::Fx;
 use crate::game::{DecisionKind, Game, Step};
+use crate::rng::Rng;
 use crate::rules::Target;
 use crate::score::{self, ScoreRules};
 use crate::sim::{self, AutoChooser, FallReason};
@@ -615,14 +616,17 @@ fn wait(g: &mut Game, n: u32, soft: bool, log: &mut Vec<i64>) -> Result<(), Stri
 }
 
 /// Until the reign ends (at most `MAX_YEARS`): `auto` starts its best action before every tick
-/// and makes every choice; without it (`neutral`) no actions and the middle choice.
+/// and makes every choice; without it (`neutral`) no actions and the middle choice. The
+/// automaton's noise comes from a stream of its own (stage 26b): the game's rng goes only to
+/// the game, so a link of the decisions plays it again.
 pub fn play(g: &mut Game, auto: Option<&AutoChooser>, log: &mut Vec<i64>) -> Result<(), String> {
     let end = MAX_YEARS.ticks(g.world.time_unit);
+    let mut noise = Rng::from_seed(g.rng.clone().next_u64() ^ NOISE);
     while g.world.tick < end && g.ended.is_none() {
         note(g, log);
         if let Some(a) = auto
             && g.pending_event.is_none()
-            && let Some((id, target)) = a.action(g)
+            && let Some((id, target)) = lent(g, &mut noise, |g| a.action(g))
         {
             g.start_action(&id, target).map_err(err)?;
         }
@@ -630,7 +634,7 @@ pub fn play(g: &mut Game, auto: Option<&AutoChooser>, log: &mut Vec<i64>) -> Res
             Step::Idle => {}
             Step::Event(v) => {
                 let idx = match auto {
-                    Some(a) => a.choose(g, &v.choices),
+                    Some(a) => lent(g, &mut noise, |g| a.choose(g, &v.choices)),
                     None => (v.choices.len() - 1) / 2,
                 };
                 g.choose(idx).map_err(err)?
@@ -639,6 +643,17 @@ pub fn play(g: &mut Game, auto: Option<&AutoChooser>, log: &mut Vec<i64>) -> Res
         }
     }
     Ok(())
+}
+
+/// Salt of the automaton's noise stream in `play`.
+const NOISE: u64 = 0x6e6f_6973_65;
+
+/// `f` with `rng` lent to the game in place of its own.
+fn lent<T>(g: &mut Game, rng: &mut Rng, f: impl FnOnce(&mut Game) -> T) -> T {
+    std::mem::swap(&mut g.rng, rng);
+    let r = f(g);
+    std::mem::swap(&mut g.rng, rng);
+    r
 }
 
 /// The treasury of every year the reign has finished and `log` misses, as it stands now:

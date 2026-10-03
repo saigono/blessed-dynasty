@@ -420,12 +420,14 @@ fn rulers_of_the_simulation_name_heirs_in_wills() {
             .find(|e| &e.title == crowned && e.text.contains("завещани"))
             .map(|e| e.tick)
     };
-    let (c, tick) = (0..60)
+    // 0..100 since stage 26b: the queue of events moved the rng, a will crowns its favourite
+    // as often as before (8 of 300 dynasties against 9), the first now at seed 93.
+    let (c, tick) = (0..100)
         .find_map(|s| {
             let c = dynasty(&data, s, None);
             told(&c).map(|t| (c, t))
         })
-        .expect("a will in 60 dynasties");
+        .expect("a will in 100 dynasties");
     let r = c.rulers.iter().find(|r| r.start == tick).unwrap();
     assert!(r.designated);
 }
@@ -457,3 +459,4 @@ fn an_order_kept_a_hundred_years_is_a_legacy() {
     w.testament.as_mut().unwrap().broken = Some(Tick(10));
     assert_eq!(legacy(&broken, &rules), legacy(&c, &none));
 }
+

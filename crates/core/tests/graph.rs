@@ -84,11 +84,12 @@ fn runs_hash(dir: &str, data: &Data, n: u64) -> u64 {
     fnv(text.as_bytes())
 }
 
-/// Golden: main's data (`MAIN`) plays exactly as on main, byte for byte.
+/// Golden: main's data (`MAIN`) plays exactly as on main, byte for byte. Re-pinned in stage
+/// 26b: deferred events go by importance and drop after `queue_years` (the defaults).
 #[test]
 fn data_without_edges_plays_as_main() {
     let data = content(MAIN, &read(&format!("{MAIN}/rules.ron")));
-    assert_eq!(runs_hash(MAIN, &data, 50), 15158972918327858678);
+    assert_eq!(runs_hash(MAIN, &data, 50), 12966374368711923331);
 }
 
 /// data/ with `extra` axes and edges added to rules.ron, nothing else.

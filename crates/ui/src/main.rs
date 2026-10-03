@@ -14,7 +14,8 @@ use bd_core::rules::{Action, ActionTarget, Effect, HeirOp, Predicate, ProvinceFi
 use bd_core::score::{self, Score, ScoreRules};
 use bd_core::sim::{self, Chronicle};
 use bd_core::state::{
-    AxisId, Change, HeirStatus, Holder, NeighbourId, Preset, ProvinceId, Sex, Stance, World,
+    AxisId, Change, HeirStatus, Holder, Neighbour, NeighbourId, Preset, ProvinceId, Sex, Stance,
+    World,
 };
 use bd_core::testament::{Order, Testament};
 use bd_core::war::War;
@@ -1491,15 +1492,15 @@ fn linked_text(ui: &mut Ui, g: &Game, text: &str, links: &[(String, Target)]) {
                 ui.label(&rest[..at]);
             }
             let name = RichText::new(form).color(RUBRIC).underline();
-            tip_label(ui, name, |ui| target_tip(ui, &g.world, t));
+            tip_label(ui, name, |ui| target_tip(ui, &g.world, &g.data, t));
             rest = &rest[at + form.len()..];
         }
     });
 }
 
-/// A province: holder, income, people, loyalty, crown power; a state: relation, strength,
-/// lands. The map's hover and the names in event texts.
-pub(crate) fn target_tip(ui: &mut Ui, w: &World, t: &Target) {
+/// A province: holder, income, people, loyalty, crown power, a foreign one its kingdom; a
+/// state: relation, strength, lands, the kingdom. The map's hover and the names in event texts.
+pub(crate) fn target_tip(ui: &mut Ui, w: &World, d: &Data, t: &Target) {
     match t {
         Target::Province(id) => {
             let Some(p) = w.provinces.get(id) else { return };
@@ -1509,6 +1510,11 @@ pub(crate) fn target_tip(ui: &mut Ui, w: &World, t: &Target) {
             ui.label(format!("Население {}", p.population));
             ui.label(format!("Лояльность {}", round(p.loyalty)));
             ui.label(format!("Сила короны {}", round(p.crown_power)));
+            if let Holder::Foreign(n) = &p.holder
+                && let Some(n) = w.neighbours.get(n)
+            {
+                realm_tip(ui, d, n);
+            }
         }
         Target::Neighbour(id) => {
             let Some(n) = w.neighbours.get(id) else {
@@ -1519,8 +1525,27 @@ pub(crate) fn target_tip(ui: &mut Ui, w: &World, t: &Target) {
             ui.label(format!("Отношение {}", plus(n.relation)));
             ui.label(format!("Сила {}", round(n.strength)));
             ui.label(format!("Земель {}", lands.count()));
+            realm_tip(ui, d, n);
         }
         Target::Heir(_) => {}
+    }
+}
+
+/// What the crown sees of a foreign kingdom (`Neighbour.realm`, stage 26): its ruler and
+/// house, the succession law, its stability in a word; nothing for a state of numbers alone.
+fn realm_tip(ui: &mut Ui, d: &Data, n: &Neighbour) {
+    let Some(r) = &n.realm else { return };
+    let house = d.names.declined(&r.house, 1);
+    if r.fallen {
+        ui.label(format!("Династия {house} пала, трон пуст"));
+        return;
+    }
+    ui.label(format!("Правит {} из дома {house}", r.ruler));
+    let law = d.heirs.laws.iter().find(|l| l.flag == r.law);
+    ui.label(format!("Закон: {}", law.map_or("нет", |l| l.name.as_str())));
+    let axis = d.stability.as_ref().map(|s| &s.axis);
+    if let Some(a) = d.axes.iter().find(|a| Some(&a.id) == axis) {
+        ui.label(format!("Стабильность: {}", level(a, r.stability)));
     }
 }
 
@@ -1670,6 +1695,7 @@ fn side(ui: &mut Ui, g: &Game) {
                 ui.strong(&n.name);
                 ui.label(format!("Отношение {value}: {mood}"));
                 ui.label(format!("Сила {}, {stance}", round(n.strength)));
+                realm_tip(ui, d, n);
                 for t in &ties {
                     ui.label(t);
                 }
@@ -3177,9 +3203,13 @@ mod tests {
             "Отношение +40: друг",
             "Сила 45, торгует",
             "Союзов и браков нет",
+            // Stage 26: the kingdom behind the numbers.
+            "Правит Годфрид из дома Вестингов",
+            "Закон: Выборный закон",
         ] {
             assert!(n.contains(&t.to_string()), "{t}: {n:?}");
         }
+        assert!(n.iter().any(|t| t.starts_with("Стабильность: ")), "{n:?}");
         let vestrum = Target::Neighbour(NeighbourId("vestrum".into()));
         h.app
             .apply(Cmd::Act("marry_neighbour".into(), Some(vestrum)));

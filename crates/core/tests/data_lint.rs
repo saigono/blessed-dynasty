@@ -776,3 +776,34 @@ fn decisions_for_good_are_remembered() {
     g.choose(0).unwrap();
     assert!(!could_fire(&g, "cap_cathedral", &None));
 }
+
+/// Stage 26c acceptance: the minimums of variants hold (an event's text 3, a told 3, a record
+/// of the simulation 5, a slot of a life 5, an epithet's names 2), and a text short of its
+/// minimum is named.
+#[test]
+fn texts_have_their_minimum_of_variants() {
+    let data = load_all();
+    assert_eq!(lint::variants(&data), Vec::<String>::new());
+    let mut short = data.clone();
+    let fire = short
+        .events
+        .iter_mut()
+        .find(|e| e.id == "cap_fire")
+        .unwrap();
+    fire.texts.pop();
+    fire.choices[0].retold.pop();
+    let t = &mut short.sim.texts;
+    t.variants.get_mut("crowned").unwrap().truncate(3);
+    t.life.soon.pop();
+    t.epithets[0].also.clear();
+    assert_eq!(
+        lint::variants(&short),
+        [
+            "cap_fire: текст: вариантов 2, нужно не меньше 3",
+            "cap_fire: told «Отстроить посад из казны»: вариантов 2, нужно не меньше 3",
+            "sim.texts.crowned: вариантов 4, нужно не меньше 5",
+            "sim.texts.life.soon: вариантов 4, нужно не меньше 5",
+            "Собиратель земель: имена: вариантов 1, нужно не меньше 2",
+        ]
+    );
+}

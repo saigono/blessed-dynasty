@@ -162,12 +162,16 @@ fn golden_seed_42_script_a() {
             (
                 "Мятеж дома Арден",
                 "Дом Арден поднял мятеж в Ардене, и Конрад признал его независимость.",
-                hint("С того набега, отбитого в первое царствование, сосед ходил к границе с оглядкой."),
+                hint(
+                    "С того набега, отбитого в первое царствование, сосед ходил к границе с оглядкой."
+                ),
             ),
             (
                 "Потеря земли",
                 "Конрад не удержал Арден, и тамошние люди стали подданными Ардена.",
-                hint("С того набега, отбитого в первое царствование, сосед ходил к границе с оглядкой."),
+                hint(
+                    "С того набега, отбитого в первое царствование, сосед ходил к границе с оглядкой."
+                ),
             ),
         ]
     );
@@ -938,7 +942,8 @@ fn lost_and_regained_provinces_are_told_with_the_hint_of_their_cause() {
             )
         })
         .collect();
-    let hint = Some("По дорогам, проложенным в первое царствование, обозы шли в столицу и через век.");
+    let hint =
+        Some("По дорогам, проложенным в первое царствование, обозы шли в столицу и через век.");
     assert_eq!(
         told[1..],
         [
@@ -1462,7 +1467,11 @@ fn a_life_is_told_for_an_abdication_a_death_and_a_usurpation() {
     // Stage 26c: the phrases vary; the founder's year, his epithet in a case and the
     // abdication (every one of its phrases says so) are there.
     let epithet = &c.rulers[0].epithet;
-    let declined = |e: &str| (0..6).map(|k| data.names.declined(e, k)).collect::<Vec<_>>();
+    let declined = |e: &str| {
+        (0..6)
+            .map(|k| data.names.declined(e, k))
+            .collect::<Vec<_>>()
+    };
     assert!(life.contains("Ульрих") && life.contains("1187"), "{life}");
     assert!(
         declined(epithet).iter().any(|e| life.contains(e.as_str())),
@@ -1492,4 +1501,187 @@ fn a_life_is_told_for_an_abdication_a_death_and_a_usurpation() {
     );
     assert!((3..=6).contains(&sentences(life)), "{life}");
     assert!(c.epilogue.contains("Конрад"), "{}", c.epilogue);
+}
+
+/// Stage 26c acceptance: in 20 games a repeat of an event reads anew, both the text the ruler
+/// sees and its entry in the chronicle after him; an entry joined to the one before it is
+/// told inside that one, the same year or the next.
+#[test]
+fn a_repeated_event_reads_anew_in_twenty_games() {
+    let data = content();
+    let (mut shown, mut told, mut joined) = (0, 0, 0);
+    for seed in 0..20 {
+        let mut g = game(&data, seed);
+        let mut last = std::collections::BTreeMap::new();
+        let end = loop {
+            match g.wait().unwrap() {
+                Step::Event(v) => {
+                    if let Some(was) = last.insert(v.event_id.clone(), v.text.clone()) {
+                        assert_ne!(was, v.text, "seed {seed}: {}", v.event_id);
+                        shown += 1;
+                    }
+                    g.choose((v.choices.len() - 1) / 2).unwrap();
+                }
+                Step::Idle => {}
+                Step::ReignEnded(end) => break end,
+            }
+        };
+        let c = sim::run(end, &data, g.rng.clone());
+        let mut last = std::collections::BTreeMap::new();
+        for (i, e) in c.entries.iter().enumerate() {
+            if let Some(id) = &e.event
+                && let Some(was) = last.insert(id.clone(), &e.text)
+            {
+                assert_ne!(was, &e.text, "seed {seed}: {id}");
+                told += 1;
+            }
+            if e.joined {
+                let into = c.entries[..i].iter().rfind(|e| !e.joined).unwrap();
+                let body: String = e.text.trim_end_matches('.').chars().skip(1).collect();
+                assert!(into.text.contains(&body), "seed {seed}: {}", into.text);
+                assert!(e.tick.0 - into.tick.0 <= g.world.time_unit.ticks_per_year);
+                joined += 1;
+            }
+        }
+    }
+    assert!(
+        shown > 20 && told > 20 && joined > 0,
+        "{shown} {told} {joined}"
+    );
+}
+
+/// Stage 26c acceptance: linked events of a year are told as one entry, by the pair's own
+/// joins or, sharing a target, by those of the same year or the next; unlinked ones and ones
+/// further apart stay apart.
+#[test]
+fn linked_events_are_fused_into_one_entry() {
+    let data = content();
+    let g = game(&data, 1);
+    let berg = Target::Province(pid("berg"));
+    let holm = Target::Province(pid("holm"));
+    let told = |event, target, tick| sim::Told {
+        event,
+        target,
+        tick: Tick(tick),
+        root: None,
+        text: match event {
+            "cap_fire" => "Ночью выгорел посад.",
+            "cap_riot" => "Толпа пошла на дворец.",
+            _ => "Разбойники грабили обозы.",
+        },
+    };
+    let fuse = |a: &sim::Told, b: &sim::Told| sim::fuse(&data, &g.world, a, b, 7, 1);
+    let pair = data
+        .sim
+        .texts
+        .fuse
+        .pairs
+        .iter()
+        .find(|p| p.first.contains(&"cap_fire".into()));
+    let fused = |text: &str, joins: &[String]| {
+        joins.iter().any(|j| {
+            j.replace("{a}", "Ночью выгорел посад")
+                .replace("{b}", "толпа пошла на дворец")
+                == text
+        })
+    };
+    // A pair of the table: the fire, then the riot.
+    let (title, text) = fuse(&told("cap_fire", None, 3), &told("cap_riot", None, 3)).unwrap();
+    assert_eq!(title, pair.unwrap().title);
+    assert!(fused(&text, &pair.unwrap().joins), "{text}");
+    // The same target: one of the joins of the same year, of the next.
+    let a = told("prov_brigands", Some(&berg), 3);
+    let b = |tick| sim::Told {
+        text: "Толпа пошла на дворец.",
+        ..told("prov_new_mine", Some(&berg), tick)
+    };
+    let f = &data.sim.texts.fuse;
+    let (_, text) = fuse(&a, &b(3)).unwrap();
+    let same = |text: &str, joins: &[String]| {
+        joins.iter().any(|j| {
+            j.replace("{a}", "Разбойники грабили обозы")
+                .replace("{b}", "толпа пошла на дворец")
+                == text
+        })
+    };
+    assert!(same(&text, &f.same_year), "{text}");
+    let (_, text) = fuse(&a, &b(4)).unwrap();
+    assert!(same(&text, &f.next_year), "{text}");
+    // Two years apart, another target, an omen: apart.
+    assert_eq!(fuse(&a, &b(5)), None);
+    assert_eq!(fuse(&a, &told("prov_new_mine", Some(&holm), 3)), None);
+    assert_eq!(
+        fuse(
+            &told("omen_dear_bread", None, 3),
+            &told("cap_riot", None, 3)
+        ),
+        None
+    );
+}
+
+/// Stage 26c acceptance: a compound event comes after both its causes, within its window,
+/// and its text recalls them by their `recalled` names.
+#[test]
+fn a_compound_event_follows_its_causes_and_recalls_them() {
+    use bd_core::rules::Predicate;
+    let data = content();
+    let start = game(&data, 0);
+    let mut stories = 0;
+    for seed in 0..300 {
+        if stories >= 6 {
+            break;
+        }
+        let mut g = start.reseeded(seed);
+        loop {
+            let v = match g.wait().unwrap() {
+                Step::Event(v) => v,
+                Step::Idle => continue,
+                Step::ReignEnded(_) => break,
+            };
+            let e = data.events.iter().find(|e| e.id == v.event_id).unwrap();
+            if e.id.starts_with("story_") {
+                stories += 1;
+                let Predicate::All(groups) = &e.when else {
+                    panic!("{}", e.id)
+                };
+                for group in groups {
+                    let ids = match group {
+                        Predicate::Any(ps) => ps.iter().collect(),
+                        p => vec![p],
+                    };
+                    // The latest cause of the group, before now and within its window.
+                    let cause = (ids.iter())
+                        .filter_map(|p| match p {
+                            Predicate::FiredWithin(id, y) => {
+                                let at = g.world.last_fired.get(id)?;
+                                let span = y.ticks(g.world.time_unit).0;
+                                let within = at.0 < g.world.tick.0 && g.world.tick.0 < at.0 + span;
+                                within.then_some((at.0, id))
+                            }
+                            _ => None,
+                        })
+                        .max()
+                        .map(|(_, id)| id);
+                    let cause = cause.unwrap_or_else(|| panic!("seed {seed}: {}", e.id));
+                    let recalled = &data
+                        .events
+                        .iter()
+                        .chain(&data.sim_events)
+                        .find(|c| &c.id == cause)
+                        .unwrap()
+                        .recalled;
+                    assert!(
+                        v.text.contains(recalled.as_str()),
+                        "seed {seed}: {}",
+                        v.text
+                    );
+                }
+                assert!(!v.text.contains('{'), "{}", v.text);
+                let told = g.told(0).unwrap();
+                assert!(!told.contains('{'), "{told}");
+            }
+            g.choose((v.choices.len() - 1) / 2).unwrap();
+        }
+    }
+    assert!(stories >= 6, "{stories}");
 }

@@ -794,19 +794,24 @@ impl Game {
     }
 
     /// The causes of a compound event (`Predicate::FiredWithin` of its `when` that hold), the
-    /// earliest first, with the tick each last fired at.
+    /// latest of every group (a part of its All), the earliest first, with the tick each last
+    /// fired at.
     fn causes(&self, e: &Event) -> Vec<(&Event, Tick)> {
-        fn fired<'a>(p: &'a Predicate, w: &World, out: &mut Vec<&'a String>) {
+        // The latest cause of a group: a part of an All, or the whole `when`.
+        fn latest<'a>(p: &'a Predicate, w: &World) -> Option<(&'a String, Tick)> {
             match p {
-                Predicate::FiredWithin(id, _) if p.eval(w) => out.push(id),
-                Predicate::All(ps) | Predicate::Any(ps) => ps.iter().for_each(|p| fired(p, w, out)),
-                _ => {}
+                Predicate::FiredWithin(id, _) if p.eval(w) => Some((id, *w.last_fired.get(id)?)),
+                Predicate::Any(ps) => (ps.iter().filter_map(|p| latest(p, w))).max_by_key(|c| c.1),
+                _ => None,
             }
         }
-        let (w, mut ids) = (&self.world, vec![]);
-        fired(&e.when, w, &mut ids);
-        let mut all: Vec<_> = (ids.into_iter())
-            .filter_map(|id| Some((find_event(&self.data, id)?, *w.last_fired.get(id)?)))
+        let groups = match &e.when {
+            Predicate::All(ps) => ps.iter().collect(),
+            p => vec![p],
+        };
+        let mut all: Vec<_> = (groups.into_iter())
+            .filter_map(|p| latest(p, &self.world))
+            .filter_map(|(id, t)| Some((find_event(&self.data, id)?, t)))
             .collect();
         all.sort_by_key(|(e, t)| (*t, e.id.clone()));
         all

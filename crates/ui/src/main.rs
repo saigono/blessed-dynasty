@@ -468,12 +468,20 @@ impl App {
         });
         match fused {
             Some((in_news, text)) => {
-                let lines = if in_news { &mut self.news } else { &mut self.chosen };
+                let lines = if in_news {
+                    &mut self.news
+                } else {
+                    &mut self.chosen
+                };
                 lines.last_mut().expect("joined to it").0 = text;
                 self.told = None;
             }
             None => {
-                let lines = if news { &mut self.news } else { &mut self.chosen };
+                let lines = if news {
+                    &mut self.news
+                } else {
+                    &mut self.chosen
+                };
                 lines.push((told, None));
                 self.told = Some((news, id, target));
             }
@@ -2017,7 +2025,18 @@ fn movers(d: &Data, w: &World, a: &AxisId) -> Vec<String> {
             .filter(|&k| s[k])
             .for_each(|k| by[k].push(format!("закон «{}»", l.name)));
     }
-    let mut pool: Vec<&bd_core::rules::Event> = d.events.iter().filter(|e| e.weight > 0).collect();
+    // A compound event (stage 26c) is rare whatever its weight: it waits for its causes.
+    fn compound(p: &Predicate) -> bool {
+        match p {
+            Predicate::FiredWithin(..) => true,
+            Predicate::All(ps) | Predicate::Any(ps) => ps.iter().any(compound),
+            Predicate::Not(p) => compound(p),
+            _ => false,
+        }
+    }
+    let mut pool: Vec<&bd_core::rules::Event> = (d.events.iter())
+        .filter(|e| e.weight > 0 && !compound(&e.when))
+        .collect();
     pool.sort_by_key(|e| std::cmp::Reverse(e.weight));
     for (k, list) in by.iter_mut().enumerate() {
         let moving = pool.iter().filter(|e| {
@@ -2932,11 +2951,13 @@ mod tests {
         let line = |s: &str, up| (s.to_string(), up);
         // Every year opens with the treasury, notable or not.
         let money = |s: &str| line(&format!("{MONEY} {s}"), Some(true));
+        // Stage 26c: «Баронская лига» (the nobles' demand of 1189 and their assembly of 1191)
+        // joins the pick from 1192 on: another event that year, the league's card in 1193.
         let want = vec![
             (
                 "1188",
                 vec![line(
-                    "Отряды Нордмарка перешли границу и жгли сёла земли Арден, но королевское войско отбросило их.",
+                    "Отряды Нордмарка перешли границу и жгли сёла в Ардене, но королевское войско отбросило их за реку.",
                     None,
                 )],
                 vec![money("+27: доход +32, расходы -5")],
@@ -2944,7 +2965,7 @@ mod tests {
             (
                 "1189",
                 vec![line(
-                    "Бароны потребовали подтвердить их старые вольности, и Ульрих скрепил грамоту. Руки короны стали короче.",
+                    "Знать получила свои вольности на пергаменте, и с тех пор каждый барон носил копию грамоты при себе, как оберег от королевских указов.",
                     None,
                 )],
                 vec![
@@ -2957,7 +2978,7 @@ mod tests {
             (
                 "1190",
                 vec![line(
-                    "Купцы Веструма получили право торговать на ярмарках королевства.",
+                    "Купцы Веструма получили право торговать на ярмарках королевства, и в торговых рядах заговорили на чужом наречии.",
                     None,
                 )],
                 vec![
@@ -2979,22 +3000,22 @@ mod tests {
             (
                 "1192",
                 vec![line(
-                    "Дозор Веструма сжёг пограничную мельницу и убил людей, и корона потребовала виру за убитых.",
+                    "Град выбил хлеба в Соле, и корона раздала голодающим зерно из казённых амбаров.",
                     None,
                 )],
                 vec![
-                    money("+44: доход +33, расходы -4, действия и события +15"),
+                    line(
+                        &format!("{MONEY} -6: доход +33, расходы -4, действия и события -35"),
+                        Some(false),
+                    ),
                     line("Рождение: Освальд", Some(true)),
                 ],
             ),
             (
                 "1193",
-                vec![line(
-                    "Купцы Веструма получили право торговать на ярмарках королевства.",
-                    None,
-                )],
+                vec![],
                 vec![
-                    money("+54: доход +33, расходы -4, действия и события +25"),
+                    money("+28: доход +33, расходы -4"),
                     line("Умер в детстве королевский сын Генрих", Some(false)),
                 ],
             ),
@@ -3028,7 +3049,7 @@ mod tests {
         (g.data.quiet_weight, g.data.heirs.birth) = (1_000_000, vec![]);
         (g.world.war, g.queue) = (None, vec![]);
         h.app.apply(Cmd::Wait);
-        let quiet = vec![money("+28: доход +33, расходы -4")];
+        let quiet = vec![money("+29: доход +33, расходы -4")];
         assert_eq!(
             h.app.journal.last().unwrap(),
             &("1194".to_string(), vec![], quiet)
@@ -3908,7 +3929,7 @@ mod tests {
             panic!("the war's first event")
         };
         assert_eq!(v.event_id, "war_declared");
-        h.click_label("Созвать вассалов");
+        h.click_label("Созвать вассалов с дружинами");
         assert!(matches!(h.app.screen, Screen::Reign));
         let war = h.game().world.war.clone().unwrap();
         assert_eq!(war.target, Some(ProvinceId("skala".into())));
@@ -4151,7 +4172,15 @@ mod tests {
         h.app.apply(Cmd::Choose(1));
         let berg = Target::Province(ProvinceId("berg".into()));
         force_event(&mut h, "prov_crop_failure", Some(berg));
-        let tip = hover(&mut h, "Берг");
+        // The text names it in an oblique case (stage 26c), whichever is on screen: the
+        // nominative (and the accusative, the same) is the map's.
+        let forms: Vec<_> = (1..6)
+            .map(|c| load_data().names.declined("Берг", c))
+            .collect();
+        let shown = texts_of(&mut h);
+        let berg = forms.iter().find(|f| *f != "Берг" && shown.contains(f));
+        let berg = berg.unwrap_or_else(|| panic!("{forms:?} {shown:?}"));
+        let tip = hover(&mut h, berg);
         assert!(tip.contains(&"корона".to_string()), "{tip:?}");
         for t in ["Доход ", "Население ", "Лояльность "] {
             assert!(tip.iter().any(|x| x.starts_with(t)), "{t}: {tip:?}");
@@ -4640,11 +4669,12 @@ mod tests {
         );
         let (_, chosen, lines) = h.app.journal.last().unwrap();
         assert!(chosen.is_empty(), "{chosen:?}");
-        let told = "В день святого покровителя Ульрих устроил турнир";
-        assert!(lines.iter().any(|(t, _)| t.starts_with(told)), "{lines:?}");
+        // The tourney, told one of its ways (stage 26c): every one has its knights.
+        let told = |t: &str| t.contains("рыцар");
+        assert!(lines.iter().any(|(t, _)| told(t)), "{lines:?}");
         let shown = texts_of(&mut h);
         assert!(
-            shown.iter().any(|t| t.starts_with(&format!("· {told}"))),
+            shown.iter().any(|t| t.starts_with("· ") && told(t)),
             "{shown:?}"
         );
     }

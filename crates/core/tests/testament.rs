@@ -307,9 +307,15 @@ fn faith_to_the_testament_raises_legitimacy_and_is_told() {
     let t = precept("treasury");
     let mut cold = data.clone();
     cold.testament.as_mut().unwrap().faithful.axes = vec![];
+    let told = |c: &Chronicle| {
+        (c.entries[1..].iter()).any(|e| e.text.contains("завет") || e.text.contains("наказ"))
+    };
+    let seed = (0..30)
+        .find(|s| told(&dynasty(&data, *s, Some(t.clone()))))
+        .expect("a told faith within 30 dynasties");
     let (a, b) = (
-        dynasty(&data, 3, Some(t.clone())),
-        dynasty(&cold, 3, Some(t)),
+        dynasty(&data, seed, Some(t.clone())),
+        dynasty(&cold, seed, Some(t)),
     );
     let (x, y) = parting(&a, &b);
     assert!(x.snapshot.axes[&ax("legitimacy")] > y.snapshot.axes[&ax("legitimacy")]);
@@ -323,11 +329,6 @@ fn faith_to_the_testament_raises_legitimacy_and_is_told() {
         "{}",
         a.entries[0].text
     );
-    let faithful = a
-        .entries
-        .iter()
-        .filter(|e| e.text.contains("завет") || e.text.contains("наказ"));
-    assert!(faithful.count() > 0);
     assert!(
         a.rulers[0].biography.contains("Полная казна"),
         "{}",

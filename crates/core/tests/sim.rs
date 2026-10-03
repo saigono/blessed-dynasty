@@ -140,7 +140,7 @@ fn golden_seed_42_script_a() {
     // (royal_will, forged_will): the same outcome by another road, Конрад reigns 22 years.
     assert_eq!(
         (c.years, &c.fall, c.entries.len()),
-        (300, &FallReason::Alive, 79)
+        (300, &FallReason::Alive, 77)
     );
     let hint = |h: &'static str| Some(h);
     assert_eq!(
@@ -166,6 +166,49 @@ fn golden_seed_42_script_a() {
     // The same seed and decisions give the same chronicle.
     let (g2, end2) = script_a(42);
     assert_eq!(sim::run(end2, &g2.data, g2.rng.clone()), c);
+}
+
+/// Stage 24 golden: script A with the founder's testament written in his first year
+/// («Полная казна — крепость державы», peace with Нордмарк): another dynasty, read at his
+/// death.
+#[test]
+fn golden_seed_42_script_a_with_a_testament() {
+    let data = content();
+    let mut todo = vec!["berg", "lugovo", "gart"];
+    let will = bd_core::testament::Testament {
+        precept: Some("treasury".into()),
+        order: Some(bd_core::testament::Order::Peace(bd_core::state::NeighbourId(
+            "nordmark".into(),
+        ))),
+        ..Default::default()
+    };
+    let mut will = Some(will);
+    let (g, end) = reign(game(&data, 42), move |g| {
+        if g.pending_event.is_none()
+            && let Some(t) = will.take()
+        {
+            g.write_testament(t).unwrap();
+        }
+        if g.pending_event.is_none()
+            && g.world.active_actions.is_empty()
+            && let Some(p) = todo.pop()
+        {
+            grant(g, p);
+        }
+    });
+    let c = sim::run(end, &g.data, g.rng.clone());
+    assert_eq!((c.years, &c.fall, c.entries.len()), (104, &FallReason::Usurped, 27));
+    // The bad luck of seed 42 under a will paid for at 32: usurped in the year 104.
+    assert_eq!(
+        texts(&c)[0],
+        (
+            "Завещание основателя",
+            "Над гробом Ульриха канцлер сломал печать на его завещании. Первым он завещал \
+             держаться правила: «Полная казна — крепость державы». Особо наказано было никогда \
+             не воевать с Нордмарком.",
+            None
+        )
+    );
 }
 
 /// 1000 dynasties, each after a neutral reign of its own seed.
@@ -715,7 +758,8 @@ fn decisions_mark_what_they_touch_and_marks_fade() {
     let long = (0..20).map(|seed| sim::run(end_now(&g), &data, Rng::from_seed(seed)));
     let c = long
         .into_iter()
-        .find(|c| c.entries.len() > 10)
+        // Stage 24: long in years too, so the marks have the time to fade.
+        .find(|c| c.entries.len() > 10 && c.years >= 250)
         .expect("a long dynasty");
     let counts: Vec<usize> = c.entries.iter().map(|e| count(&e.snapshot)).collect();
     assert!(

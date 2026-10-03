@@ -198,6 +198,15 @@ pub fn pushes<'a>(
     edges.chain(laws)
 }
 
+/// The `n` largest pushes on the target of `a` either way, with their sign, the largest
+/// first; on a tie in `pushes` order. Pushes of 0 are left out.
+pub fn pressing<'a>(d: &'a Data, w: &'a World, a: &'a AxisId, n: usize) -> Vec<(Push<'a>, Fx)> {
+    let mut all: Vec<_> = pushes(d, w, a).filter(|(_, c)| *c != Fx(0)).collect();
+    all.sort_by_key(|(_, c)| Reverse(c.0.abs()));
+    all.truncate(n);
+    all
+}
+
 /// A push passes marks only above this either way (docs/design/hidden-state.html, section 8).
 pub const MARK_FLOW: Fx = Fx::from_int(1);
 /// A node keeps at most this many marks that came to it by `flow_marks`.
@@ -281,6 +290,56 @@ pub fn tick(d: &Data, w: &mut World) {
         .collect();
     for (to, v) in flows {
         add_axis(w, d, to, v);
+    }
+}
+
+/// The world `years` on with no events, no actions ending and no rulers dying: only the
+/// yearly income into the treasury and the graph (`tick`), as `Game::passive` pays and
+/// steps them. A copy; `w` stays as it is.
+pub fn forecast(d: &Data, w: &World, years: u32) -> World {
+    let mut w = w.clone();
+    let tpy = d.time_unit.ticks_per_year;
+    for _ in 0..years * tpy {
+        let income = crate::war::yearly_income(&w, d) / Fx::from_int(tpy as i64);
+        add_axis(&mut w, d, &d.economy.treasury, income);
+        tick(d, &mut w);
+        w.recompute_loyalty(d);
+    }
+    w
+}
+
+/// The bureaucracy that shows the player the hidden nodes (`rules.ron` `reveal`): a hidden
+/// axis opens in words at its `AxisDef.reveal`, every number and the far forecast at
+/// `numbers`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Reveal {
+    pub axis: AxisId,
+    pub numbers: Fx,
+}
+
+/// How the player sees an axis now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sight {
+    /// The value, its target and what pushes it in numbers.
+    Numbers,
+    /// A hidden node, open in words.
+    Words,
+    /// A hidden node still closed: this bureaucracy opens it; None, never.
+    Closed(Option<Fx>),
+}
+
+/// How the player sees `a` at the bureaucracy of `w` (`Data.reveal`): a plain axis in
+/// numbers; a hidden one closed below its `AxisDef.reveal`, in words from there, in numbers
+/// from `Reveal.numbers`. Without `reveal` in the data hidden axes stay closed.
+pub fn sight(d: &Data, w: &World, a: &AxisDef) -> Sight {
+    if !a.hidden {
+        return Sight::Numbers;
+    }
+    let b = d.reveal.as_ref().map(|r| (w.axes[&r.axis], r.numbers));
+    match (a.reveal, b) {
+        (Some(_), Some((b, numbers))) if b >= numbers => Sight::Numbers,
+        (Some(at), Some((b, _))) if b >= at => Sight::Words,
+        (at, _) => Sight::Closed(at),
     }
 }
 
@@ -462,6 +521,106 @@ mod tests {
         let kept: Vec<_> = w.marks[&army].iter().map(|t| t.decision_idx).collect();
         assert_eq!(kept, [0, 4, 3, 2]);
         assert_eq!(w.marks[&army][0].weight, Fx(900));
+    }
+
+    #[test]
+    fn a_forecast_is_deterministic_and_leaves_the_world_as_it_is() {
+        let (d, mut w) = setup(RULES);
+        // Something to move: nobles high pull serfdom up (e4), serfdom the nobles (e5).
+        set(&mut w, &d, &[("loyalty_nobles", 90), ("grain", 20)]);
+        let before = w.clone();
+        let a = forecast(&d, &w, 30);
+        assert_eq!(w, before);
+        assert_eq!(forecast(&d, &w, 30), a);
+        assert!(a.axes[&ax("serfdom")] > w.axes[&ax("serfdom")]);
+        assert_eq!(a.axes[&ax("grain")], Fx::from_int(50)); // step 5: back in 6 years
+        // 30 years at once or in two goes: the same; 0 years: the world itself.
+        assert_eq!(forecast(&d, &forecast(&d, &w, 5), 25), a);
+        assert_eq!(forecast(&d, &w, 0), w);
+        // The treasury takes its income, as in a year of the reign.
+        let income = crate::war::yearly_income(&w, &d);
+        let next = forecast(&d, &w, 1).axes[&ax("treasury")];
+        assert_eq!(next, w.axes[&ax("treasury")] + income);
+        // Spread over the ticks of a year, the same years.
+        let mut d4 = d.clone();
+        d4.time_unit.ticks_per_year = 4;
+        let a4 = forecast(&d4, &w, 30);
+        let close = (a4.axes[&ax("serfdom")] - a.axes[&ax("serfdom")]).0.abs();
+        assert!(close < 1_000, "{close}");
+    }
+
+    #[test]
+    fn the_bureaucracy_opens_the_hidden_nodes_by_their_thresholds() {
+        let (mut d, mut w) = setup(RULES);
+        let seen = |d: &Data, w: &mut World, b: i64, id: &str| {
+            w.axes.insert(ax("bureaucracy"), Fx::from_int(b));
+            sight(d, w, d.axes.iter().find(|a| a.id.0 == id).unwrap())
+        };
+        let closed = |v: i64| Sight::Closed(Some(Fx::from_int(v)));
+        // The table of section 7: 20 grain and trade, 40 serfdom and liberties, 55 faith
+        // and literacy, 70 strata and mobility, 85 numbers.
+        for (id, at) in [
+            ("grain", 20),
+            ("trade", 20),
+            ("serfdom", 40),
+            ("liberties", 40),
+            ("faith", 55),
+            ("literacy", 55),
+            ("strata", 70),
+            ("mobility", 70),
+        ] {
+            assert_eq!(seen(&d, &mut w, at - 1, id), closed(at), "{id}");
+            assert_eq!(seen(&d, &mut w, at, id), Sight::Words, "{id}");
+            assert_eq!(seen(&d, &mut w, 84, id), Sight::Words, "{id}");
+            assert_eq!(seen(&d, &mut w, 85, id), Sight::Numbers, "{id}");
+        }
+        // A plain axis always in numbers; a hidden one without `reveal` never open.
+        assert_eq!(seen(&d, &mut w, 0, "army"), Sight::Numbers);
+        assert_eq!(seen(&d, &mut w, 100, "shocks"), Sight::Closed(None));
+        // Without `reveal` in the data nothing hidden opens.
+        d.reveal = None;
+        assert_eq!(seen(&d, &mut w, 100, "grain"), closed(20));
+        // The axis that reveals must be known.
+        let block = r#"reveal: (axis: "bureaucracy""#;
+        let rules = RULES.replacen(block, r#"reveal: (axis: "nothing""#, 1);
+        assert!(crate::data::load(&rules).is_err());
+    }
+
+    #[test]
+    fn pressing_is_the_two_largest_pushes_with_their_sign() {
+        let (mut d, mut w) = setup(RULES);
+        d.laws.list.clear();
+        d.influences = vec![
+            edge(r#"(id: "a", from: "legitimacy", to: "army", k: 1, rest: 45)"#),
+            edge(r#"(id: "b", from: "prestige", to: "army", k: -1, rest: 0)"#),
+            edge(r#"(id: "c", from: "income", to: "army", k: 1, rest: 0)"#),
+        ];
+        // Legitimacy 45, prestige 20, income 5 (preset): 0, -20, +5.
+        let army = ax("army");
+        let got = pressing(&d, &w, &army, 2);
+        assert_eq!(
+            got,
+            [
+                (Push::Edge(1), Fx::from_int(-20)),
+                (Push::Edge(2), Fx::from_int(5))
+            ]
+        );
+        w.axes.insert(ax("legitimacy"), Fx::from_int(75));
+        let got = pressing(&d, &w, &army, 2);
+        assert_eq!(
+            got,
+            [
+                (Push::Edge(0), Fx::from_int(30)),
+                (Push::Edge(1), Fx::from_int(-20))
+            ]
+        );
+        // A law shifting the anchor pushes too.
+        let (d, mut w) = setup(RULES);
+        w.flags.insert("law_serfdom".into());
+        let serfdom = ax("serfdom");
+        let got = pressing(&d, &w, &serfdom, 2);
+        let law = matches!(got[..], [(Push::Law(l), v)] if l.id == "law_serfdom" && v == Fx::from_int(30));
+        assert!(law, "{got:?}");
     }
 
     #[test]

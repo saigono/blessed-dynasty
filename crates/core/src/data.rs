@@ -1,5 +1,5 @@
 use crate::fx::Fx;
-use crate::graph::{Influence, Stability};
+use crate::graph::{Influence, Reveal, Stability};
 use crate::rng::Rng;
 use crate::rules::{Action, ActionTarget, Effect, Event, Predicate};
 use crate::sim::FallReason;
@@ -36,6 +36,9 @@ pub struct Data {
     /// Stability derived from the graph; None: a plain axis, written directly.
     #[serde(default)]
     pub stability: Option<Stability>,
+    /// What the bureaucracy shows of the hidden nodes (`graph::sight`); None: nothing.
+    #[serde(default)]
+    pub reveal: Option<Reveal>,
     #[serde(default)]
     pub laws: Laws,
     /// Weight of "nothing happens" in the random event pick.
@@ -965,6 +968,7 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
     .chain(war)
     .chain(capacity)
     .chain(laws)
+    .chain(data.reveal.iter().map(|r| &r.axis))
     {
         if !is_axis(a) || (data.is_derived(a) && c.penalty.iter().any(|(p, _)| p == a)) {
             return Err(DataError::Invalid(format!("unknown axis {}", a.0)));

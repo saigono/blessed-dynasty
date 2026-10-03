@@ -143,9 +143,12 @@ fn golden_seed_42_script_a() {
     // Stage 26b: the queue of events goes by importance and the automaton weighs one more
     // action (the chancery): another road for the dynasty, its last crown land lost in the
     // year 186.
+    // Stage 27: the founder's reign as it was; the neighbours' strength is their kingdoms'
+    // own, the news from afar join the entries, Вейр and Арден who broke away are states
+    // armed as kingdoms: another road again, Хедвига loses the «Смута» in the year 79.
     assert_eq!(
         (c.years, &c.fall, c.entries.len()),
-        (186, &FallReason::NoCrownLand, 58)
+        (79, &FallReason::Usurped, 24)
     );
     let hint = |h: &'static str| Some(h);
     assert_eq!(
@@ -177,10 +180,15 @@ fn golden_seed_42_script_a() {
 /// won and lost, a war may end in a year without one.
 #[test]
 fn a_war_ends_in_the_chronicle_with_its_battles() {
-    let (g, end) = script_a(42);
-    let c = sim::run(end, &g.data, g.rng.clone());
+    // Stage 27: seed 42 alone saw no war's end any more; three seeds see several.
+    let chronicles: Vec<_> = [42, 43, 44]
+        .map(|seed| {
+            let (g, end) = script_a(seed);
+            sim::run(end, &g.data, g.rng.clone())
+        })
+        .into();
     let outcomes = ["war_victory", "war_defeat", "war_draw"];
-    let ends: Vec<_> = (c.entries.iter())
+    let ends: Vec<_> = (chronicles.iter().flat_map(|c| &c.entries))
         .filter(|e| e.event.as_deref().is_some_and(|id| outcomes.contains(&id)))
         .collect();
     assert!(!ends.is_empty());
@@ -226,9 +234,10 @@ fn golden_seed_42_script_a_with_a_testament() {
     // the year 104 before, then alive at the horizon before the marks and the weddings in
     // peace; with them the crown loses its last land in the year 149.
     // Stage 26b (see golden_seed_42_script_a): usurped in the year 104.
+    // Stage 27 (see golden_seed_42_script_a): usurped in the year 103.
     assert_eq!(
         (c.years, &c.fall, c.entries.len()),
-        (104, &FallReason::Usurped, 31)
+        (103, &FallReason::Usurped, 38)
     );
     assert_eq!(
         texts(&c)[0],
@@ -719,7 +728,22 @@ fn falls() {
         let p = g.world.provinces.get_mut(&pid("capital")).unwrap();
         p.holder = Holder::Vassal(VassalId("weir".into()));
     };
-    assert_eq!(fall(&data, &capital), FallReason::CapitalLost);
+    // The capital in a vassal's hands: the realm fell apart into appanages.
+    assert_eq!(fall(&data, &capital), FallReason::NoCrownLand);
+    // In a foreign kingdom's: conquered (stage 27, was CapitalLost), crown land left or not.
+    let taken = |g: &mut Game| {
+        let p = g.world.provinces.get_mut(&pid("capital")).unwrap();
+        p.holder = Holder::Foreign(bd_core::state::NeighbourId("nordmark".into()));
+    };
+    assert_eq!(fall(&data, &taken), FallReason::Conquered);
+    let all_taken = |g: &mut Game| {
+        for p in g.world.provinces.values_mut() {
+            if p.holder == Holder::Crown {
+                p.holder = Holder::Foreign(bd_core::state::NeighbourId("nordmark".into()));
+            }
+        }
+    };
+    assert_eq!(fall(&data, &all_taken), FallReason::Conquered);
     let nothing_left = |g: &mut Game| {
         for p in g.world.provinces.values_mut() {
             if p.holder == Holder::Crown {
@@ -1137,6 +1161,7 @@ fn year_changes_of_seed_42_script_a() {
     let [l1, l2] = granted("lugovo");
     let [b1, b2] = granted("berg");
     // Stage 25: other events (a fire in stone remembered, heirs' hunts from 14 on).
+    let foreign = |n: &str| Holder::Foreign(bd_core::state::NeighbourId(n.into()));
     let born = |n: &str| Change::Born(n.into());
     let want = vec![
         (1188, vec![axis("army", 20), nobles(9), g1, g2]),
@@ -1147,6 +1172,15 @@ fn year_changes_of_seed_42_script_a() {
         (
             1194,
             vec![born("Аделина"), Change::HeirGone("Освальд".into())],
+        ),
+        // Stage 27: the founder's reign as it was; Нордмарк takes Порфир from Пурпуляндия.
+        (
+            1198,
+            vec![Change::Holder(
+                pid("porfir"),
+                foreign("purpur"),
+                foreign("nordmark"),
+            )],
         ),
         (1203, vec![axis("loyalty_church", 5)]),
         (1205, vec![axis("legitimacy", 6), axis("prestige", 15)]),
@@ -1178,7 +1212,7 @@ fn kin_of_seed_42_script_a() {
         (k[2].name.as_str(), k[2].born, k[2].parent, k[2].crowned),
         ("Генрих", 1189, Some(0), None)
     );
-    assert_eq!(k[2].died, Some(1232));
+    assert_eq!(k[2].died, Some(1244)); // 1232 before stage 27
     assert_eq!(
         (k[3].name.as_str(), k[3].born, k[3].parent, k[3].died),
         ("Освальд", 1192, Some(0), Some(1194))

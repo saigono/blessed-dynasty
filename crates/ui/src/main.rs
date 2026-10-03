@@ -443,6 +443,9 @@ impl App {
         let mut lines = std::mem::take(&mut self.news);
         if let Some(before) = self.year_start.take() {
             lines.extend(change_lines(g, &before, &g.world));
+            // News from afar (stage 27), in words.
+            let heard = g.realms.news.iter().filter(|n| n.tick > before.tick);
+            lines.extend(heard.map(|n| (n.text.clone(), None)));
         }
         let date = g.world.tick.date(g.world.time_unit, g.world.start_year);
         match self.journal.last_mut() {
@@ -2952,6 +2955,11 @@ mod tests {
                 vec![
                     money("+54: доход +33, расходы -4, действия и события +25"),
                     line("Умер в детстве королевский сын Генрих", Some(false)),
+                    // Stage 27: news from afar, in words.
+                    line(
+                        "Из-за рубежа пришла весть: Нордмарк двинул войско на Веструм.",
+                        None,
+                    ),
                 ],
             ),
         ];
@@ -3361,7 +3369,7 @@ mod tests {
         );
         // The chance of every court before the suit (here a flat 100), Нордмарк at -40 none.
         for t in [
-            "Шанс согласия: Пурпуляндия 99%, Веструм 100%",
+            "Шанс согласия: Пурпуляндия 98%, Веструм 100%",
             "Сватов не примут: Нордмарк",
         ] {
             assert!(marriage.contains(&t.to_string()), "{t}: {marriage:?}");
@@ -3375,7 +3383,7 @@ mod tests {
         let n = hover(&mut h, "Веструм");
         for t in [
             "Отношение +40: друг",
-            "Сила 45, торгует",
+            "Сила 71, торгует", // stage 27: its own army, land, stability and treasury
             "Союзов и браков нет",
             // Stage 26: the kingdom behind the numbers.
             "Правит Годфрид из дома Вестингов",
@@ -4567,6 +4575,39 @@ mod tests {
         assert!(!texts_of(&mut h).contains(&want.to_string()), "folded");
         h.click_label(YEAR_NUMBERS);
         assert!(settled(&mut h).contains(&want.to_string()));
+    }
+
+    /// Stage 27: land one kingdom takes from another changes colour on our map, and the news
+    /// of it is in the summary of the year, in words.
+    #[test]
+    fn news_from_afar_go_into_the_summary_and_the_map() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(1));
+        h.click_label("Править");
+        let g = h.app.game.as_mut().unwrap();
+        g.data.quiet_weight = 1_000_000;
+        let porfir = ProvinceId("porfir".into());
+        let nordmark = Holder::Foreign(NeighbourId("nordmark".into()));
+        let colour = |g: &bd_core::game::Game| {
+            map::holder_color(&g.world, &g.world.provinces[&porfir].holder)
+        };
+        let was = colour(g);
+        let purpur = g
+            .realms
+            .list
+            .get_mut(&NeighbourId("purpur".into()))
+            .unwrap();
+        purpur.g.world.provinces.get_mut(&porfir).unwrap().holder = nordmark.clone();
+        h.app.apply(Cmd::Wait);
+        let g = h.game();
+        assert_eq!(g.world.provinces[&porfir].holder, nordmark);
+        assert_eq!(colour(g), map::holder_color(&g.world, &nordmark));
+        assert_ne!(colour(g), was);
+        let told = g.realms.news.last().unwrap().text.clone();
+        assert!(told.contains("Порфир"), "{told}");
+        let (_, _, lines) = h.app.journal.last().unwrap();
+        assert!(lines.contains(&(told.clone(), None)), "{lines:?}");
+        assert!(texts_of(&mut h).contains(&format!("· {told}")));
     }
 
     /// Stage 26b: an event of one choice is a message: not asked in a card, it goes into the

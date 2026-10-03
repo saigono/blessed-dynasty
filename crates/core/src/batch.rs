@@ -1174,6 +1174,7 @@ mod tests {
             causes: vec![],
             snapshot: g.world.clone(),
             chain: None,
+            news: false,
         };
         let entries = [
             (5, "sign"),

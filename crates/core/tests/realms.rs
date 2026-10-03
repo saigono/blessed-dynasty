@@ -2,9 +2,10 @@
 
 use bd_core::batch::{self, Files};
 use bd_core::game::Game;
-use bd_core::sim::{Chronicle, Dynasty};
-use bd_core::state::{Holder, NeighbourId, ProvinceId};
+use bd_core::sim::{Chronicle, Dynasty, FallReason};
+use bd_core::state::{Holder, NeighbourId, ProvinceId, World};
 use bd_core::time::Tick;
+use std::collections::BTreeMap;
 
 const PRESET: &str = "presets/default.ron";
 const MAP: &str = "maps/default.ron";
@@ -69,34 +70,42 @@ fn outcome(g: &Game, c: &Chronicle) -> String {
     )
 }
 
-/// Acceptance: the kingdoms change nothing of ours. `cli batch` (the golden tests of seed 42
-/// and the scripts stay pinned in `sim.rs` and `cli.rs`) gives the same text with them as
-/// without, for a neutral and an active strategy.
+/// Stage 26 acceptance, turned by stage 27: the kingdoms now reach us (their real strength
+/// is what we face), and only through `realm:` of rules.ron. Without it a game with the
+/// kingdoms in the preset plays as one without them, the text of `cli batch` alike.
 #[test]
-fn the_kingdoms_change_nothing_of_ours() {
-    let (f, bare) = (files(), with_preset(without_realms));
+fn the_kingdoms_reach_us_only_through_the_realm_rules() {
+    let bare = with_preset(without_realms);
+    let mut deaf = files();
+    let rules = &deaf["rules.ron"];
+    let a = rules.find("\n    realm: (").unwrap();
+    let b = a + rules[a..].find("\n    ),\n").unwrap() + 7;
+    let cut = format!("{}{}", &rules[..a], &rules[b..]);
+    deaf.insert("rules.ron".into(), cut);
+    let batch = |f: &Files, strategy: &str| {
+        let start = batch::load(f, PRESET, MAP, 0).unwrap();
+        let rules = batch::score_rules(f, &start).unwrap();
+        let auto = batch::chooser(f, &start, strategy).unwrap();
+        batch::batch(&start, 0..8, &[], auto.as_ref(), &rules, |_| {})
+            .unwrap()
+            .0
+    };
     for strategy in ["neutral", "warmonger"] {
-        let batch = |f: &Files| {
-            let start = batch::load(f, PRESET, MAP, 0).unwrap();
-            let rules = batch::score_rules(f, &start).unwrap();
-            let auto = batch::chooser(f, &start, strategy).unwrap();
-            batch::batch(&start, 0..8, &[], auto.as_ref(), &rules, |_| {})
-                .unwrap()
-                .0
-        };
-        assert_eq!(batch(&f), batch(&bare), "{strategy}");
+        assert_eq!(batch(&deaf, strategy), batch(&bare, strategy), "{strategy}");
     }
-    let (g, c) = play(&f, 42);
-    assert_eq!(c.realms.len(), 3);
+    assert_ne!(batch(&files(), "neutral"), batch(&bare, "neutral"));
+    let (g, c) = play(&deaf, 42);
+    assert!(c.realms.is_empty() && g.realms.list.is_empty());
     let (g0, c0) = play(&bare, 42);
-    assert!(c0.realms.is_empty());
     assert_eq!(outcome(&g, &c), outcome(&g0, &c0));
 }
 
 /// Acceptance: a link made before the stage (seed 42, the script `test.ron`, then neutral to
 /// the founder's death; 28 decisions) opens and gives the outcome it gave then, word for word.
 /// Stage 26b: it opens to the same reign; the dynasty after it goes another way (the queue
-/// of events by importance, one more action for the automaton), re-pinned.
+/// of events by importance, one more action for the automaton), re-pinned. Stage 27: the same
+/// reign again, the dynasty after it re-pinned: the neighbours' strength is their kingdoms'
+/// own now, their wars and houses move it, and a usurper ends the dynasty in its 205th year.
 #[test]
 fn a_link_from_before_the_stage_plays_the_same() {
     let link = "AQdkZWZhdWx0Kh0AASMAAQABAQABAQABAQABAQABAQAAAQABAgABAQAAAQABAQABAQABAgABAQABAQABAQABAQ\
@@ -122,10 +131,14 @@ fn a_link_from_before_the_stage_plays_the_same() {
             c.entries.len(),
             s.total
         ),
-        (28, 300, "Alive", 83, 25737)
+        (28, 205, "Usurped", 85, 15882)
     );
-    assert_eq!(format!("{hash:016x}"), "3562134f6dad11eb");
-    assert_eq!(c.realms.len(), 3, "the kingdoms play beside it");
+    assert_eq!(format!("{hash:016x}"), "dafed280dd3a5764");
+    assert_eq!(
+        c.realms.len(),
+        5,
+        "the kingdoms play beside it, two of them new"
+    );
 }
 
 /// Acceptance: the same seed gives the whole world byte for byte, ours and every kingdom's,
@@ -142,7 +155,7 @@ fn the_whole_world_repeats_byte_for_byte() {
         (world, ron::to_string(&c).unwrap())
     };
     let (a, b) = (dump(), dump());
-    assert!(a.0.contains("Эрлинги") && b.1.contains("Аргириды"));
+    assert!(a.0.contains("house:\"") && b.1.contains("Аргириды"));
     assert!(a == b);
 }
 
@@ -206,8 +219,9 @@ fn a_kingdom_lives_a_hundred_years_by_its_own_law() {
 }
 
 /// Acceptance: every kingdom has a stream of its own from the seed and its id: another
-/// Нордмарк (an older king, another law) changes nothing of ours nor of Пурпуляндия, while
-/// another seed gives Нордмарк another history.
+/// Нордмарк (an older king, another law) changes nothing of Пурпуляндия's stream, while
+/// another seed gives Нордмарк another. Since stage 27 the kingdoms meet, so their stories,
+/// and ours, part ways at the first year.
 #[test]
 fn the_streams_of_the_kingdoms_are_apart() {
     let f = files();
@@ -223,22 +237,58 @@ fn the_streams_of_the_kingdoms_are_apart() {
             1,
         )
     });
-    let (g, c) = play(&f, 3);
-    let (g2, c2) = play(&other, 3);
-    assert_eq!(outcome(&g, &c), outcome(&g2, &c2));
-    assert_eq!(c.realms[&id("purpur")], c2.realms[&id("purpur")]);
-    assert_ne!(c.realms[&id("nordmark")], c2.realms[&id("nordmark")]);
-    let (_, c3) = play(&f, 4);
-    assert_ne!(c.realms[&id("nordmark")], c3.realms[&id("nordmark")]);
+    let start = |f: &Files, seed: u64| batch::load(f, PRESET, MAP, 0).unwrap().reseeded(seed);
+    let (g, g2, g3) = (start(&f, 3), start(&other, 3), start(&f, 4));
+    let rng = |g: &Game, realm: &str| g.realms.list[&id(realm)].g.rng.clone();
+    assert_eq!(rng(&g, "purpur"), rng(&g2, "purpur"));
+    assert_eq!(rng(&g, "nordmark"), rng(&g2, "nordmark"));
+    assert_ne!(rng(&g, "nordmark"), rng(&g3, "nordmark"));
+    assert_ne!(
+        g.realms.list[&id("nordmark")],
+        g2.realms.list[&id("nordmark")]
+    );
     let streams: std::collections::BTreeSet<_> = (g.realms.list.values())
         .map(|d| format!("{:?}", d.g.rng))
         .collect();
     assert_eq!(streams.len(), 3);
 }
 
+/// The one map as world `w` of `me` sees it: the owner of every province.
+fn map_of(w: &World, me: &NeighbourId) -> BTreeMap<ProvinceId, NeighbourId> {
+    (w.provinces.values())
+        .map(|p| match &p.holder {
+            Holder::Foreign(n) => (p.id.clone(), n.clone()),
+            _ => (p.id.clone(), me.clone()),
+        })
+        .collect()
+}
+
+/// Every kingdom holds the map as we do (`Realms.owners`).
+fn one_map(g: &Game) {
+    let r = &g.realms;
+    assert_eq!(map_of(&g.world, &r.us), r.owners);
+    for (id, d) in &r.list {
+        assert_eq!(map_of(&d.g.world, id), r.owners, "{id:?}");
+    }
+}
+
+/// Plays `g` to the end of its year, the first choice of every event.
+fn to_year_end(g: &mut Game) {
+    let tpy = g.world.time_unit.ticks_per_year;
+    let end = (g.world.tick.0 / tpy + 1) * tpy;
+    while g.world.tick.0 < end {
+        if g.wait()
+            .is_ok_and(|s| matches!(s, bd_core::game::Step::Event(_)))
+        {
+            g.choose(0).unwrap();
+        }
+    }
+}
+
 /// The map is shared: land that changes hands with us changes in their worlds at the end
 /// of the year, and what they see of each other follows ours; a kingdom's own story never
-/// takes land from us. What we see of a kingdom follows its world.
+/// takes land from us nor gives it (stage 27: land between kingdoms it moves, see below).
+/// What we see of a kingdom follows its world.
 #[test]
 fn the_kingdoms_share_our_map_and_show_their_rulers() {
     let mut g = batch::load(&files(), PRESET, MAP, 0).unwrap().reseeded(11);
@@ -263,22 +313,16 @@ fn the_kingdoms_share_our_map_and_show_their_rulers() {
     // Нордмарк takes Хольм from us, we take Фростад from it.
     g.world.provinces.get_mut(&pid("holm")).unwrap().holder = Holder::Foreign(id("nordmark"));
     g.world.provinces.get_mut(&pid("frostad")).unwrap().holder = Holder::Crown;
-    // In its own story Веструм takes Гарт from us, Пурпуляндия loses Порфир to us and Кирм
-    // to its vassal Мелиссин, who breaks away.
+    // In its own story Веструм takes Гарт from us, Пурпуляндия loses Порфир to us.
     let mut set = |realm: &str, p: &str, h: Holder| {
         let w = &mut g.realms.list.get_mut(&id(realm)).unwrap().g.world;
         w.provinces.get_mut(&pid(p)).unwrap().holder = h;
     };
     set("vestrum", "gart", Holder::Crown);
     set("purpur", "porfir", us.clone());
-    set("purpur", "kirm", Holder::Foreign(id("melissin")));
-    while g.world.tick.0 < tpy {
-        if g.wait()
-            .is_ok_and(|s| matches!(s, bd_core::game::Step::Event(_)))
-        {
-            g.choose(0).unwrap();
-        }
-    }
+    to_year_end(&mut g);
+    assert_eq!(g.world.tick.0, tpy);
+    one_map(&g);
     assert_eq!(holder(&g, "nordmark", "holm"), Holder::Crown);
     assert_eq!(holder(&g, "nordmark", "frostad"), us);
     assert_eq!(
@@ -288,14 +332,6 @@ fn the_kingdoms_share_our_map_and_show_their_rulers() {
     assert_eq!(holder(&g, "purpur", "frostad"), us);
     assert_eq!(holder(&g, "vestrum", "gart"), us);
     assert_eq!(holder(&g, "purpur", "porfir"), Holder::Crown);
-    assert_eq!(
-        holder(&g, "purpur", "kirm"),
-        Holder::Foreign(id("melissin"))
-    );
-    assert_eq!(
-        g.world.provinces[&pid("kirm")].holder,
-        Holder::Foreign(id("purpur"))
-    );
     for (rid, d) in &g.realms.list {
         let v = g.world.neighbours[rid].realm.as_ref().unwrap();
         let w = &d.g.world;
@@ -333,5 +369,294 @@ fn a_link_of_an_automaton_game_plays_the_same() {
             "seed {seed}"
         );
         assert_eq!(again.rng, g.rng);
+    }
+}
+
+/// Stage 27 calibration: the world of `seed` played from the start by the automaton, ours
+/// too (`Dynasty::new`), for `years`: the game at the end.
+fn world_of(f: &Files, seed: u64, years: u32) -> Dynasty {
+    let g = batch::load(f, PRESET, MAP, 0).unwrap().reseeded(seed);
+    let mut d = Dynasty::new(g);
+    let tpy = d.g.world.time_unit.ticks_per_year;
+    d.until(Tick(years * tpy));
+    d
+}
+
+/// Stage 27 acceptance of the calibration (docs/calibration.md): the first dynasty of an
+/// established kingdom lives 80 to 150 years at the median, over 100 worlds of 300 years (a
+/// dynasty alive at the end counts 300).
+/// `cargo test --release -p core --test realms -- --ignored dynasties`.
+#[test]
+#[ignore = "release only, half a minute"]
+fn kingdom_dynasties_live_80_to_150_years() {
+    let f = files();
+    let mut lives: std::collections::BTreeMap<String, Vec<u32>> = Default::default();
+    let mut how: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    let mut news: std::collections::BTreeMap<String, u32> = Default::default();
+    let mut realms = vec![];
+    for seed in 0..100 {
+        let d = world_of(&f, seed, 300);
+        let r = &d.g.realms;
+        for id in ["nordmark", "purpur", "vestrum"] {
+            let first = r.falls.iter().find(|(x, ..)| x.0 == id);
+            let years = first.map_or(300, |(_, t, _)| t.0);
+            lives.entry(id.into()).or_default().push(years);
+            let fall = first.map_or("Alive".into(), |(.., f)| format!("{f:?}"));
+            how.entry(id.into()).or_default().push(fall);
+        }
+        for n in &r.news {
+            *news.entry(n.title.clone()).or_default() += 1;
+        }
+        realms.push(r.list.len());
+    }
+    for (id, mut v) in lives.clone() {
+        v.sort();
+        let mut falls: std::collections::BTreeMap<&String, u32> = Default::default();
+        for f in &how[&id] {
+            *falls.entry(f).or_default() += 1;
+        }
+        println!("{id}: {} / {} / {} {falls:?}", v[24], v[49], v[74]);
+    }
+    realms.sort();
+    println!(
+        "kingdoms at the end: {} / {} / {}",
+        realms[24], realms[49], realms[74]
+    );
+    println!("news per world: {news:?}");
+    for (id, mut v) in lives {
+        v.sort();
+        assert!((80..=150).contains(&v[49]), "{id}: median {}", v[49]);
+    }
+}
+
+/// Applies `effect` (RON) in the world of kingdom `realm`.
+fn apply(g: &mut Game, realm: &str, effect: &str) {
+    let e: bd_core::rules::Effect = ron::from_str(effect).unwrap();
+    let d = g.realms.list.get_mut(&id(realm)).unwrap();
+    let mut queue = vec![];
+    let mut ctx = bd_core::rules::Ctx {
+        data: &d.g.data,
+        queue: &mut queue,
+        target: None,
+        neighbour: None,
+    };
+    e.apply(&mut d.g.world, &mut ctx);
+}
+
+/// The titles of the news of a kind (`rules.ron` `realm.news`) told so far.
+fn news<'a>(
+    g: &'a Game,
+    kind: impl Fn(&bd_core::data::NewsRules) -> &bd_core::data::NewsKind,
+) -> Vec<&'a str> {
+    let title = &kind(&g.data.realm.as_ref().unwrap().news).title;
+    (g.realms.news.iter())
+        .filter(|n| n.title == *title)
+        .map(|n| n.text.as_str())
+        .collect()
+}
+
+/// Stage 27 acceptance: two kingdoms with a common border go to war by the automaton and the
+/// war chain, the winner takes a province on that border, every kingdom holds the new map,
+/// and the crown hears of it.
+#[test]
+fn kingdoms_at_war_take_border_land_and_the_map_follows() {
+    let f = files();
+    let found = (0..40).find_map(|seed| {
+        let mut d = Dynasty::new(batch::load(&f, PRESET, MAP, 0).unwrap().reseeded(seed));
+        let tpy = d.g.world.time_unit.ticks_per_year;
+        for year in 1..=150 {
+            let before = d.g.realms.clone();
+            d.until(Tick(year * tpy));
+            let r = &d.g.realms;
+            let taken = (r.owners.iter()).find(|(p, o)| {
+                let was = &before.owners[*p];
+                was != *o && before.list.contains_key(was) && before.list.contains_key(*o)
+            });
+            if let Some((p, o)) = taken.map(|(p, o)| (p.clone(), o.clone())) {
+                return Some((d, before, p, o));
+            }
+            if d.fall.is_some() {
+                return None;
+            }
+        }
+        None
+    });
+    let (d, before, p, winner) = found.expect("a war between kingdoms in 40 worlds");
+    let g = &d.g;
+    let loser = &before.owners[&p];
+    // A war between the two was on in one of their worlds.
+    let at_war = |a: &NeighbourId, b: &NeighbourId| {
+        before.list[a]
+            .g
+            .world
+            .war
+            .as_ref()
+            .is_some_and(|w| w.enemy == *b)
+    };
+    assert!(at_war(&winner, loser) || at_war(loser, &winner));
+    // The province lay on the winner's border.
+    let w = &before.list[&winner].g.world;
+    let border = w.provinces[&p]
+        .neighbours
+        .iter()
+        .any(|q| before.owners[q] == winner);
+    assert!(border, "{p:?}");
+    one_map(g);
+    assert_eq!(
+        g.realms.list[&winner].g.world.provinces[&p].holder,
+        Holder::Crown
+    );
+    let name = &g.world.provinces[&p].name;
+    assert!(
+        news(g, |n| &n.capture)
+            .iter()
+            .any(|t| t.contains(name.as_str())),
+        "{name}"
+    );
+}
+
+/// Stage 27 acceptance: a vassal of a foreign kingdom that breaks away (`Effect::Secede`)
+/// founds a kingdom of his own: his house on the throne, a ruler and heirs of the profile
+/// (`realms.founded`), a grudge against his old lord; every world holds it, ours too.
+#[test]
+fn a_foreign_vassal_that_breaks_away_founds_a_kingdom() {
+    let mut g = batch::load(&files(), PRESET, MAP, 0).unwrap().reseeded(5);
+    apply(&mut g, "purpur", r#"Secede(ById("kirm"))"#);
+    to_year_end(&mut g);
+    let melissin = id("melissin");
+    let d = &g.realms.list[&melissin];
+    let w = &d.g.world;
+    assert_eq!(d.house, "Мелиссин");
+    assert!(d.fall.is_none() && !w.ruler.name.is_empty());
+    assert_eq!(w.heirs.len(), 2);
+    assert_eq!(w.capital.province, ProvinceId("kirm".into()));
+    assert_eq!(w.provinces[&w.capital.province].holder, Holder::Crown);
+    assert_eq!(
+        w.axes[&bd_core::state::AxisId("army".into())],
+        bd_core::fx::Fx::from_int(70)
+    );
+    assert!(w.neighbours[&id("purpur")].relation < bd_core::fx::Fx(0));
+    one_map(&g);
+    let v = g.world.neighbours[&melissin].realm.as_ref().unwrap();
+    assert_eq!(
+        (v.house.as_str(), v.ruler.as_str()),
+        ("Мелиссин", w.ruler.name.as_str())
+    );
+    assert!(
+        g.realms.list[&id("nordmark")]
+            .g
+            .world
+            .neighbours
+            .contains_key(&melissin)
+    );
+    assert_eq!(news(&g, |n| &n.breakaway).len(), 1);
+}
+
+/// Stage 27 acceptance: a kingdom with no crown land left is no more; its land goes by
+/// `realm.dissolution`: to the state that took its capital (`Conqueror`), or to a state of
+/// each of its vassals (`Vassals`). Here Нордмарк has taken all Пурпуляндия's crown land.
+#[test]
+fn a_kingdom_without_land_is_no_more_and_its_land_goes_by_rule() {
+    let lost = |f: &Files| {
+        let mut g = batch::load(f, PRESET, MAP, 0).unwrap().reseeded(5);
+        let purpur = g.realms.list.get_mut(&id("purpur")).unwrap();
+        for p in purpur.g.world.provinces.values_mut() {
+            if p.holder == Holder::Crown {
+                p.holder = Holder::Foreign(id("nordmark"));
+            }
+        }
+        to_year_end(&mut g);
+        assert!(!g.realms.list.contains_key(&id("purpur")));
+        let falls: Vec<_> = g
+            .realms
+            .falls
+            .iter()
+            .map(|(id, _, f)| (id.0.as_str(), f))
+            .collect();
+        assert_eq!(falls, [("purpur", &FallReason::Conquered)]);
+        let told = news(&g, |n| &n.fallen);
+        assert!(
+            told.len() == 1 && told[0].contains("Пурпуляндия"),
+            "{told:?}"
+        );
+        one_map(&g);
+        g
+    };
+    let kirm = ProvinceId("kirm".into());
+    let g = lost(&files());
+    assert_eq!(g.realms.owners[&kirm], id("nordmark"));
+    assert!(!g.realms.owners.values().any(|o| *o == id("purpur")));
+    let mut f = files();
+    let rules = f["rules.ron"].replacen("dissolution: Conqueror", "dissolution: Vassals", 1);
+    f.insert("rules.ron".into(), rules);
+    let g = lost(&f);
+    assert_eq!(g.realms.owners[&kirm], id("melissin"));
+    assert_eq!(g.realms.list[&id("melissin")].house, "Мелиссин");
+    assert_eq!(
+        g.realms.owners[&ProvinceId("amaran".into())],
+        id("nordmark")
+    );
+}
+
+/// Stage 27 acceptance: a kingdom whose dynasty ends keeps its throne under a new house, as a
+/// usurper takes ours: a ruler and heirs of the profile, the legitimacy of `realm.usurper`;
+/// the crown hears of it and sees the new house.
+#[test]
+fn a_fallen_dynasty_leaves_its_throne_to_a_new_house() {
+    let mut g = batch::load(&files(), PRESET, MAP, 0).unwrap().reseeded(5);
+    let nordmark = g.realms.list.get_mut(&id("nordmark")).unwrap();
+    nordmark.g.world.heirs.clear();
+    nordmark.g.ended = Some("old_age".into());
+    to_year_end(&mut g);
+    assert_eq!(
+        g.realms.falls,
+        [(id("nordmark"), Tick(0), FallReason::NoHeir)]
+    );
+    let d = &g.realms.list[&id("nordmark")];
+    assert!(d.fall.is_none());
+    assert_ne!(d.house, "Эрлинги");
+    assert!(g.data.names.houses.contains(&d.house));
+    assert_ne!(d.g.world.ruler.name, "Харальд");
+    // Its chronicle goes on: the old house's ruler, then the new one.
+    let rulers: Vec<_> = d.c.rulers.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(rulers, ["Харальд", d.g.world.ruler.name.as_str()]);
+    assert_eq!(d.g.world.heirs.len(), 2);
+    let legitimacy = d.g.world.axes[&bd_core::state::AxisId("legitimacy".into())];
+    assert_eq!(legitimacy, bd_core::fx::Fx::from_int(30));
+    let v = g.world.neighbours[&id("nordmark")].realm.as_ref().unwrap();
+    assert_eq!(v.house, d.house);
+    let told = news(&g, |n| &n.house);
+    assert_eq!(told.len(), 1);
+    assert!(told[0].contains("Эрлинг"), "{}", told[0]);
+}
+
+/// Stage 27: the preset names relations with other kingdoms only, and the profile of a new
+/// kingdom only axes the rules know.
+#[test]
+fn the_preset_of_the_kingdoms_is_checked() {
+    let bad = [
+        with_preset(|p| {
+            p.replacen(
+                r#"relations: {"nordmark": -25}"#,
+                r#"relations: {"purpur": -25}"#,
+                1,
+            )
+        }),
+        with_preset(|p| {
+            p.replacen(
+                r#"relations: {"nordmark": -25}"#,
+                r#"relations: {"kingdom": -25}"#,
+                1,
+            )
+        }),
+        with_preset(|p| p.replacen(r#"axes: {"army": 70,"#, r#"axes: {"armee": 70,"#, 1)),
+    ];
+    for (f, want) in bad.iter().zip([
+        "relation with purpur",
+        "relation with kingdom",
+        "founded: unknown axis armee",
+    ]) {
+        let e = batch::load(f, PRESET, MAP, 0).unwrap_err().join("\n");
+        assert!(e.contains(want), "{e}");
     }
 }

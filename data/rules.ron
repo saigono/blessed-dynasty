@@ -362,6 +362,48 @@
     // with this loyalty and strength; when the names run out, the nearest vassal at any distance.
     grant: (max_distance: 1, new_loyalty: 60, new_strength: 10, strength: 5),
 
+    // Stage 27: the kingdoms of the world against each other (realm.rs). Every world sees each
+    // other kingdom as a neighbour of strength army * `army` + its provinces * `province` + each
+    // axis of `axes` through its curve, from that kingdom's own world every year; what the
+    // others took from that strength in a year (a war lost, tribute) comes off its army at the
+    // `army` rate. A new house on a fallen throne starts with the `usurper` axes at these
+    // values. A kingdom with no crown land left is no more: its land goes to the state that
+    // holds its capital (`Conqueror`), or every vassal founds a state on his (`Vassals`, also
+    // when its own vassal holds the capital). News of the other kingdoms (the summary of the
+    // year, the chronicle) below `threshold` are not told; texts name no numbers.
+    realm: (
+        strength: (
+            army: 0.6,
+            province: 5,
+            axes: [("stability", [(0, 0), (100, 20)]), ("treasury", [(0, 0), (500, 10)])],
+        ),
+        usurper: [("legitimacy", 30)],
+        dissolution: Conqueror,
+        news: (
+            threshold: 4,
+            war: (importance: 4, title: "Война соседей", texts: [
+                "Между {realm.тв} и {enemy.тв} началась война: на рубежах жгут сигнальные костры, купцы поворачивают обозы назад.",
+                "Из-за рубежа пришла весть: {realm} {realm:двинул|двинула} войско на {enemy.вин}.",
+            ]),
+            capture: (importance: 4, title: "Чужая земля", texts: [
+                "Гонцы донесли, что земля {province} отошла под руку {realm.род}, и {enemy} не {enemy:сумел|сумела} её отстоять.",
+                "{realm} {realm:взял|взяла} у {enemy.род} землю {province}, и над её крепостью сменили стяг.",
+            ]),
+            house: (importance: 4, title: "Смена династии", texts: [
+                "В {realm.пр} пал дом {old.род}, и престол занял дом {house.род}.",
+                "Из {realm.род} пришла весть: дом {old.род} больше не правит, на престол взошёл дом {house.род}.",
+            ]),
+            breakaway: (importance: 4, title: "Новое государство", texts: [
+                "От {enemy.род} откололась земля {province}: дом {realm} больше не присягает прежним господам и правит сам.",
+                "Дом {realm} отложился от {enemy.род}, и в земле {province} родилось новое государство.",
+            ]),
+            fallen: (importance: 5, title: "Падение державы", texts: [
+                "Пришла весть, что {realm.род} больше нет: у державы не осталось своих земель, и их поделили чужие руки.",
+                "{realm} {realm:пал|пала}: столица потеряна, и земли державы разошлись по чужим рукам.",
+            ]),
+        ),
+    ),
+
     // Yearly ruler death risk in per mille: the `base` row of the largest age_from <= age,
     // plus (100 - health) * health_k, plus every risk whose `when` holds. A hit spawns the
     // death event; the ruler dies only if the choice says so. While a death event is on

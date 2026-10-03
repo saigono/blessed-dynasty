@@ -20,11 +20,16 @@ const VASSALS: [Color32; 3] = [
     Color32::from_rgb(0xa0, 0x8c, 0xc0),
     Color32::from_rgb(0x6f, 0xa8, 0xc0),
 ];
-const FOREIGN: [Color32; 4] = [
+/// Stage 27: eight, for the states founded as the world goes on.
+const FOREIGN: [Color32; 8] = [
     Color32::from_rgb(0xb5, 0xb9, 0xc2),
     Color32::from_rgb(0xc9, 0xb8, 0xa8),
     Color32::from_rgb(0xbd, 0xc4, 0x9e),
     Color32::from_rgb(0xc2, 0xb0, 0xc0),
+    Color32::from_rgb(0xa6, 0xc2, 0xbc),
+    Color32::from_rgb(0xd2, 0xc4, 0x98),
+    Color32::from_rgb(0xae, 0xb6, 0xd6),
+    Color32::from_rgb(0xcc, 0xa6, 0xa2),
 ];
 /// The outer border of every holder's land.
 pub const BORDER: Color32 = Color32::from_rgb(0x3a, 0x40, 0x4c);

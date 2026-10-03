@@ -47,7 +47,7 @@ pub fn start(data: &Data, preset: &Preset, seed: u64, w: &mut World) -> Realms {
         list.insert(r.id.clone(), d);
     }
     Realms {
-        us: start.us.id.clone(),
+        us: start.us.clone(),
         list,
     }
 }

@@ -35,8 +35,8 @@ pub struct Preset {
 /// the map is the same, its land its crown's (or its vassals', `fiefs`), ours `us`.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct RealmsStart {
-    /// Our kingdom as they see it; the relation is each one's from `Preset.neighbours`.
-    pub us: Neighbour,
+    /// The holder of our land in their worlds.
+    pub us: NeighbourId,
     pub kingdoms: Vec<RealmStart>,
 }
 
@@ -50,6 +50,7 @@ pub struct RealmStart {
     pub ruler: Ruler,
     pub heirs: Vec<Heir>,
     /// In place of the preset's: the succession law, `married`.
+    #[serde(default)]
     pub flags: BTreeSet<String>,
     /// Over the preset's axes.
     #[serde(default)]
@@ -85,31 +86,19 @@ impl Preset {
     }
 
     /// The kingdom `r` sees itself: our preset with its ruler, house laws, axes and vassals,
-    /// its land its own, ours `RealmsStart.us`, the other kingdoms as we have them but at relation 0.
+    /// its land its own, ours `RealmsStart.us`. It knows no neighbours: wars, raids and
+    /// marriages between kingdoms are for stage 27.
     pub fn realm(&self, r: &RealmStart) -> Preset {
         let realms = self.realms.as_ref().expect("a preset with realms");
         let me = Holder::Foreign(r.id.clone());
         let mut map = self.map.clone();
         for p in &mut map.provinces {
             p.holder = match &p.holder {
-                h if *h == me => r.fiefs.get(&p.id).map_or(Holder::Crown, |v| Holder::Vassal(v.clone())),
+                h if *h == me => (r.fiefs.get(&p.id)).map_or(Holder::Crown, |v| Holder::Vassal(v.clone())),
                 Holder::Foreign(n) => Holder::Foreign(n.clone()),
-                _ => Holder::Foreign(realms.us.id.clone()),
+                _ => Holder::Foreign(realms.us.clone()),
             };
         }
-        let mut us = realms.us.clone();
-        let others = (self.neighbours.iter()).filter_map(|n| match n.id == r.id {
-            true => {
-                us.relation = n.relation;
-                None
-            }
-            false => Some(Neighbour {
-                relation: Default::default(),
-                ..n.clone()
-            }),
-        });
-        let mut neighbours: Vec<Neighbour> = others.collect();
-        neighbours.push(us);
         let mut axes = self.axes.clone();
         axes.extend(r.axes.clone());
         Preset {
@@ -123,7 +112,7 @@ impl Preset {
             vassals: r.vassals.clone(),
             ruler: r.ruler.clone(),
             heirs: r.heirs.clone(),
-            neighbours,
+            neighbours: vec![],
             flags: r.flags.clone(),
             intro: String::new(),
             realms: None,
@@ -131,16 +120,7 @@ impl Preset {
     }
 
     fn check(&self, data: &Data) -> Result<(), String> {
-        for (id, v) in &self.axes {
-            let def = data.axes.iter().find(|a| a.id == *id);
-            let def = def.ok_or(format!("unknown axis {}", id.0))?;
-            if data.is_derived(id) {
-                return Err(format!("axis {} is derived, a preset cannot set it", id.0));
-            }
-            if *v < def.min || *v > def.max {
-                return Err(format!("axis {} = {v} is out of bounds", id.0));
-            }
-        }
+        check_axes(&self.axes, data)?;
         let provinces: BTreeMap<_, _> = self.map.provinces.iter().map(|p| (&p.id, p)).collect();
         if !provinces.contains_key(&self.capital.province) {
             return Err(format!(
@@ -172,19 +152,36 @@ impl Preset {
             if !self.neighbours.iter().any(|n| n.id == r.id) {
                 return Err(at("not a neighbour".into()));
             }
-            let own = self.realm(r);
-            own.check(data).map_err(at)?;
-            let crown = |id: &ProvinceId| own.map.provinces.iter().any(|p| p.id == *id && p.holder == Holder::Crown);
-            let own_land = |id: &ProvinceId| self.map.provinces.iter().any(|p| p.id == *id && p.holder == Holder::Foreign(r.id.clone()));
-            if !crown(&r.capital) {
+            check_axes(&r.axes, data).map_err(at)?;
+            let own = |id: &ProvinceId| {
+                let p = self.map.provinces.iter().find(|p| p.id == *id);
+                p.is_some_and(|p| p.holder == Holder::Foreign(r.id.clone()))
+            };
+            if !own(&r.capital) || r.fiefs.contains_key(&r.capital) {
                 return Err(at(format!("capital {} is not its crown's", r.capital.0)));
             }
-            if let Some(p) = r.fiefs.keys().find(|p| !own_land(p)) {
-                return Err(at(format!("fief {} is not its land", p.0)));
+            for (p, v) in &r.fiefs {
+                if !own(p) || !r.vassals.iter().any(|x| x.id == *v) {
+                    return Err(at(format!("fief {}: not its land or no vassal {}", p.0, v.0)));
+                }
             }
         }
         Ok(())
     }
+}
+
+fn check_axes(axes: &Axes, data: &Data) -> Result<(), String> {
+    for (id, v) in axes {
+        let def = data.axes.iter().find(|a| a.id == *id);
+        let def = def.ok_or(format!("unknown axis {}", id.0))?;
+        if data.is_derived(id) {
+            return Err(format!("axis {} is derived, a preset cannot set it", id.0));
+        }
+        if *v < def.min || *v > def.max {
+            return Err(format!("axis {} = {v} is out of bounds", id.0));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

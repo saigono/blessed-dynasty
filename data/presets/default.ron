@@ -39,5 +39,55 @@
     ],
     // The succession law and the ruler's marriage.
     flags: ["law_primogeniture", "married"],
+    // Stage 26: every neighbour a kingdom of its own, played by our rules (realm.rs). Each starts
+    // as we do but for what it sets: house, capital, ruler, heirs, flags (the succession law,
+    // the ruler's marriage), axes over ours, vassals and their lands (`fiefs`). `us`: the
+    // holder of our land in their worlds. They know no neighbours yet (stage 27).
+    realms: Some((
+        us: "kingdom",
+        kingdoms: [
+            // Warlike and old-fashioned: the eldest of the house inherits.
+            (
+                id: "nordmark",
+                house: "Эрлинги",
+                capital: "nordheim",
+                ruler: (name: "Харальд", age: 48, health: 70, traits: ["warlike"], reign_start: 0, sex: Male),
+                heirs: [
+                    (name: "Сигурд", age: 24, ability: 55, claim: 70, status: Home, sex: Male),
+                    (name: "Хельга", age: 19, ability: 50, claim: 40, status: Home, sex: Female),
+                ],
+                flags: ["law_seniority", "married"],
+                axes: {"army": 70, "legitimacy": 75, "stability": 65, "loyalty_nobles": 60, "loyalty_people": 55, "bureaucracy": 35, "treasury": 200, "prestige": 60},
+            ),
+            // Rich and orderly, a queen on the throne by absolute primogeniture.
+            (
+                id: "purpur",
+                house: "Аргириды",
+                capital: "amaran",
+                ruler: (name: "Феофано", age: 39, health: 75, traits: ["pious"], reign_start: 0, sex: Female),
+                heirs: [
+                    (name: "Иоанн", age: 15, ability: 60, claim: 70, status: Home, sex: Male),
+                    (name: "Ирина", age: 12, ability: 55, claim: 40, status: Home, sex: Female),
+                ],
+                flags: ["law_primogeniture", "married"],
+                axes: {"treasury": 400, "bureaucracy": 50, "army": 55, "stability": 70, "loyalty_nobles": 60, "loyalty_church": 70, "loyalty_people": 55, "legitimacy": 80, "prestige": 80},
+                vassals: [(id: "melissin", name: "Мелиссин", loyalty: 55, strength: 5)],
+                fiefs: {"kirm": "melissin"},
+            ),
+            // A merchant land whose council elects the ablest of the house.
+            (
+                id: "vestrum",
+                house: "Вестинги",
+                capital: "vestburg",
+                ruler: (name: "Годфрид", age: 55, health: 65, traits: ["cautious"], reign_start: 0, sex: Male),
+                heirs: [
+                    (name: "Арнульф", age: 30, ability: 50, claim: 60, status: Home, sex: Male),
+                    (name: "Матильда", age: 26, ability: 65, claim: 60, status: Home, sex: Female),
+                ],
+                flags: ["law_elective", "married"],
+                axes: {"treasury": 350, "bureaucracy": 45, "army": 45, "stability": 65, "loyalty_nobles": 60, "loyalty_people": 60, "legitimacy": 70, "prestige": 50},
+            ),
+        ],
+    )),
     intro: "1187 год. Старый королевский дом угас, и корона по праву крови перешла к Ульриху, дальнему родичу последнего короля. Право на его стороне, поддержки почти нет: знать держится настороже, а бароны Вейр и Арден правят своими землями сами. С севера грозит враждебный Нордмарк, на востоке выжидает сильная Пурпуляндия, на западе дружбы ищет Веструм. У Ульриха пока один наследник, шестилетний сын Конрад.",
 )

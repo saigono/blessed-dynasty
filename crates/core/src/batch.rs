@@ -911,21 +911,27 @@ pub fn chronicle_text(g: &Game, c: &sim::Chronicle) -> String {
 
 /// `cli trace`: `script` (soft), then the neutral strategy until the reign ends; every
 /// chronicle entry with its chain (`trace`), or with `node` that axis year by year
-/// (`node_trace`).
+/// (`node_trace`); with `realm`, of that foreign kingdom's chronicle (stage 26).
 pub fn trace_of(
     mut g: Game,
     rules: &ScoreRules,
     script: &[ScriptStep],
     node: Option<&str>,
+    realm: Option<&str>,
 ) -> Result<String, String> {
     play_script(&mut g, script, true, &mut vec![])?;
     play(&mut g, None, &mut vec![])?;
-    let (Some(c), _) = dynasty(&g, rules) else {
+    let (Some(ours), _) = dynasty(&g, rules) else {
         return Err("правление не кончилось".into());
     };
+    let c = match realm {
+        Some(id) => (ours.realms.get(&crate::state::NeighbourId(id.into())))
+            .ok_or(format!("нет королевства {id}"))?,
+        None => &ours,
+    };
     match node {
-        Some(node) => node_trace(&g, &c, node),
-        None => Ok(trace(&g, &c)),
+        Some(node) => node_trace(&g, c, node),
+        None => Ok(trace(&g, c)),
     }
 }
 

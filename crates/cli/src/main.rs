@@ -78,6 +78,9 @@ enum Cmd {
         script: PathBuf,
         #[arg(long)]
         node: Option<String>,
+        /// A foreign kingdom by its id (`nordmark`): its chronicle instead of ours.
+        #[arg(long)]
+        realm: Option<String>,
     },
 }
 
@@ -200,12 +203,14 @@ fn run(cli: Cli) -> Result<(), String> {
             files,
             script,
             node,
+            realm,
         } => {
             let texts = read_files(&files)?;
             let g = load(&files, &texts, seed)?;
             let rules = score_rules(&texts, &g)?;
             let script = parse(&read(&script)?)?;
-            print!("{}", batch::trace_of(g, &rules, &script, node.as_deref())?);
+            let (node, realm) = (node.as_deref(), realm.as_deref());
+            print!("{}", batch::trace_of(g, &rules, &script, node, realm)?);
             Ok(())
         }
     }

@@ -431,7 +431,7 @@ pub fn tree(
                         .map(|r| r.end.date(unit, start_year));
                     let life = match (k.died, gave_up) {
                         (Some(d), _) => format!("{}–{d}", k.born),
-                        (None, Some(y)) => format!("р. {}, отрёкся в {y}", k.born),
+                        (None, Some(y)) => format!("р. {}, отречение в {y}", k.born),
                         (None, None) => format!("р. {}", k.born),
                     };
                     let bastard = if k.bastard { ", бастард" } else { "" };
@@ -442,7 +442,7 @@ pub fn tree(
                             .filter(|r| r.cause.is_some())
                             .map(|r| r.end.date(unit, start_year));
                         text = format!(
-                            "♔ {text}, правил с {y}{}",
+                            "♔ {text}, на троне с {y}{}",
                             till.map_or(String::new(), |t| format!(" по {t}"))
                         );
                     }

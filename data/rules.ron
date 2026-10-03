@@ -664,7 +664,7 @@
                 (name: ("Грозный", "Грозная"), min: 3,
                     deeds: ["plot_arrests", "plot_executed", "riot_crushed", "elder_hanged", "heresy_burned", "famine_ignored", "plague_quarantine", "peasants_crushed", "schism_crushed", "crisis_crushed", "revolt_crushed", "search_decreed", "villages_squeezed", "nobles_refused", "assembly_dictated", "runaways_returned"],
                     told: ["Казни и расправы {ruler.род} помнили долго, и {ruler:его|её} прозвали {epithet.тв}.",
-                        "Перед {ruler.тв} трепетали и бароны, и чернь, и за {ruler.тв} навсегда осталось прозвище {epithet}."]),
+                        "Перед {ruler.тв} трепетали и бароны, и чернь, и за {ruler:ним|ней} навсегда осталось прозвище {epithet}."]),
                 (name: ("Набожный", "Набожная"), min: 3,
                     deeds: ["trait:pious", "church_tithe", "church_lands", "cathedral_crypt", "festival_procession", "plague_prayer", "heresy_synod", "drought_prayer", "illness_prayer", "heir_prayer", "fever_prayer", "tutor_church", "regency_church", "vows_endowed", "disaster_prayer", "famine_monasteries", "pestilence_monks", "quarrel_church", "succession_church", "crisis_council"],
                     told: ["{ruler} {ruler:строил|строила} обители и не {ruler:пропускал|пропускала} ни одной службы, и в народе {ruler:его|её} звали {epithet.тв}.",

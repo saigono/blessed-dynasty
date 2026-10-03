@@ -2724,7 +2724,7 @@ mod tests {
         h.click_label("Родословная");
         let shown = texts_of(&mut h);
         for t in [
-            "♔ Ульрих (р. 1155), правил с 1187",
+            "♔ Ульрих (р. 1155), на троне с 1187",
             "Конрад (р. 1181)",
             "Генрих (1190–1193)",
         ] {
@@ -2833,7 +2833,7 @@ mod tests {
         (h.app.screen, h.app.tree) = (Screen::Chronicle, true);
         settle(&mut h);
         let shown = texts_of(&mut h);
-        let founder = "(р. 1155, отрёкся в 1187)";
+        let founder = "(р. 1155, отречение в 1187)";
         assert!(
             shown
                 .iter()

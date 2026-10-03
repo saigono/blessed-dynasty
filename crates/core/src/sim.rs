@@ -615,6 +615,10 @@ pub fn fuse(
         None if years == 0 => &f.same_year,
         None => &f.next_year,
     };
+    // «…, а …, а …» reads as a stammer: a first part with its own «а» takes another join.
+    let stammer = |j: &&String| a.text.contains(", а ") && j.starts_with("{a}, а ");
+    let fit: Vec<String> = joins.iter().filter(|j| !stammer(j)).cloned().collect();
+    let joins = if fit.is_empty() { joins } else { &fit };
     let join = Some(text::pick(joins, salt, n)).filter(|j| !j.is_empty())?;
     // Both without their full stops: the join ends the sentence.
     let bare = |s: &'_ str| s.trim_end().trim_end_matches('.').to_string();

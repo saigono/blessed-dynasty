@@ -1691,6 +1691,16 @@ fn linked_events_are_fused_into_one_entry() {
     assert!(same(&text, &f.same_year), "{text}");
     let (_, text) = fuse(&a, &b(4)).unwrap();
     assert!(same(&text, &f.next_year), "{text}");
+    // A first part with its own «а» never takes a join with another (stage 26c).
+    let a2 = sim::Told {
+        text: "Разбойники грабили обозы, а стража спала.",
+        ..told("prov_brigands", Some(&berg), 3)
+    };
+    assert!(f.next_year.iter().any(|j| j.starts_with("{a}, а ")));
+    for salt in 0..40 {
+        let (_, text) = sim::fuse(&data, &g.world, &a2, &b(4), salt, 1).unwrap();
+        assert_eq!(text.matches(", а ").count(), 1, "{text}");
+    }
     // Two years apart, another target, an omen: apart.
     assert_eq!(fuse(&a, &b(5)), None);
     assert_eq!(fuse(&a, &told("prov_new_mine", Some(&holm), 3)), None);

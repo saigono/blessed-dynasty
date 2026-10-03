@@ -1,5 +1,5 @@
 // Simulation events: only sim::run draws them (Data::add_sim_events), the reign never does.
-// Twelve, two per risk of DESIGN 7.1: revolt (vassal_revolt, peasant_war), invasion
+// Twelve, two per risk of DESIGN 7.1 (stage 20 adds the schism): revolt (vassal_revolt, peasant_war), invasion
 // (invasion, nomad_raid), succession crisis (succession_crisis, regency_council), disaster
 // (disaster, great_famine), decline (unrest -> decline), rise (prosperity -> golden_age);
 // plus monastery_vows and monastery_late: a king takes the vows and the reign ends.
@@ -63,10 +63,14 @@
         text: "В тот год поднялись сёла. Горят усадьбы, сборщиков подати вешают на воротах, и пожар дошёл до земли {province}.",
         when: AxisBelow("loyalty_people", 45),
         weight: 1,
+        // Stage 20: the catastrophe of П1 (oppression), more likely the more split the
+        // estates; the peasants' victory or concessions ease it.
         weight_bonus: [
             (AxisBelow("loyalty_people", 35), 3),
             (AxisBelow("stability", 35), 2),
             (ProvinceWhere((holder: Crown, loyalty_below: 30)), 2),
+            (AxisAbove("strata", 60), 3),
+            (AxisAbove("strata", 70), 3),
         ],
         once: false,
         cooldown_years: 15,
@@ -80,14 +84,14 @@
                         percent: 50,
                         axes: [("army", 0.3)],
                         then: [Axis("army", -10), Province(EventTarget, Population, -1500), Province(EventTarget, Loyalty, -10), Axis("loyalty_people", -5)],
-                        otherwise: [Axis("army", -20), Axis("stability", -10), Province(EventTarget, Income, -2)],
+                        otherwise: [Axis("army", -20), Axis("stability", -10), Province(EventTarget, Income, -2), Axis("strata", -15), Axis("serfdom", -10)],
                     )),
                 ],
                 cause_tag: "peasants_crushed",
             ),
             (
                 text: "Простить недоимки и убавить подать",
-                effects: [Axis("treasury", -60), Axis("income", -1), Axis("loyalty_people", 12), Province(EventTarget, Loyalty, 15), Axis("legitimacy", -3)],
+                effects: [Axis("treasury", -60), Axis("income", -1), Axis("loyalty_people", 12), Province(EventTarget, Loyalty, 15), Axis("legitimacy", -3), Axis("strata", -5), Axis("serfdom", -5)],
                 cause_tag: "peasants_appeased",
             ),
             (
@@ -325,12 +329,13 @@
         ],
     ),
     (
+        // Stage 20: the failure of С1 (bread and price): the emptier the barns, the likelier.
         id: "great_famine",
         title: "Великий голод",
         text: "В тот год хлеб не уродился по всему королевству. Люди едят лебеду и кору, по дорогам бредут толпы нищих.",
         when: All([]),
         weight: 1,
-        weight_bonus: [(AxisBelow("treasury", 0), 2), (AxisBelow("stability", 30), 2)],
+        weight_bonus: [(AxisBelow("grain", 40), 3), (AxisBelow("grain", 30), 4), (AxisBelow("grain", 20), 6), (AxisBelow("treasury", 0), 2), (AxisBelow("stability", 30), 2)],
         once: false,
         cooldown_years: 25,
         importance: 4,
@@ -338,7 +343,7 @@
         choices: [
             (
                 text: "Открыть казённые амбары",
-                effects: [Axis("treasury", -80), Axis("loyalty_people", 5), Axis("stability", 2)],
+                effects: [Axis("treasury", -80), Axis("grain", 20), Axis("loyalty_people", 5)],
                 cause_tag: "famine_granaries",
             ),
             (
@@ -350,6 +355,48 @@
                 text: "Ждать нового урожая",
                 effects: [Axis("loyalty_people", -10), Axis("stability", -6), Province(Capital, Population, -3000)],
                 cause_tag: "famine_waited",
+            ),
+        ],
+    ),
+    // ------------------------------------------------------------------ schism
+    (
+        // Stage 20: the catastrophe of П3 (the scribes' heresy): one faith broken. A shock,
+        // the church estranged; under the law of one faith a land breaks away with a
+        // heretic lord (granted, then seceding).
+        id: "schism",
+        title: "Раскол",
+        text: "Вера раскололась. В земле {province} изгнали епископа и служат по-своему, и полкоролевства молится не так, как двор.",
+        when: AxisBelow("faith", 40),
+        weight: 4,
+        weight_bonus: [(AxisBelow("faith", 30), 4)],
+        once: false,
+        cooldown_years: 30,
+        importance: 5,
+        target: RandomProvince((holder: Crown, capital: false)),
+        choices: [
+            (
+                text: "Предать раскольников анафеме и огню",
+                effects: [
+                    Axis("stability", -20), Axis("loyalty_church", -15), Axis("faith", 8), Axis("loyalty_people", -8), Axis("army", -10),
+                    Chance((percent: 0, bonus: [(Flag("law_one_faith"), 100)], then: [Grant(EventTarget), Secede(EventTarget), SetFlag("vassal_seceded")])),
+                ],
+                cause_tag: "schism_crushed",
+            ),
+            (
+                text: "Созвать собор и искать примирения",
+                effects: [
+                    Axis("stability", -20), Axis("loyalty_church", -15), Axis("faith", 3), Axis("treasury", -60), Axis("legitimacy", -5),
+                    Chance((percent: 0, bonus: [(Flag("law_one_faith"), 100)], then: [Grant(EventTarget), Secede(EventTarget), SetFlag("vassal_seceded")])),
+                ],
+                cause_tag: "schism_council",
+            ),
+            (
+                text: "Признать раскол и поделить храмы",
+                effects: [
+                    Axis("stability", -20), Axis("loyalty_church", -25), Axis("faith", -5), Axis("loyalty_people", 5),
+                    Chance((percent: 0, bonus: [(Flag("law_one_faith"), 100)], then: [Grant(EventTarget), Secede(EventTarget), SetFlag("vassal_seceded")])),
+                ],
+                cause_tag: "schism_accepted",
             ),
         ],
     ),

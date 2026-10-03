@@ -88,11 +88,14 @@ fn ids_are_unique() {
 
 /// Every cause_tag of events (simulation ones included) and actions has a hint, and every
 /// hint has a tag. A hint is told as a sentence of its own (sim.rs adds the capital and the
-/// full stop): lowercase start, no final punctuation, no numbers.
+/// full stop): lowercase start, no final punctuation, no numbers. The chain templates
+/// (`chain:` keys, stage 20) follow the same format and are checked by
+/// `chain_templates_cover_the_graph`.
 #[test]
 fn every_cause_tag_has_a_hint() {
     let data = load_all();
     let hints = hints();
+    let tags_only = |(k, _): (&String, &String)| !k.starts_with("chain:");
     let events = data.events.iter().chain(&data.sim_events);
     let tags = events.flat_map(|e| &e.choices).map(|c| &c.cause_tag);
     let tags: BTreeSet<_> = tags
@@ -100,7 +103,10 @@ fn every_cause_tag_has_a_hint() {
         .collect();
     let missing: BTreeSet<_> = tags.iter().filter(|t| !hints.contains_key(**t)).collect();
     assert!(missing.is_empty(), "no hint for {missing:?}");
-    let unused: Vec<_> = hints.keys().filter(|k| !tags.contains(k)).collect();
+    let unused: Vec<_> = (hints.iter().filter(|h| tags_only(*h)))
+        .map(|(k, _)| k)
+        .filter(|k| !tags.contains(k))
+        .collect();
     assert!(unused.is_empty(), "hints of no cause_tag: {unused:?}");
     let bad: Vec<_> = (hints.values())
         .filter(|h| {
@@ -182,11 +188,11 @@ fn every_reign_choice_is_hinted() {
 }
 
 /// The brief of stage 9: twelve simulation events, 2-3 choices each, every one important
-/// enough for the chronicle.
+/// enough for the chronicle. Stage 20 adds the schism.
 #[test]
 fn sim_events_follow_the_brief() {
     let data = load_all();
-    assert_eq!(data.sim_events.len(), 14);
+    assert_eq!(data.sim_events.len(), 15);
     for e in &data.sim_events {
         assert!((2..=3).contains(&e.choices.len()), "{}", e.id);
         assert!(e.importance >= data.sim.threshold, "{}", e.id);
@@ -259,7 +265,9 @@ fn every_reign_event_fires_under_neutral_play() {
 }
 
 /// The same for the simulation: 1000 dynasties, each after a neutral reign of its seed; every
-/// simulation event reaches the chronicle at least once.
+/// simulation event and every omen reaches the chronicle at least once. Stage 20: every
+/// fourth dynasty has «Городские вольности» in force from the start (as `cli batch --law`):
+/// without a founder's law faith never falls to the schism.
 #[test]
 #[ignore = "about a minute in release; stage 9 acceptance, run with --release --ignored"]
 fn every_sim_event_fires_in_a_thousand_dynasties() {
@@ -268,6 +276,10 @@ fn every_sim_event_fires_in_a_thousand_dynasties() {
     let mut fired: BTreeMap<String, u32> = BTreeMap::new();
     for seed in 0..1000 {
         let mut g = Game::new(data.clone(), &preset, seed);
+        if seed % 4 == 0 {
+            g.world.flags.insert("law_charters".into());
+            g.world.laws.insert("law_charters".into(), g.world.tick);
+        }
         let end = loop {
             match g.wait().unwrap() {
                 Step::Event(v) => g.choose((v.choices.len() - 1) / 2).unwrap(),
@@ -279,7 +291,8 @@ fn every_sim_event_fires_in_a_thousand_dynasties() {
             *fired.entry(e.event.unwrap_or_default()).or_default() += 1;
         }
     }
-    let silent: Vec<_> = (data.sim_events.iter())
+    let omens = data.events.iter().filter(|e| e.omen);
+    let silent: Vec<_> = (data.sim_events.iter().chain(omens))
         .filter(|e| !fired.contains_key(&e.id))
         .map(|e| &e.id)
         .collect();
@@ -381,8 +394,9 @@ fn no_loop_runs_away_outside_its_curves() {
     assert_eq!(runaway_loops(&steep).len(), 1);
 }
 
-/// Stage 18: stability is derived and an effect writing it goes to the shocks. Stage 20 moves
-/// these writes to the nodes behind them; until then, no new ones.
+/// Stage 18: stability is derived and an effect writing it goes to the shocks. Stage 20 moved
+/// the writes of brigands, drought and famine to the nodes behind them (trade, grain); the
+/// schism's shock is by design (docs/design/hidden-state.html, section 4); no new ones.
 #[test]
 fn direct_writes_to_stability_do_not_grow() {
     fn walk<'a>(es: &'a [Effect], out: &mut Vec<&'a Effect>) {
@@ -420,4 +434,63 @@ fn direct_writes_to_stability_do_not_grow() {
         writes.len() <= 22,
         "new direct writes to stability: {writes:?}"
     );
+}
+
+/// Stage 20: the catastrophes of `symptoms` and their symptoms exist, every symptom is an
+/// omen, and every omen foretells one.
+#[test]
+fn symptoms_are_omens_of_known_catastrophes() {
+    let data = load_all();
+    let all = || data.events.iter().chain(&data.sim_events);
+    let event = |id: &String| all().find(|e| e.id == *id);
+    assert_eq!(data.symptoms.len(), 3);
+    for (catastrophe, symptoms) in &data.symptoms {
+        assert!(event(catastrophe).is_some_and(|e| !e.omen), "{catastrophe}");
+        for s in symptoms {
+            assert!(event(s).is_some_and(|e| e.omen), "{s}");
+        }
+    }
+    let foretold = |id: &String| data.symptoms.iter().any(|(_, s)| s.contains(id));
+    let stray: Vec<_> = all().filter(|e| e.omen && !foretold(&e.id)).collect();
+    assert!(stray.is_empty(), "{stray:?}");
+}
+
+/// Stage 20: the chain of a chronicle entry is told by the `chain:` keys of hints.ron: both
+/// ways of every axis an edge of the graph targets or comes from, the start and the joint;
+/// a lead names a known event. Format as for the hints.
+#[test]
+fn chain_templates_cover_the_graph() {
+    let data = load_all();
+    let hints = hints();
+    let chain: BTreeMap<&str, &String> = (hints.iter())
+        .filter_map(|(k, v)| Some((k.strip_prefix("chain:")?, v)))
+        .collect();
+    let target = bd_core::graph::InfluenceKind::Target;
+    let edges = data.influences.iter().filter(|e| e.kind == target);
+    let nodes: BTreeSet<String> = edges
+        .flat_map(|e| [e.from.0.clone(), e.to.0.clone()])
+        .collect();
+    for n in &nodes {
+        for way in ["+", "-"] {
+            assert!(chain.contains_key(format!("{n}{way}").as_str()), "{n}{way}");
+        }
+    }
+    for k in ["then", "since_decision", "since_law", "since_mark"] {
+        assert!(chain.contains_key(k), "{k}");
+    }
+    let all = || data.events.iter().chain(&data.sim_events);
+    for k in chain.keys() {
+        let node = k
+            .strip_suffix(['+', '-'])
+            .is_some_and(|n| nodes.contains(n));
+        let known = ["then", "since_decision", "since_law", "since_mark"].contains(k);
+        assert!(node || known || all().any(|e| e.id == *k), "chain:{k}");
+    }
+    let bad: Vec<_> = (chain.values())
+        .filter(|h| {
+            let first = h.chars().next().is_some_and(char::is_lowercase);
+            !first || h.ends_with(['.', '!', '?', ',', ' ']) || has_digits(h)
+        })
+        .collect();
+    assert!(bad.is_empty(), "{bad:?}");
 }

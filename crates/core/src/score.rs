@@ -252,6 +252,7 @@ mod tests {
             importance: 0,
             causes: Vec::new(),
             snapshot: World { tick, ..w.clone() },
+            chain: None,
         }
     }
 

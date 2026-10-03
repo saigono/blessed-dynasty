@@ -26,10 +26,11 @@ const NAMES: &str = include_str!("../../../data/names.ron");
 const HINTS: &str = include_str!("../../../data/hints.ron");
 const SCORE: &str = include_str!("../../../data/score.ron");
 /// Every top-level file of data/events, in file name order like the CLI.
-const EVENTS: [&str; 5] = [
+const EVENTS: [&str; 6] = [
     include_str!("../../../data/events/death.ron"),
     include_str!("../../../data/events/heirs.ron"),
     include_str!("../../../data/events/neighbours.ron"),
+    include_str!("../../../data/events/omens.ron"),
     include_str!("../../../data/events/reign.ron"),
     include_str!("../../../data/events/war.ron"),
 ];
@@ -234,8 +235,12 @@ impl App {
                 if let Screen::Event(v) = &self.screen
                     && let Some(c) = v.choices.get(i)
                 {
+                    // A symptom of a loop of the graph (stage 20) is marked so.
+                    let events = self.game.as_ref().map_or(&[][..], |g| &g.data.events);
+                    let omen = events.iter().any(|e| e.id == v.event_id && e.omen);
+                    let mark = if omen { "Знамение. " } else { "" };
                     self.chosen
-                        .push((format!("«{}»: {}", v.title, c.text), None));
+                        .push((format!("{mark}«{}»: {}", v.title, c.text), None));
                 }
             }
             _ => {}
@@ -1885,36 +1890,39 @@ mod tests {
                 "1188",
                 vec![
                     line(
-                        "Казна: -13 (доход +32, содержание -5, траты -40)",
+                        "Казна: -23 (доход +32, содержание -5, траты -50)",
                         Some(false),
                     ),
-                    line("«Беда с наследником»: Позвать лучших лекарей", None),
-                    line("Смерть наследника: Конрад", Some(false)),
+                    line("«Пожар в столице»: Отстроить посад из казны", None),
                 ],
             ),
             (
                 "1189",
                 vec![
-                    line(
-                        "Казна: -8 (доход +32, содержание -5, траты -35)",
-                        Some(false),
-                    ),
-                    line("«Неурожай»: Раздать зерно из казны", None),
-                    line("Рождение: Генрих", Some(true)),
+                    line("Казна: +27 (доход +32, содержание -5, траты 0)", Some(true)),
+                    line("«Знать требует»: Подтвердить вольности", None),
+                    line("Бюрократия -5", Some(false)),
+                    line("Знать +11", Some(true)),
                     line("Завершено: Проложить дорогу (Берг)", None),
                 ],
             ),
             (
                 "1190",
-                vec![money.clone(), line("Рождение: Освальд", Some(true))],
+                vec![
+                    line(
+                        "Казна: +53 (доход +33, содержание -5, траты +25)",
+                        Some(true),
+                    ),
+                    line("«Чужие купцы»: Открыть ярмарки", None),
+                    line("Рождение: Генрих", Some(true)),
+                ],
             ),
             (
                 "1191",
                 vec![
                     money.clone(),
-                    line("«Знать требует»: Подтвердить вольности", None),
-                    line("Бюрократия -5", Some(false)),
-                    line("Знать +11", Some(true)),
+                    line("«Собор знати»: Созвать собор и слушать", None),
+                    line("Знать +7.84", Some(true)),
                 ],
             ),
             (
@@ -1925,18 +1933,12 @@ mod tests {
                         Some(true),
                     ),
                     line("«Пограничная стычка»: Потребовать виру", None),
-                    line("Рождение: Рейнхольд", Some(true)),
+                    line("Рождение: Освальд", Some(true)),
                 ],
             ),
             (
                 "1193",
-                vec![
-                    money,
-                    line("«Церковь требует»: Платить десятину", None),
-                    line("Доход -2", Some(false)),
-                    line("Церковь +9", Some(true)),
-                    line("Смерть наследника: Рейнхольд", Some(false)),
-                ],
+                vec![money, line("Смерть наследника: Генрих", Some(false))],
             ),
         ];
         let got: Vec<_> = (h.app.journal.iter())
@@ -1946,17 +1948,43 @@ mod tests {
         let texts = texts(&h.frame(vec![]));
         let (latest, older) = (pos(&texts, "1193"), pos(&texts, "1192"));
         assert!(latest < older, "the latest year comes first");
-        assert!(texts.iter().any(|t| t == "Смерть наследника: Конрад"));
+        assert!(texts.iter().any(|t| t == "Смерть наследника: Генрих"));
         // A quiet year says so; a reign over leaves the journal to the reign's card.
-        let d = &mut h.app.game.as_mut().unwrap().data;
-        (d.quiet_weight, d.heirs.birth) = (1_000_000, vec![]);
+        let g = h.app.game.as_mut().unwrap();
+        (g.data.quiet_weight, g.data.heirs.birth) = (1_000_000, vec![]);
+        (g.world.war, g.queue) = (None, vec![]); // the war declared in 1193 waits
         h.app.apply(Cmd::Wait);
         let quiet = vec![line(
-            "Казна: +26 (доход +31, содержание -5, траты 0)",
+            "Казна: +28 (доход +33, содержание -5, траты 0)",
             Some(true),
         )];
         assert_eq!(h.app.journal.last().unwrap(), &("1194".to_string(), quiet));
         assert!(texts_of(&mut h).contains(&"Тихий год".to_string()));
+    }
+
+    /// Stage 20: the choice of a symptom of the graph is marked «Знамение» in the summary.
+    #[test]
+    fn an_omen_is_marked_in_the_year_summary() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(1));
+        h.click_label("Править");
+        let d = &mut h.app.game.as_mut().unwrap().data;
+        for e in &mut d.events {
+            match e.id == "omen_dear_bread" {
+                true => (e.weight, e.when) = (1_000_000, bd_core::rules::Predicate::All(vec![])),
+                false => e.weight = 0,
+            }
+        }
+        h.app.apply(Cmd::Wait);
+        h.app.apply(Cmd::Choose(0));
+        let lines = &h.app.journal.last().unwrap().1;
+        let omen = "Знамение. «Дороговизна хлеба»: Запретить вывоз хлеба";
+        assert!(lines.iter().any(|(t, _)| t == omen), "{lines:?}");
+        assert!(
+            !lines
+                .iter()
+                .any(|(t, _)| t.starts_with("Знамение. «Неурожай»"))
+        );
     }
 
     /// Stage 15: land over the crown's limit shows its yearly penalty and what to do.
@@ -2336,17 +2364,14 @@ mod tests {
         let shown = texts_of(&mut h);
         for t in [
             "♔ Ульрих (р. 1155), правил с 1187",
-            "Конрад (1181–1188)",
-            "Генрих (р. 1189)",
+            "Конрад (р. 1181)",
+            "Генрих (1190–1193)",
         ] {
             assert!(shown.contains(&t.to_string()), "{t}: {shown:?}");
         }
         // Children under their parent, deeper.
         let kin = &h.game().world.kin;
-        assert_eq!(
-            chronicle::family(kin),
-            [(0, 0), (1, 1), (2, 1), (3, 1), (4, 1)]
-        );
+        assert_eq!(chronicle::family(kin), [(0, 0), (1, 1), (2, 1), (3, 1)]);
         h.click_label("Закрыть");
         assert!(!h.app.tree);
 

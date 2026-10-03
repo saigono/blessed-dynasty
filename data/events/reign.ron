@@ -50,7 +50,7 @@
         choices: [
             (
                 text: "Даровать хартию",
-                effects: [Province(Capital, Income, 2), Axis("loyalty_people", 4), Axis("loyalty_nobles", -3)],
+                effects: [Province(Capital, Income, 2), Axis("liberties", 5), Axis("loyalty_people", 4), Axis("loyalty_nobles", -3)],
                 cause_tag: "guild_charter_granted",
                 hint: "Вольный город богатеет, а знать косится на купцов.",
             ),
@@ -335,7 +335,7 @@
             ),
             (
                 text: "Открыть королевские амбары",
-                effects: [Axis("treasury", -40), Axis("loyalty_people", 8)],
+                effects: [Axis("treasury", -40), Axis("grain", -5), Axis("loyalty_people", 8)],
                 cause_tag: "riot_bread",
                 hint: "Хлеб усмиряет толпу лучше копий.",
             ),
@@ -356,19 +356,19 @@
         choices: [
             (
                 text: "Раздать зерно из казны",
-                effects: [Axis("treasury", -35), Province(EventTarget, Loyalty, 8), Axis("loyalty_people", 3)],
+                effects: [Axis("grain", -5), Axis("treasury", -35), Province(EventTarget, Loyalty, 8)],
                 cause_tag: "famine_relief",
                 hint: "Накормленный край помнит государя.",
             ),
             (
                 text: "Простить подати на этот год",
-                effects: [Province(EventTarget, Income, -1), Province(EventTarget, Loyalty, 5)],
+                effects: [Axis("grain", -15), Province(EventTarget, Income, -1), Province(EventTarget, Loyalty, 5)],
                 cause_tag: "famine_tax_relief",
                 hint: "Прощённые подати возвращаются верностью.",
             ),
             (
                 text: "Собрать подати как обычно",
-                effects: [Province(EventTarget, Loyalty, -10), Province(EventTarget, Population, -1000), Axis("loyalty_people", -3)],
+                effects: [Axis("grain", -15), Province(EventTarget, Loyalty, -10), Province(EventTarget, Population, -1000)],
                 cause_tag: "famine_ignored",
                 hint: "Голод не забывают и внуки.",
             ),
@@ -426,7 +426,7 @@
             ),
             (
                 text: "Велеть вассалу навести порядок",
-                effects: [Axis("loyalty_nobles", 3), Province(EventTarget, Loyalty, -5), Axis("stability", -2)],
+                effects: [Axis("loyalty_nobles", 3), Province(EventTarget, Loyalty, -5), Axis("trade", -4)],
                 cause_tag: "brigands_vassal",
                 hint: "Вассал, которому доверили меч, привыкает к нему.",
             ),
@@ -474,8 +474,11 @@
         id: "prov_rebel_elder",
         title: "Мятежный староста",
         text: "Староста в земле {province} отказался платить подати и собрал вокруг себя мужиков с вилами.",
-        when: All([]),
+        // Stage 20: a symptom of П1 (oppression): the estates split or the people restless.
+        when: Any([AxisAbove("strata", 50), AxisBelow("loyalty_people", 50)]),
         weight: 3,
+        weight_bonus: [(AxisAbove("strata", 55), 3)],
+        omen: true,
         once: false,
         cooldown_years: 6,
         importance: 2,
@@ -549,7 +552,7 @@
         choices: [
             (
                 text: "Платить десятину",
-                effects: [Axis("income", -2), Axis("loyalty_church", 10)],
+                effects: [EnactLaw("law_tithe"), Axis("loyalty_church", 5)],
                 cause_tag: "church_tithe",
                 hint: "Десятина покупает благословение надолго.",
             ),
@@ -581,7 +584,7 @@
         choices: [
             (
                 text: "Подтвердить вольности",
-                effects: [Axis("loyalty_nobles", 10), Axis("bureaucracy", -5), Axis("legitimacy", -1)],
+                effects: [Axis("loyalty_nobles", 10), Axis("serfdom", 4), Axis("bureaucracy", -5), Axis("legitimacy", -1)],
                 cause_tag: "nobles_privileges",
                 hint: "Вольности знати сковывают руки короны.",
             ),
@@ -635,8 +638,12 @@
         id: "fac_heresy",
         title: "Ересь",
         text: "Бродячие проповедники учат, что церковь продалась и что земля принадлежит пахарю.",
-        when: NotFlag("heresy_sect"),
+        // Stage 20: a symptom of П3 (the scribes' heresy); faith 65 at the start, so the
+        // reign meets it, but not under one faith held high.
+        when: All([NotFlag("heresy_sect"), AxisBelow("faith", 66)]),
         weight: 3,
+        weight_bonus: [(AxisBelow("faith", 60), 4), (AxisBelow("faith", 50), 4)],
+        omen: true,
         once: false,
         cooldown_years: 12,
         importance: 3,
@@ -645,19 +652,19 @@
         choices: [
             (
                 text: "Предать еретиков огню",
-                effects: [Axis("loyalty_church", 8), Axis("loyalty_people", -8), Axis("stability", -3)],
+                effects: [Axis("faith", 5), Axis("loyalty_church", 8), Axis("loyalty_people", -8), Axis("stability", -3)],
                 cause_tag: "heresy_burned",
                 hint: "Костры гаснут, пепел разносит ветер.",
             ),
             (
                 text: "Устроить диспут с богословами",
-                effects: [SetFlag("heresy_sect"), SpawnEvent("fac_heresy_spreads", 3), Axis("loyalty_church", -2)],
+                effects: [SetFlag("heresy_sect"), SpawnEvent("fac_heresy_spreads", 3), Axis("faith", -2), Axis("loyalty_church", -2)],
                 cause_tag: "heresy_debate",
                 hint: "Диспут даёт ереси трибуну.",
             ),
             (
                 text: "Не мешать проповедникам",
-                effects: [SetFlag("heresy_sect"), SpawnEvent("fac_heresy_spreads", 2), Axis("loyalty_church", -8), Axis("loyalty_people", 4)],
+                effects: [SetFlag("heresy_sect"), SpawnEvent("fac_heresy_spreads", 2), Axis("faith", -4), Axis("loyalty_church", -8), Axis("loyalty_people", 4)],
                 cause_tag: "heresy_tolerated",
                 hint: "Терпимость к ереси церковь зовёт соучастием.",
             ),
@@ -670,6 +677,7 @@
         text: "Ересь пустила корни: в иных деревнях священников гонят камнями.",
         when: Flag("heresy_sect"),
         weight: 0,
+        omen: true,
         once: false,
         cooldown_years: 0,
         importance: 3,
@@ -678,13 +686,13 @@
         choices: [
             (
                 text: "Созвать церковный собор",
-                effects: [ClearFlag("heresy_sect"), Axis("loyalty_church", 6), Axis("stability", -3), Axis("treasury", -20)],
+                effects: [ClearFlag("heresy_sect"), Axis("faith", 3), Axis("loyalty_church", 6), Axis("stability", -3), Axis("treasury", -20)],
                 cause_tag: "heresy_synod",
                 hint: "Собор осудил ересь, но не выкорчевал её.",
             ),
             (
                 text: "Признать проповедников и взять под защиту",
-                effects: [ClearFlag("heresy_sect"), Axis("loyalty_church", -12), Axis("loyalty_people", 6), Axis("legitimacy", -4)],
+                effects: [ClearFlag("heresy_sect"), Axis("faith", -6), Axis("loyalty_church", -12), Axis("loyalty_people", 6), Axis("legitimacy", -4)],
                 cause_tag: "heresy_embraced",
                 hint: "Король, защитивший еретиков, потерял благословение.",
             ),
@@ -999,19 +1007,19 @@
         choices: [
             (
                 text: "Насыпать валы",
-                effects: [Axis("treasury", -50), Province(EventTarget, Population, -500), Province(EventTarget, Loyalty, 5)],
+                effects: [Axis("treasury", -50), Axis("grain", -5), Province(EventTarget, Population, -500), Province(EventTarget, Loyalty, 5)],
                 cause_tag: "flood_dikes",
                 hint: "Валы, насыпанные тогда, держат реку до сих пор.",
             ),
             (
                 text: "Раздать хлеб погорельцам и утопленникам",
-                effects: [Axis("treasury", -25), Province(EventTarget, Population, -1500), Axis("loyalty_people", 3)],
+                effects: [Axis("treasury", -25), Axis("grain", -10), Province(EventTarget, Population, -1500), Axis("loyalty_people", 3)],
                 cause_tag: "flood_relief",
                 hint: "Хлеб помог пережить беду, но не отвёл её.",
             ),
             (
                 text: "Предоставить людей их судьбе",
-                effects: [Province(EventTarget, Population, -2500), Province(EventTarget, Income, -1), Province(EventTarget, Loyalty, -8)],
+                effects: [Axis("grain", -10), Province(EventTarget, Population, -2500), Province(EventTarget, Income, -1), Province(EventTarget, Loyalty, -8)],
                 cause_tag: "flood_ignored",
                 hint: "Брошенный край не ждёт от короны ничего.",
             ),
@@ -1031,19 +1039,19 @@
         choices: [
             (
                 text: "Закупить зерно за морем",
-                effects: [Axis("treasury", -60), Axis("loyalty_people", 4)],
+                effects: [Axis("treasury", -60), Axis("grain", -5), Axis("loyalty_people", 2)],
                 cause_tag: "drought_grain",
                 hint: "Заморское зерно спасло людей и опустошило казну.",
             ),
             (
                 text: "Крестные ходы о дожде",
-                effects: [Axis("loyalty_church", 4), Axis("loyalty_people", -3), Axis("income", -1)],
+                effects: [Axis("grain", -20), Axis("loyalty_church", 4), Axis("income", -1)],
                 cause_tag: "drought_prayer",
                 hint: "Дождь пришёл поздно.",
             ),
             (
                 text: "Запретить вывоз хлеба",
-                effects: [Axis("loyalty_nobles", -5), Axis("loyalty_people", 2), Axis("stability", -1)],
+                effects: [Axis("grain", -10), Axis("trade", -5), Axis("loyalty_nobles", -5)],
                 cause_tag: "drought_export_ban",
                 hint: "Запрет спас бедных и разорил хлеботорговцев.",
             ),

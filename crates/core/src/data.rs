@@ -29,6 +29,10 @@ pub struct Data {
     /// for `data_lint`.
     #[serde(default)]
     pub loops: Vec<(String, Vec<String>)>,
+    /// The catastrophes of the loops, each with the events (`Event.omen`) that foretell it:
+    /// `(catastrophe, symptoms)` by event id; for `batch` and `data_lint`.
+    #[serde(default)]
+    pub symptoms: Vec<(String, Vec<String>)>,
     /// Stability derived from the graph; None: a plain axis, written directly.
     #[serde(default)]
     pub stability: Option<Stability>,

@@ -296,6 +296,7 @@ fn describe(g: &Game, d: &Decision) -> String {
             target: t,
         } => format!("действие {action_id}{}", target(t)),
         DecisionKind::Abdicate => "отречение".into(),
+        DecisionKind::Testament(_) => "завещание".into(),
     };
     format!("{date} {what} [{}]", d.cause_tag)
 }

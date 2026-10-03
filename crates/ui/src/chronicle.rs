@@ -8,6 +8,7 @@ use bd_core::game::Game;
 use bd_core::score::Score;
 use bd_core::sim::{Chronicle, ChronicleEntry, RulerRecord};
 use bd_core::state::{Change, Kin, World};
+use bd_core::testament;
 use bd_core::time::TimeUnit;
 use eframe::egui::{self, Button, Grid, RichText, Ui, vec2};
 
@@ -121,6 +122,12 @@ pub fn chronicle(
             .small()
             .color(FG2),
         );
+        // The founder's testament as this ruler reads it (stage 24).
+        if r > 0
+            && let Some(line) = will_strength(d, &e.snapshot)
+        {
+            ui.label(RichText::new(line).small().color(FG2));
+        }
         ui.add_space(10.0);
         ui.label(RichText::new(title(d, e)).size(18.0).strong());
         ui.label(&e.text);
@@ -161,6 +168,36 @@ pub fn chronicle(
         }
     });
     cmd
+}
+
+/// «Завет Ульриха: сила 0,92 — слава 1,31 × память 78% × рвение 0,9», the strength of the
+/// testament in `w` and its parts (`testament::parts`); None before the founder's death.
+fn will_strength(d: &Data, w: &World) -> Option<String> {
+    let (legend, decay, zeal) = testament::parts(d, w)?;
+    let t = w.testament.as_ref()?;
+    let n = |v: Fx| format!("{:.2}", v.0 as f32 / 1000.0).replace('.', ",");
+    let names = [("founder", t.by.0.as_str(), Some(t.by.1))];
+    let whose = bd_core::text::fill("Завет {founder.род}", &d.names, &names);
+    let broken = if t.broken.is_some() {
+        " · наказ нарушен"
+    } else {
+        ""
+    };
+    Some(format!(
+        "{whose}: сила {} — слава {} × память {}% × рвение {}{broken}",
+        n(testament::strength(d, w)),
+        n(legend),
+        decay.0 / 10,
+        n(zeal)
+    ))
+}
+
+/// The testament of the founder, as read at his death, and its strength then; None
+/// without one.
+fn will_read(d: &Data, c: &Chronicle) -> Option<(String, String)> {
+    let read = &d.testament.as_ref()?.texts.read.0;
+    let e = c.entries.iter().find(|e| e.title == *read)?;
+    Some((e.text.clone(), will_strength(d, &e.snapshot)?))
 }
 
 /// The entry's title, after `OMEN` for a symptom of the graph (`Event.omen`).
@@ -276,6 +313,24 @@ pub fn summary(
                 ui.label(hint);
             });
         }
+        // The testament and how the dynasty kept it (stage 24).
+        if let Some((text, strength)) = will_read(d, c) {
+            ui.add_space(6.0);
+            ui.label(RichText::new("Завещание основателя").strong());
+            ui.label(text);
+            let breach = d.testament.as_ref().map(|r| &r.texts.breach);
+            let broke = c.entries.iter().find(|e| Some(&e.title) == breach);
+            let has_order = w.testament.as_ref().is_some_and(|t| t.order.is_some());
+            let fate = match broke {
+                Some(e) => format!(
+                    "Наказ нарушен в {} году.",
+                    e.tick.date(w.time_unit, w.start_year)
+                ),
+                None if has_order => "Наказ соблюдали до конца династии.".to_string(),
+                None => String::new(),
+            };
+            ui.small(RichText::new(format!("{strength}. {fate}")).color(FG2));
+        }
         let laws = founder_laws(g, c);
         if !laws.is_empty() {
             heading(ui, "Законы основателя");
@@ -343,6 +398,12 @@ pub fn reign_over(
             (None, None) => format!("Наследника не осталось: {}.", fall(c, d).to_lowercase()),
         };
         ui.label(heir);
+        // What he left his heirs (stage 24).
+        if let Some((text, strength)) = will_read(d, c) {
+            heading(ui, "Завещание");
+            ui.label(text);
+            ui.small(RichText::new(strength).color(FG2));
+        }
         let room = ctx.content_rect().height() - 380.0;
         egui::ScrollArea::vertical()
             .max_height(room.max(200.0))

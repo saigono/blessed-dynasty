@@ -136,9 +136,11 @@ fn golden_seed_42_script_a() {
     // Stage 20: events move the hidden nodes, omens and the schism, the founder's reign draws
     // other events: Конрад reigns three years, Хедвига 23, and the dynasty lives to the
     // horizon; omens are told whatever their importance.
+    // Stage 24: the trait `defiant` rolls at every coronation and two events join the pool
+    // (royal_will, forged_will): the same outcome by another road, Конрад reigns 22 years.
     assert_eq!(
         (c.years, &c.fall, c.entries.len()),
-        (300, &FallReason::Alive, 129)
+        (300, &FallReason::Alive, 77)
     );
     let hint = |h: &'static str| Some(h);
     assert_eq!(
@@ -150,13 +152,13 @@ fn golden_seed_42_script_a() {
                 hint("Основатель породнил наследника с домом своего барона."),
             ),
             (
-                "Новое правление",
-                "Престол Конрада Недолгого унаследовала Хедвига. Страна вздохнула спокойно: новая королева не любила поспешных решений.",
-                None,
+                "Мятеж дома Вейр",
+                "Дом Вейр поднял мятеж в земле Берг и отказался присягать короне, и Конрад двинул на мятежников войско.",
+                hint("Вассал, которому основатель доверил меч, привык к нему."),
             ),
             (
-                "Мятеж дома Вейр",
-                "Дом Вейр поднял мятеж в земле Вейр, но корона откупилась от него золотом и титулами.",
+                "Мятеж дома Арден",
+                "Дом Арден поднял мятеж в земле Арден, но корона откупилась от него золотом и титулами.",
                 hint("Вассал, которому основатель доверил меч, привык к нему."),
             ),
         ]
@@ -164,6 +166,52 @@ fn golden_seed_42_script_a() {
     // The same seed and decisions give the same chronicle.
     let (g2, end2) = script_a(42);
     assert_eq!(sim::run(end2, &g2.data, g2.rng.clone()), c);
+}
+
+/// Stage 24 golden: script A with the founder's testament written in his first year
+/// («Полная казна — крепость державы», peace with Нордмарк): another dynasty, read at his
+/// death.
+#[test]
+fn golden_seed_42_script_a_with_a_testament() {
+    let data = content();
+    let mut todo = vec!["berg", "lugovo", "gart"];
+    let will = bd_core::testament::Testament {
+        precept: Some("treasury".into()),
+        order: Some(bd_core::testament::Order::Peace(
+            bd_core::state::NeighbourId("nordmark".into()),
+        )),
+        ..Default::default()
+    };
+    let mut will = Some(will);
+    let (g, end) = reign(game(&data, 42), move |g| {
+        if g.pending_event.is_none()
+            && let Some(t) = will.take()
+        {
+            g.write_testament(t).unwrap();
+        }
+        if g.pending_event.is_none()
+            && g.world.active_actions.is_empty()
+            && let Some(p) = todo.pop()
+        {
+            grant(g, p);
+        }
+    });
+    let c = sim::run(end, &g.data, g.rng.clone());
+    assert_eq!(
+        (c.years, &c.fall, c.entries.len()),
+        (104, &FallReason::Usurped, 27)
+    );
+    // The bad luck of seed 42 under a will paid for at 32: usurped in the year 104.
+    assert_eq!(
+        texts(&c)[0],
+        (
+            "Завещание основателя",
+            "Над гробом Ульриха канцлер сломал печать на его завещании. Первым он завещал \
+             держаться правила: «Полная казна — крепость державы». Особо наказано было никогда \
+             не воевать с Нордмарком.",
+            None
+        )
+    );
 }
 
 /// 1000 dynasties, each after a neutral reign of its own seed.
@@ -713,7 +761,8 @@ fn decisions_mark_what_they_touch_and_marks_fade() {
     let long = (0..20).map(|seed| sim::run(end_now(&g), &data, Rng::from_seed(seed)));
     let c = long
         .into_iter()
-        .find(|c| c.entries.len() > 10)
+        // Stage 24: long in years too, so the marks have the time to fade.
+        .find(|c| c.entries.len() > 10 && c.years >= 250)
         .expect("a long dynasty");
     let counts: Vec<usize> = c.entries.iter().map(|e| count(&e.snapshot)).collect();
     assert!(
@@ -1088,23 +1137,23 @@ fn kin_of_seed_42_script_a() {
     );
     assert_eq!((k[0].crowned, k[0].parent), (Some(1187), None));
     assert_eq!(k[0].died, Some(1187 + c.rulers[0].end.0));
-    // Конрад, 6 at the start, reigned 1229..1232; his siblings died uncrowned, as below.
+    // Конрад, 6 at the start, reigned 1229..1251 (stage 24); his siblings died uncrowned.
     assert_eq!(
         (k[1].name.as_str(), k[1].born, k[1].crowned, k[1].died),
-        ("Конрад", 1181, Some(1229), Some(1232))
+        ("Конрад", 1181, Some(1229), Some(1251))
     );
     assert_eq!(
         (k[2].name.as_str(), k[2].born, k[2].parent, k[2].crowned),
         ("Генрих", 1189, Some(0), None)
     );
-    assert_eq!(k[2].died, Some(1261));
+    assert_eq!(k[2].died, Some(1257));
     assert_eq!(
         (k[3].name.as_str(), k[3].born, k[3].parent, k[3].died),
-        ("Ирмгард", 1192, Some(0), Some(1245))
+        ("Ирмгард", 1192, Some(0), Some(1237))
     );
     assert_eq!(
         (k[4].name.as_str(), k[4].born, k[4].parent, k[4].died),
-        ("Гизела", 1198, Some(0), Some(1274))
+        ("Гизела", 1198, Some(0), Some(1271))
     );
     // Every ruler in the chronicle is a crowned kin, in order; children point at a ruler.
     let crowned: Vec<(&str, u32)> = (k.iter())

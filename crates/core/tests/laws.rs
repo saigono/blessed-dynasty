@@ -909,6 +909,88 @@ fn designating_over_the_law_costs_and_raises_the_dispute() {
     assert!(!contested(&next_reign(&g).entries[0]));
 }
 
+/// Stage 24 acceptance: the heir named in the founder's testament is crowned over the
+/// rightful one, who stays in the line, a rival; sealed, it costs nothing while the founder
+/// lives and the law still names the rightful heir; it binds one coronation only.
+#[test]
+fn the_heir_of_a_testament_is_crowned_once_over_the_law() {
+    let mut data = data();
+    data.heirs.death = vec![];
+    let people = [(M, 20, true, 50), (M, 18, true, 50)];
+    let mut g = game(&data, "law_primogeniture", &people);
+    g.world.ruler.age = 60;
+    let before = g.world.axes.clone();
+    let id = g.world.heirs[1].id;
+    let will = bd_core::testament::Testament {
+        heir: Some(id),
+        ..Default::default()
+    };
+    g.write_testament(will).unwrap();
+    assert_eq!(g.world.axes, before);
+    assert_eq!(sim::successor(&g.world, &g.data), Some(0));
+    let c = next_reign(&g);
+    assert_eq!(
+        (c.rulers[1].name.as_str(), c.rulers[1].designated),
+        ("p1", true)
+    );
+    let crowned = c
+        .entries
+        .iter()
+        .find(|e| e.title == "Новое правление")
+        .unwrap();
+    assert!(crowned.text.contains("завещани"), "{}", crowned.text);
+    let w = &crowned.snapshot;
+    assert_eq!(w.heirs[0].name, "p0");
+    assert_eq!(w.testament.as_ref().unwrap().heir, None);
+    assert_eq!(sim::successor(w, &data), Some(0));
+    // The will's word adds legitimacy by its strength (`testament.heir`).
+    let mut plain = g.clone();
+    plain.data.testament.as_mut().unwrap().heir = vec![];
+    let legitimacy = |c: &sim::Chronicle| {
+        let e = c
+            .entries
+            .iter()
+            .find(|e| e.title == "Новое правление")
+            .unwrap();
+        e.snapshot.axes[&AxisId("legitimacy".into())]
+    };
+    assert!(legitimacy(&c) > legitimacy(&next_reign(&plain)));
+}
+
+/// Stage 24 acceptance: the coronation of a testament's heir over the law is contested by
+/// `testament.heir_dispute`, more often than one designated openly.
+#[test]
+fn a_testament_heir_is_contested_by_its_own_chance() {
+    let mut data = data();
+    data.heirs.death = vec![];
+    let t = data.testament.as_ref().unwrap();
+    assert!(t.heir_dispute > data.heirs.designate_dispute);
+    let people = [(M, 20, true, 50), (M, 18, true, 50)];
+    let willed = |data: &Data| {
+        let mut g = game(data, "law_primogeniture", &people);
+        g.world.heirs[1].claim = Fx::from_int(80);
+        let id = g.world.heirs[1].id;
+        let will = bd_core::testament::Testament {
+            heir: Some(id),
+            ..Default::default()
+        };
+        g.write_testament(will).unwrap();
+        let c = next_reign(&g);
+        contested(
+            c.entries
+                .iter()
+                .find(|e| e.title == "Новое правление")
+                .unwrap(),
+        )
+    };
+    for (chance, designate, disputed) in [(100, 0, true), (0, 100, false)] {
+        let mut data = data.clone();
+        data.testament.as_mut().unwrap().heir_dispute = Fx::from_int(chance);
+        data.heirs.designate_dispute = Fx::from_int(designate);
+        assert_eq!(willed(&data), disputed, "{chance}");
+    }
+}
+
 /// The dispute's «Назначить младшего» names him for real (stage 16 question 1).
 #[test]
 fn the_heir_dispute_designates_the_younger() {

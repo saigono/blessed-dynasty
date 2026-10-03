@@ -50,6 +50,8 @@ pub enum Predicate {
     HeirAge(u32, u32, u32),
     /// Claims of heirs 0 and 1 differ by less than this; false with fewer than two heirs.
     ClaimGapBelow(Fx),
+    /// The ruler has this trait.
+    RulerTrait(String),
     /// `All([])` is always true.
     All(Vec<Predicate>),
     Any(Vec<Predicate>),
@@ -78,6 +80,7 @@ impl Predicate {
                 [a, b, ..] => (a.claim - b.claim).max(b.claim - a.claim) < *v,
                 _ => false,
             },
+            Predicate::RulerTrait(t) => w.ruler.traits.contains(t),
             Predicate::All(ps) => ps.iter().all(|p| p.eval(w)),
             Predicate::Any(ps) => ps.iter().any(|p| p.eval(w)),
             Predicate::Not(p) => !p.eval(w),
@@ -311,6 +314,9 @@ pub enum HeirOp {
     /// (`sim::rightful`) costs `heirs.designate_penalty`. Naming the named again is nothing.
     Designate(u32),
     TargetDesignate,
+    /// The ruler names the heir of the event or action in a sealed will
+    /// (`World.testament.heir`): crowned after him over the law (stage 24).
+    TargetBequeath,
     /// The eldest bastard joins the line with `heirs.bastard_claim`; no-op without one.
     Recognize,
 }
@@ -420,6 +426,11 @@ impl Effect {
                         w.insert_heir(h);
                     }
                     HeirOp::Recognize => {}
+                    HeirOp::TargetBequeath => {
+                        if let Some(id) = w.heirs.get(heir(&t)).map(|h| h.id) {
+                            w.testament.get_or_insert_default().heir = Some(id);
+                        }
+                    }
                     HeirOp::Remove(i) if heir(i) < w.heirs.len() => {
                         w.heirs.remove(heir(i));
                     }
@@ -779,6 +790,9 @@ pub enum EventTarget {
     Heir(u32, u32),
     /// The same among the heirs not yet married.
     UnmarriedHeir(u32, u32),
+    /// The favourite: the ablest heir after the first in line, his ability above the first's
+    /// by more than this; cannot fire without one.
+    Favourite(Fx),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

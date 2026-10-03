@@ -34,8 +34,11 @@ pub fn hints(data: &Data) -> Vec<String> {
     let hints = &data.hints;
     let events = data.events.iter().chain(&data.sim_events);
     let tags = events.flat_map(|e| &e.choices).map(|c| &c.cause_tag);
+    // Stage 24: the testament is a decision of its own (Game::write_testament).
+    let testament = crate::testament::TAG.to_string();
     let tags: BTreeSet<_> = tags
         .chain(data.actions.iter().map(|a| &a.cause_tag))
+        .chain([&testament])
         .collect();
     let missing = (tags.iter()).filter(|t| !hints.contains_key(**t));
     let mut out: Vec<String> = missing.map(|t| format!("{t}: нет намёка")).collect();
@@ -113,7 +116,13 @@ pub fn told(data: &Data) -> Vec<String> {
 /// The `{…}` of a template that `text::fill` would leave as they are: an unknown key, an
 /// unknown case, a sex choice without two forms.
 pub fn bad_braces(s: &str) -> Vec<String> {
-    const KEYS: [&str; 14] = [
+    // Stage 24 (testament.rs): founder, forebear, precept, order, will.
+    const KEYS: [&str; 19] = [
+        "founder",
+        "forebear",
+        "precept",
+        "order",
+        "will",
         "ruler",
         "prev",
         "heir",
@@ -181,6 +190,7 @@ pub fn template_texts(data: &Data) -> Vec<&String> {
             .flat_map(|e| e.told.iter().chain([&e.name.0, &e.name.1])),
     );
     all.extend(data.sim.traits.iter().flat_map(|r| [&r.told.0, &r.told.1]));
+    all.extend(testament_texts(data).into_iter().flat_map(|(_, v)| v));
     let l = &t.life;
     for v in [
         &l.founder,
@@ -202,7 +212,50 @@ pub fn template_texts(data: &Data) -> Vec<&String> {
     all
 }
 
-/// `bad_braces` of every `template_texts`, and a life without its parts.
+/// The texts of the testament (stage 24) by their place in `rules.ron`, each 2-3 variants.
+fn testament_texts(data: &Data) -> Vec<(String, Vec<&String>)> {
+    let Some(r) = &data.testament else {
+        return vec![];
+    };
+    let tx = &r.texts;
+    let mut all: Vec<(String, Vec<&String>)> = [
+        ("read", &tx.read.1),
+        ("precept", &tx.precept),
+        ("order", &tx.order),
+        ("heir", &tx.heir),
+        ("faithful", &tx.faithful),
+        ("crowned", &tx.crowned),
+        ("willed", &tx.willed),
+        ("life_founder", &tx.life_founder),
+        ("life_kept", &tx.life_kept),
+        ("life_broken", &tx.life_broken),
+    ]
+    .into_iter()
+    .map(|(k, v)| (format!("testament.texts.{k}"), v.iter().collect()))
+    .collect();
+    let o = &r.orders;
+    for (k, rule) in [
+        ("keep_law", &o.keep_law),
+        ("keep_province", &o.keep_province),
+        ("peace", &o.peace),
+    ] {
+        all.push((
+            format!("testament.orders.{k}.breach"),
+            rule.breach.iter().collect(),
+        ));
+        all.push((
+            format!("testament.orders.{k}.what"),
+            vec![&rule.what, &rule.what],
+        ));
+    }
+    for (k, v) in [("rumour", &tx.rumour), ("sealed", &tx.sealed)] {
+        all.push((format!("testament.texts.{k}"), vec![v, v]));
+    }
+    all
+}
+
+/// `bad_braces` of every `template_texts`, a life without its parts, a text of the
+/// testament without 2-3 variants.
 pub fn templates(data: &Data) -> Vec<String> {
     let l = &data.sim.texts.life;
     let parts = [
@@ -218,6 +271,10 @@ pub fn templates(data: &Data) -> Vec<String> {
     let mut out: Vec<String> = empty
         .map(|(k, _)| format!("sim.texts.life.{k}: пусто"))
         .collect();
+    let few = testament_texts(data)
+        .into_iter()
+        .filter(|(_, v)| !(2..=3).contains(&v.len()));
+    out.extend(few.map(|(k, _)| format!("{k}: нужно 2–3 варианта")));
     out.extend(template_texts(data).into_iter().flat_map(|s| bad_braces(s)));
     out
 }

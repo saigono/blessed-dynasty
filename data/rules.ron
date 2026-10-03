@@ -463,6 +463,132 @@
         contested: [("legitimacy", -10), ("loyalty_nobles", -10)],
     ),
 
+    // The founder's testament (stage 24, testament.rs, Game::write_testament): a precept, up
+    // to one order, up to one heir named under seal. It binds from his death with a strength:
+    // legend x decay x zeal. Legend at his death: base + axes * k + years of his reign * years
+    // + his deeds (cause tags of his decisions, `law` per law he brought in) * k, 0..=max.
+    // Decay: the share left by the years since his death (curve). Zeal: by the reader's
+    // legitimacy (curve), plus his traits. Every ruler after him adds the precept's weights
+    // (and the order's `weight`) times the strength to his AutoChooser (sim.auto keys).
+    testament: (
+        precepts: [
+            (id: "treasury", name: "Полная казна — крепость державы",
+                description: "Копить золото и не начинать войн без крайней нужды.",
+                weights: {"treasury": 0.3, "income": 2, "province_income": 1, "army": 0.15, "war": -40}),
+            (id: "sword", name: "Меч кормит род",
+                description: "Держать сильное войско и добывать земли оружием.",
+                weights: {"war": 10, "army": 0.1, "province": 10, "prestige": 0.3}),
+            (id: "faith", name: "Вера превыше всего",
+                description: "Беречь церковь и её благословение на престол.",
+                weights: {"loyalty_church": 1.2, "legitimacy": 0.5}),
+            (id: "land", name: "Ни пяди земли",
+                description: "Не раздавать уделов и не уступать земель короны.",
+                weights: {"grant": -30, "secede": -20, "province": 30}),
+            (id: "peace", name: "Мир с соседями",
+                description: "Жить с соседями в дружбе, родниться с ними и избегать войн.",
+                weights: {"relation": 0.4, "war": -25, "marriage": 10}),
+            (id: "law", name: "Закон превыше короля",
+                description: "Крепить приказы и законы, а не волю одного государя.",
+                weights: {"bureaucracy": 0.5, "law": 3, "pressure": 1, "stability": 0.5}),
+        ],
+        // `weight` on the law's flag, on `province`, on `war`; `what` the order in words.
+        orders: (
+            keep_law: (name: "Хранить закон", weight: 30, what: "не отменять закон «{law}»",
+                breach: [
+                    "Закон «{law}», который {founder} {founder:завещал|завещала} хранить вечно, был отменён при {ruler.пр}, и многие сочли это изменой памяти {founder.род}.",
+                    "{ruler} {ruler:отступил|отступила} от наказа {forebear}: закон «{law}» утратил силу, и при дворе заговорили о дурных знамениях.",
+                ]),
+            keep_province: (name: "Удержать землю", weight: 30, what: "никогда не отдавать землю {province}",
+                breach: [
+                    "Землю {province}, которую {founder} {founder:завещал|завещала} никогда не отдавать, корона потеряла при {ruler.пр}.",
+                    "Наказ {forebear} был нарушен: земля {province} ушла под чужую руку, и при дворе вспоминали {founder.вин} со стыдом.",
+                ]),
+            peace: (name: "Мир с соседом", weight: -30, what: "никогда не воевать с {neighbour.тв}",
+                breach: [
+                    "Мир с {neighbour.тв}, завещанный {founder.тв}, был нарушен при {ruler.пр}: началась война.",
+                    "Наказ {forebear} не воевать с {neighbour.тв} пал: войско вновь выступило против соседа, и старики качали головами.",
+                ]),
+        ),
+        legend: (
+            base: 0.5,
+            axes: [("prestige", 0.005)],
+            years: 0.01,
+            deeds: [(["law"], 0.1), (["war_won_land", "war_siege_won", "war_won_gold"], 0.15)],
+            max: 2,
+        ),
+        // Half the legend in about 70 years.
+        decay: [(0, 1), (35, 0.72), (70, 0.5), (140, 0.2), (300, 0.05)],
+        zeal: (
+            axis: "legitimacy",
+            // A ruler of shaky right clings to the founder's word.
+            curve: [(0, 1.6), (30, 1.3), (60, 1), (100, 0.7)],
+            traits: {"pious": 0.3, "defiant": -0.7},
+        ),
+        // Written by a ruler younger than `age` with health at least `health`: rumours that
+        // he prepares for death, `per_year` for every year short of `age`. Again at a rewrite.
+        rumours: (age: 50, health: 40, per_year: [("loyalty_nobles", -0.5), ("stability", -0.4)]),
+        // An heir named by a will over the law is contested this often (heirs.designate_dispute
+        // for one named openly); at his coronation `heir` times the strength.
+        heir_dispute: 60,
+        heir: [("legitimacy", 10)],
+        // A choice the testament's own chooser scores highest, at least `margin` above the
+        // lowest (an action: worth at least `margin`): `axes` times the strength.
+        faithful: (margin: 8, axes: [("legitimacy", 1)]),
+        // The order broken: these times the strength, and it binds no more.
+        breach: [("legitimacy", -12), ("loyalty_nobles", -6), ("loyalty_church", -6)],
+        // {founder} the testator, {ruler}, {forebear} the founder as the ruler calls him (in
+        // the genitive: «деда»), {precept}, {order} the order in words, {heir}, {prev},
+        // {will} the precept and the order.
+        texts: (
+            read: ("Завещание основателя", [
+                "Когда {founder.вин} похоронили, при дворе вскрыли {founder:его|её} завещание.",
+                "Над гробом {founder.род} канцлер сломал печать на {founder:его|её} завещании.",
+                "Последнюю волю {founder.род} огласили в тронном зале при всём дворе.",
+            ]),
+            precept: [
+                "Потомкам {founder} {founder:оставил|оставила} заповедь: «{precept}».",
+                "Первым {founder:он|она} {founder:завещал|завещала} держаться правила: «{precept}».",
+            ],
+            order: [
+                "Ещё {founder:он|она} {founder:велел|велела} {order}.",
+                "Особо наказано было {order}.",
+            ],
+            heir: [
+                "Наследником {founder:он|она} {founder:назвал|назвала} {heir.вин}.",
+                "Престол {founder:он|она} {founder:оставил|оставила} {heir.дат}.",
+            ],
+            faithful: [
+                "Так {ruler} {ruler:остался верен|осталась верна} завету {founder.род}.",
+                "Помня наказ {forebear}, {ruler} {ruler:поступил|поступила}, как {founder:завещал|завещала} {founder}.",
+                "{ruler:Верный|Верная} завету {founder.род}, {ruler} и тут не {ruler:отступил|отступила} от {founder:его|её} слова.",
+            ],
+            breach: "Завет нарушен",
+            crowned: [
+                "Так было сказано в завещании {prev.род}, хотя по закону корона причиталась другому.",
+                "{ruler} {ruler:получил|получила} престол по тайному завещанию {prev.род}, в обход законного наследника.",
+            ],
+            willed: [
+                "В {year} году {ruler} {ruler:взошёл|взошла} на престол по завещанию прежнего государя, в обход законного наследника.",
+                "{ruler} {ruler:получил|получила} корону в {year} году: так было сказано в запечатанном завещании, вскрытом над гробом.",
+            ],
+            life_founder: [
+                "Умирая, {ruler} {ruler:оставил|оставила} потомкам завет: {will}.",
+                "В завещании {ruler} {ruler:наказал|наказала} потомкам {will}.",
+            ],
+            life_kept: [
+                "Помня наказ {forebear}, {ruler} {ruler:держался|держалась} завета {founder.род}.",
+                "{ruler} свято {ruler:чтил|чтила} завет {founder.род}.",
+            ],
+            life_broken: [
+                "{ruler} {ruler:нарушил|нарушила} завет {founder.род}, и потомки не простили {ruler:ему|ей} этого.",
+                "Наказ {forebear} {ruler} не {ruler:сберёг|сберегла}: при {ruler:нём|ней} завет {founder.род} был нарушен.",
+            ],
+            forebears: [("отца", "матери"), ("деда", "бабки"), ("прадеда", "прабабки"), ("пращура", "праматери")],
+            rumour: "При дворе зашептались, что государь готовится к смерти: знать насторожилась.",
+            sealed: "{founder} {founder:составил|составила} завещание и {founder:скрепил|скрепила} его печатью; вскроют его над гробом.",
+        ),
+    ),
+
     // The dynasty after the founder (sim::run): the same rules year by year, the choices
     // made by sim::AutoChooser, until a fall or `max_years` from tick 0.
     // Falls: no heir, the capital not held by the crown, `usurped_flag`, no crown province.
@@ -507,6 +633,10 @@
             (id: "pious", percent: 10, ability_k: 0, studying: 35, hostage: -5,
                 axes: [("loyalty_church", 10)],
                 told: ("Церковь возрадовалась: новый король был набожен.", "Церковь возрадовалась: новая королева была набожна.")),
+            // Stage 24: cares little for the founder's word (testament.zeal) and names heirs at will.
+            (id: "defiant", percent: 10, ability_k: 0, studying: -5, hostage: 15,
+                axes: [("legitimacy", -3)],
+                told: ("Старики качали головами: новый король не чтил заветов предков.", "Старики качали головами: новая королева не чтила заветов предков.")),
         ],
         // AutoChooser: an option scores sum(weight[key] * amount) over its effects, plus a
         // roll in 0..=noise. Keys: axis ids, flag ids (+1 set, -1 cleared; only a change
@@ -539,12 +669,15 @@
                 // Laws change rarely: `law` for any change, then per point of a law's anchor
                 // shift or resistance on a pressing faction (laws.pressure).
                 "law": -10, "pressure": 2,
+                // An heir named in a sealed will over the law (stage 24, royal_will).
+                "bequeath": -2,
             },
             traits: {
                 "greedy": {"treasury": 0.3, "income": 2, "province_income": 2},
                 "cautious": {"war": -20, "army": 0.3, "stability": 1, "health": 1, "law_primogeniture": 18},
                 "warlike": {"war": 25, "army": 0.4, "prestige": 0.7, "province": 20, "law_male": 15},
                 "pious": {"loyalty_church": 1.2, "law_salic": 20},
+                "defiant": {"bequeath": 25},
             },
         ),
         // (title, text) of the entries the simulation makes itself, told in the past. Names

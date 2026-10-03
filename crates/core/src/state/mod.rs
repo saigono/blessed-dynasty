@@ -219,6 +219,10 @@ pub struct World {
     /// by its flag alone is absent: in force since tick 0.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub laws: BTreeMap<String, Tick>,
+    /// The founder's testament (`Game::write_testament`, stage 24), or a will of the
+    /// simulation's ruler naming an heir (`HeirOp::TargetBequeath`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub testament: Option<crate::testament::Testament>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -314,6 +318,7 @@ impl World {
             bastards: Vec::new(),
             lagged: Vec::new(),
             laws: BTreeMap::new(),
+            testament: None,
         };
         let r = &world.ruler;
         let founder = Kin {

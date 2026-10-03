@@ -33,6 +33,10 @@ pub struct ScoreRules {
     /// have passed since it was brought in (`World.laws`); None: laws do not count.
     #[serde(default)]
     pub legacy_law_years: Option<u32>,
+    /// The order of the founder's testament kept this many years from his death counts for
+    /// `legacy` too (stage 24); None: it does not count.
+    #[serde(default)]
+    pub testament_years: Option<u32>,
     /// The ids of `Data.laws`, filled by `load`.
     #[serde(skip)]
     pub laws: BTreeSet<String>,
@@ -85,8 +89,8 @@ pub fn load(text: &str, data: &Data) -> Result<ScoreRules, DataError> {
 /// - `prestige`: `prestige_axis`, summed over the years.
 /// - `stability`: crises the dynasty outlived (its fall came in a later year, or never)
 ///   with no fewer provinces than the entry before.
-/// - `legacy`: `legacy_flags` set in the last snapshot, and the laws then in force for
-///   `legacy_law_years` or more.
+/// - `legacy`: `legacy_flags` set in the last snapshot, the laws then in force for
+///   `legacy_law_years` or more, the order of the testament kept `testament_years` or more.
 pub fn compute(c: &Chronicle, decisions: &[Decision], rules: &ScoreRules) -> Score {
     let year = |e: &ChronicleEntry| e.tick.year(e.snapshot.time_unit);
     let (mut territory, mut prestige, mut i) = (0, Fx(0), 0);
@@ -121,7 +125,13 @@ pub fn compute(c: &Chronicle, decisions: &[Decision], rules: &ScoreRules) -> Sco
         };
         let laws = (w.laws.iter())
             .filter(|(id, since)| rules.laws.contains(*id) && w.flags.contains(*id) && old(since));
-        flags.count() + laws.count()
+        let t = w.testament.as_ref().filter(|t| t.order.is_some());
+        let kept = t.and_then(|t| {
+            let to = t.broken.map_or(c.years, |b| b.year(w.time_unit));
+            Some(to.saturating_sub(t.since?.year(w.time_unit)))
+        });
+        let kept = kept.is_some_and(|k| rules.testament_years.is_some_and(|y| k >= y));
+        flags.count() + laws.count() + kept as usize
     });
 
     let raw = [

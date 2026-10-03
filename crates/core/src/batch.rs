@@ -31,6 +31,8 @@ pub enum ScriptStep {
     /// The first choice with this cause tag, else choice 0.
     ChooseByTag(String),
     Abdicate,
+    /// Stage 24: `Game::write_testament`, e.g. `Testament((precept: Some("treasury")))`.
+    Testament(crate::testament::Testament),
 }
 
 /// A safety cap for the neutral strategy; the ruler dies long before.
@@ -76,6 +78,8 @@ pub struct Row {
     catastrophes: Vec<Gap>,
     /// The events of the game: those chosen in the reign and those of the chronicle.
     pub events: BTreeSet<String>,
+    /// Wars begun after the founder (`war.start_event` in the chronicle), stage 24.
+    wars: u32,
 }
 
 /// The dynasty years of the second score in `batch`: most dynasties of `neutral` live to
@@ -210,6 +214,12 @@ pub fn batch_row(
         axis(&g.data.economy.treasury),
     );
     let designated = c.rulers.iter().filter(|r| r.designated).count() as u32;
+    let start = Some(&g.data.war.start_event);
+    let wars = c
+        .entries
+        .iter()
+        .filter(|e| e.event.as_ref() == start)
+        .count() as u32;
     let bastards = (c.kin.iter())
         .filter(|k| k.bastard && k.crowned.is_some())
         .count() as u32;
@@ -243,6 +253,7 @@ pub fn batch_row(
         fall: Some(fall),
         reign_treasury: log,
         events,
+        wars,
     })
 }
 
@@ -392,6 +403,9 @@ fn batch_report(rows: &[Row], hidden: &[&str], catastrophes: &[&str]) -> String 
         .filter(|r| r.fall != Some(FallReason::Alive))
         .count();
     out += &format!("# доля падений {}%\n", percent(fell, rows.len()));
+    let years = rows.iter().map(|r| r.years as usize).sum::<usize>();
+    let wars = (sum(|r| r.wars) * 1000).checked_div(years).unwrap_or(0);
+    out += &format!("# войн после основателя на 1000 лет династии: {wars}\n");
     if !catastrophes.is_empty() {
         out += &format!("# симптом за {SYMPTOM_YEARS}+ лет до катастрофы:");
     }
@@ -460,7 +474,7 @@ pub fn trace(g: &Game, c: &sim::Chronicle) -> String {
             let target = match &d.kind {
                 DecisionKind::EventChoice { target, .. }
                 | DecisionKind::ActionStarted { target, .. } => target_name(target),
-                DecisionKind::Abdicate => String::new(),
+                DecisionKind::Abdicate | DecisionKind::Testament(_) => String::new(),
             };
             out += &format!(
                 "  решение #{} (тик {}, {}{target}) → метка ({}) → {event}\n",
@@ -545,7 +559,7 @@ pub fn dynasty(g: &Game, rules: &ScoreRules) -> (Option<sim::Chronicle>, Option<
     (Some(c), Some(s))
 }
 
-/// `soft`: a Wait or an Action while an event waits takes its middle choice instead of
+/// `soft`: a Wait, an Action or a Testament while an event waits takes its middle choice instead of
 /// failing, and a step
 /// that does not fit the game (a script of another seed) is skipped. `log` gets
 /// the treasury at the end of every year (see `note`).
@@ -562,7 +576,7 @@ pub fn play_script(
         }
         // Soft: an action waits for no event, it takes the middle choice first.
         if soft
-            && let ScriptStep::Action(..) = step
+            && let ScriptStep::Action(..) | ScriptStep::Testament(_) = step
             && let Some(choices) = pending_choices(g)
         {
             g.choose((choices.len() - 1) / 2).map_err(err)?;
@@ -582,6 +596,7 @@ pub fn play_script(
                 None => Err("нет события".into()),
             },
             ScriptStep::Abdicate => g.abdicate().map_err(err),
+            ScriptStep::Testament(t) => g.write_testament(t.clone()).map_err(err),
         };
         if !soft {
             res.map_err(|e| format!("шаг {} {step:?}: {e}", i + 1))?;
@@ -1031,6 +1046,7 @@ mod tests {
             bounds: vec![],
             shocks: (0, 0),
             score_at: score / 2,
+            wars: seed as u32,
             catastrophes: match seed {
                 1 => vec![
                     ("war".into(), Some(25), Some(25)),
@@ -1091,6 +1107,8 @@ mod tests {
                 "# закон сменён после основателя в 25% династий",
                 "# отмена закона в 25% династий; законы при падении: law_x 50%",
                 "# доля падений 75%",
+                // Wars 0 + 1 + 2 + 3 in 400 years of dynasties (stage 24).
+                "# войн после основателя на 1000 лет династии: 15",
                 "# причины падения:",
                 "#   Usurped 50%",
                 "#   Alive 25%",

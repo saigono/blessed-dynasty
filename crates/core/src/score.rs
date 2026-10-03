@@ -264,6 +264,7 @@ mod tests {
             snapshot: World { tick, ..w.clone() },
             chain: None,
             joined: false,
+            news: false,
         }
     }
 

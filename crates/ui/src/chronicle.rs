@@ -660,6 +660,7 @@ mod tests {
             snapshot: w.clone(),
             chain: None,
             joined: false,
+            news: false,
         };
         let c = Chronicle {
             entries: vec![

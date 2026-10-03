@@ -73,6 +73,10 @@ pub struct Data {
     /// The founder's testament (stage 24, `testament.rs`); None: none may be written.
     #[serde(default)]
     pub testament: Option<TestamentRules>,
+    /// The kingdoms of the world against each other (stage 27, `realm.rs`); None: they
+    /// keep their numbers and live apart.
+    #[serde(default)]
+    pub realm: Option<RealmRules>,
     /// From `add_events`, not from `rules.ron`.
     #[serde(default)]
     pub events: Vec<Event>,
@@ -120,6 +124,9 @@ pub struct Names {
     pub vassals: Vec<String>,
     #[serde(default)]
     pub daughters: Vec<String>,
+    /// Noble houses that may take a fallen throne of a kingdom (stage 27).
+    #[serde(default)]
+    pub houses: Vec<String>,
     /// The cases of other words, written so: provinces, neighbours, the preset's houses,
     /// epithets.
     #[serde(default)]
@@ -312,6 +319,7 @@ impl Data {
             std::mem::take(&mut names.heirs),
             std::mem::take(&mut names.vassals),
             std::mem::take(&mut names.daughters),
+            std::mem::take(&mut names.houses),
         ];
         for pool in &mut pools {
             for n in pool.iter_mut() {
@@ -322,7 +330,13 @@ impl Data {
         for spec in names.forms.clone() {
             names.add_forms(&spec).map_err(DataError::Invalid)?;
         }
-        [names.rulers, names.heirs, names.vassals, names.daughters] = pools;
+        [
+            names.rulers,
+            names.heirs,
+            names.vassals,
+            names.daughters,
+            names.houses,
+        ] = pools;
         self.names = names;
         Ok(())
     }
@@ -842,6 +856,63 @@ pub struct WarRules {
     pub battles_said: Vec<String>,
 }
 
+/// The kingdoms of the world against each other (stage 27, `realm.rs`).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct RealmRules {
+    pub strength: RealmStrength,
+    /// A new house on a fallen throne starts with these axes at these values.
+    pub usurper: Vec<(AxisId, Fx)>,
+    /// Where the land of a kingdom with no crown land left goes.
+    pub dissolution: Dissolution,
+    pub news: NewsRules,
+}
+
+/// `Neighbour.strength` of a kingdom, from its own world: `army` times its army
+/// (`war.army`), `province` per province it holds, each axis of `axes` through its curve.
+/// What the other worlds took from that strength in a year (a war lost, tribute) comes off
+/// its army at the same `army` rate.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct RealmStrength {
+    pub army: Fx,
+    pub province: Fx,
+    #[serde(default)]
+    pub axes: Vec<(AxisId, Vec<(Fx, Fx)>)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub enum Dissolution {
+    /// Every vassal founds a state of his own on his land.
+    Vassals,
+    /// The state that holds the capital takes it all; `Vassals` when no state does.
+    Conqueror,
+}
+
+/// News from afar (`realm::News`): what the crown hears of the other kingdoms. A kind below
+/// `threshold` is not told.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct NewsRules {
+    pub threshold: u32,
+    /// Two kingdoms go to war: `{realm}` and `{enemy}`.
+    pub war: NewsKind,
+    /// A kingdom takes a land of another: `{realm}`, `{enemy}`, `{province}`.
+    pub capture: NewsKind,
+    /// A new house on a fallen throne: `{realm}`, `{house}`, `{old}` (the house fallen).
+    pub house: NewsKind,
+    /// A new state on the land of a kingdom: `{realm}` (the new one), `{enemy}` (the old
+    /// one), `{province}` (a land of it).
+    pub breakaway: NewsKind,
+    /// A kingdom is no more: `{realm}`.
+    pub fallen: NewsKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct NewsKind {
+    pub importance: u32,
+    pub title: String,
+    /// Variants, picked apart from the game's stream.
+    pub texts: Vec<String>,
+}
+
 /// The dynasty simulation after the reign, see `sim::run`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct SimRules {
@@ -1296,7 +1367,10 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
     .chain(capacity)
     .chain(laws)
     .chain(data.reveal.iter().map(|r| &r.axis))
-    {
+    .chain(data.realm.iter().flat_map(|r| {
+        let curves = r.strength.axes.iter().map(|(a, _)| a);
+        curves.chain(r.usurper.iter().map(|(a, _)| a))
+    })) {
         if !is_axis(a) || (data.is_derived(a) && c.penalty.iter().any(|(p, _)| p == a)) {
             return Err(DataError::Invalid(format!("unknown axis {}", a.0)));
         }

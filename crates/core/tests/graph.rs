@@ -85,15 +85,15 @@ fn runs_hash(dir: &str, data: &Data, n: u64) -> u64 {
 }
 
 /// Golden: main's data (`MAIN`) plays exactly as on main, byte for byte. Re-pinned in stage
-/// 26b: deferred events go by importance and drop after `queue_years` (the defaults).
-/// Re-pinned in stage 26c: the world keeps the turn of every event's texts (`World.retold`);
-/// without that field the dump hashes as before, the play is the same. Again: a hint told
-/// within six entries before is not told again; with every hint blanked the dumps match.
-/// Again for more variants of the records: with every text blanked the dumps match.
+/// 26b: deferred events go by importance and drop after `queue_years` (the defaults). Stage
+/// 27: only the name of one fall, `CapitalLost` now written `Conquered`. Stage 26c: the world
+/// keeps the turn of every event's texts (`World.retold`), hints are not told twice within six
+/// entries, the records have more variants: with every text and that field blanked the dumps
+/// match, the play is the same.
 #[test]
 fn data_without_edges_plays_as_main() {
     let data = content(MAIN, &read(&format!("{MAIN}/rules.ron")));
-    assert_eq!(runs_hash(MAIN, &data, 50), 16026909974099544602);
+    assert_eq!(runs_hash(MAIN, &data, 50), 10024154452261188760);
 }
 
 /// data/ with `extra` axes and edges added to rules.ron, nothing else.

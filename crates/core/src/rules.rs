@@ -635,8 +635,12 @@ impl Effect {
                 let Some(vassal) = w.vassals.remove(&v) else {
                     return;
                 };
-                // ponytail: a later house of the same name would merge into this state.
-                let id = NeighbourId(v.0);
+                // A state of that id lives already (stage 27: one founded in another
+                // kingdom's world): this one is another.
+                let mut id = NeighbourId(v.0);
+                while w.neighbours.contains_key(&id) {
+                    id.0.push('+');
+                }
                 let mut count = 0;
                 for p in w.provinces.values_mut().filter(|p| p.holder == holder) {
                     p.holder = Holder::Foreign(id.clone());

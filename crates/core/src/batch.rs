@@ -1175,6 +1175,7 @@ mod tests {
             snapshot: g.world.clone(),
             chain: None,
             joined: false,
+            news: false,
         };
         let entries = [
             (5, "sign"),

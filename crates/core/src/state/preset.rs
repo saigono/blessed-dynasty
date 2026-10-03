@@ -38,6 +38,22 @@ pub struct RealmsStart {
     /// The holder of our land in their worlds.
     pub us: NeighbourId,
     pub kingdoms: Vec<RealmStart>,
+    /// Stage 27: how a kingdom founded later starts (a vassal broke away, a house took a
+    /// fallen throne); None: none is founded, a fallen kingdom stands still.
+    #[serde(default)]
+    pub founded: Option<Founded>,
+}
+
+/// The profile of a new kingdom or house: a ruler and heirs (names from `names.ron`), the
+/// flags of a new kingdom (the succession law, `married`), its axes over the preset's.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Founded {
+    pub ruler: Ruler,
+    pub heirs: Vec<Heir>,
+    #[serde(default)]
+    pub flags: BTreeSet<String>,
+    #[serde(default)]
+    pub axes: Axes,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -60,6 +76,9 @@ pub struct RealmStart {
     /// Which of its provinces its vassals hold.
     #[serde(default)]
     pub fiefs: BTreeMap<ProvinceId, VassalId>,
+    /// Stage 27: its relation with the other kingdoms at the start; 0 for those not listed.
+    #[serde(default)]
+    pub relations: BTreeMap<NeighbourId, crate::fx::Fx>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -149,6 +168,9 @@ impl Preset {
                 return Err(format!("{}: unknown holder {:?}", p.id.0, p.holder));
             }
         }
+        if let Some(f) = self.realms.as_ref().and_then(|r| r.founded.as_ref()) {
+            check_axes(&f.axes, data).map_err(|e| format!("founded: {e}"))?;
+        }
         for r in self.realms.iter().flat_map(|r| &r.kingdoms) {
             let at = |e: String| format!("realm {}: {e}", r.id.0);
             if !self.neighbours.iter().any(|n| n.id == r.id) {
@@ -162,6 +184,10 @@ impl Preset {
             if !own(&r.capital) || r.fiefs.contains_key(&r.capital) {
                 return Err(at(format!("capital {} is not its crown's", r.capital.0)));
             }
+            let kingdom = |n: &NeighbourId| *n != r.id && realms_ids(self).any(|k| k == n);
+            if let Some(n) = r.relations.keys().find(|n| !kingdom(n)) {
+                return Err(at(format!("relation with {}: no other kingdom", n.0)));
+            }
             for (p, v) in &r.fiefs {
                 if !own(p) || !r.vassals.iter().any(|x| x.id == *v) {
                     return Err(at(format!(
@@ -173,6 +199,10 @@ impl Preset {
         }
         Ok(())
     }
+}
+
+fn realms_ids(p: &Preset) -> impl Iterator<Item = &NeighbourId> {
+    p.realms.iter().flat_map(|r| &r.kingdoms).map(|k| &k.id)
 }
 
 fn check_axes(axes: &Axes, data: &Data) -> Result<(), String> {

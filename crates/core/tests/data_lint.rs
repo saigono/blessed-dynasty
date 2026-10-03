@@ -297,7 +297,7 @@ fn reign_ends_falls_and_axes_have_display_texts() {
     assert!(missing.is_empty(), "no text for {missing:?}");
     assert!(causes.len() >= 4, "{causes:?}");
     use sim::FallReason::*;
-    for f in [NoHeir, CapitalLost, Usurped, NoCrownLand, Alive] {
+    for f in [NoHeir, Conquered, Usurped, NoCrownLand, Alive] {
         assert!(texts.falls.iter().any(|(r, _)| *r == f), "{f:?}");
     }
 }

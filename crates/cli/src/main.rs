@@ -1083,6 +1083,16 @@ mod tests {
             nodes: vec![],
             bounds: vec![],
             shocks: (0, 0),
+            score_at: score / 2,
+            catastrophes: match seed {
+                1 => vec![
+                    ("war".into(), Some(25), Some(25)),
+                    ("war".into(), Some(40), Some(10)),
+                ],
+                2 => vec![("war".into(), None, None)],
+                3 => vec![("plague".into(), Some(3), Some(3))],
+                _ => vec![],
+            },
         };
         let rows = [
             row(0, 5, 10, FallReason::NoHeir, 0),
@@ -1090,21 +1100,27 @@ mod tests {
             row(2, 40, 20, FallReason::Usurped, 0),
             row(3, 20, 40, FallReason::Alive, 0),
         ];
-        let out = batch_report(&rows, &[]);
+        let out = batch_report(&rows, &[], &[]);
         let mut lines = out.lines();
         assert_eq!(
             lines.next(),
             Some(
                 "seed,reign_years,dynasty_years,score,fall_reason,early_death,army,treasury,\
-                 deserted,treasury_10,treasury_20,treasury_30"
+                 deserted,treasury_10,treasury_20,treasury_30,score_150,symptom_years"
             )
         );
-        assert_eq!(lines.next(), Some("0,5,100,10,NoHeir,true,5,100,0,,,"));
+        // The last two: the score of 150 years, the years from the first symptom to the first
+        // catastrophe (empty: none; `-`: no symptom before it).
+        assert_eq!(lines.next(), Some("0,5,100,10,NoHeir,true,5,100,0,,,,5,"));
         assert_eq!(
             lines.next(),
-            Some("1,30,100,30,Usurped,false,30,300,2,10,20,30")
+            Some("1,30,100,30,Usurped,false,30,300,2,10,20,30,15,25")
         );
-        let summary: Vec<_> = lines.skip(2).collect();
+        assert_eq!(
+            lines.next(),
+            Some("2,40,100,20,Usurped,false,40,200,0,10,20,30,10,-")
+        );
+        let summary: Vec<_> = lines.skip(1).collect();
         assert_eq!(
             summary,
             [
@@ -1112,6 +1128,7 @@ mod tests {
                 "# квартили (25 / 50 / 75%):",
                 "#   лет династии 100 / 100 / 100",
                 "#   счёт 20 / 30 / 40",
+                "#   счёт за 150 лет 10 / 15 / 20",
                 "#   лет правления 20 / 30 / 40",
                 "#   армия в конце 20 / 30 / 40",
                 "#   казна в конце 200 / 300 / 400",
@@ -1125,6 +1142,7 @@ mod tests {
                 "# воцарения бастардов: 12% воцарений, в 25% династий",
                 "# закон сменён после основателя в 25% династий",
                 "# отмена закона в 25% династий; законы при падении: law_x 50%",
+                "# доля падений 75%",
                 "# причины падения:",
                 "#   Usurped 50%",
                 "#   Alive 25%",
@@ -1139,21 +1157,65 @@ mod tests {
             shocks: (r.seed as usize, 100),
             ..r
         });
-        let out = batch_report(&rows, &["x"]);
+        let out = batch_report(&rows, &["x"], &["war", "plague"]);
         let mut lines = out.lines();
         assert!(
             lines
                 .next()
                 .unwrap()
-                .ends_with(",treasury_30,x_100,x_150,x_fall")
+                .ends_with(",treasury_30,x_100,x_150,x_fall,score_150,symptom_years")
         );
-        assert_eq!(lines.next(), Some("0,5,100,10,NoHeir,true,5,100,0,,,,0,,5"));
+        assert_eq!(
+            lines.next(),
+            Some("0,5,100,10,NoHeir,true,5,100,0,,,,0,,5,5,")
+        );
+        // Of three wars two had a symptom 20 years before or more, one since the last war.
+        let symptoms = "\n# симптом за 20+ лет до катастрофы: war 66% (после прошлой 33%) из 3; \
+                        plague 0% (после прошлой 0%) из 1;\n";
+        assert!(out.contains(symptoms), "{out}");
         assert!(
             out.contains("\n#   x 10 / 20 / 30 | 0 / 0 / 0 | 5 / 5 / 5 | 1.5%\n"),
             "{out}"
         );
         assert!(out.contains("\n# узло-лет на краях 1.5%\n"), "{out}");
         assert!(out.contains("\n# потрясения на краях 1.5% лет\n"), "{out}");
+    }
+
+    #[test]
+    fn symptom_gaps_count_from_the_first_symptom_and_from_the_last_catastrophe() {
+        let mut g = game();
+        g.data.symptoms = vec![("war".into(), vec!["sign".into()])];
+        let entry = |year: u32, id: &str| sim::ChronicleEntry {
+            tick: Tick(year),
+            event: Some(id.into()),
+            title: String::new(),
+            text: String::new(),
+            hint: None,
+            importance: 0,
+            causes: vec![],
+            snapshot: g.world.clone(),
+            chain: None,
+        };
+        let entries = [
+            (5, "sign"),
+            (10, "war"),
+            (30, "other"),
+            (40, "war"),
+            (45, "sign"),
+        ];
+        let c = sim::Chronicle {
+            entries: entries.iter().map(|(y, id)| entry(*y, id)).collect(),
+            fall: FallReason::Alive,
+            years: 50,
+            rulers: vec![],
+            kin: vec![],
+            axes: Default::default(),
+            deserted: 0,
+            nodes: vec![],
+        };
+        let war = |a, b| ("war".to_string(), a, b);
+        let want = [war(Some(5), Some(5)), war(Some(35), None)];
+        assert_eq!(symptom_gaps(&g.data, &c), want);
     }
 
     #[test]

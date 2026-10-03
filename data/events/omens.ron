@@ -112,7 +112,7 @@
         id: "omen_dear_bread",
         title: "Дороговизна хлеба",
         text: "Хлеб на торгу подорожал втрое. Перекупщики придерживают зерно, у лавок ропщут бедняки.",
-        when: AxisBelow("grain", 40),
+        when: AxisBelow("grain", 45),
         weight: 5,
         once: false,
         cooldown_years: 6,

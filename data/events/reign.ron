@@ -475,7 +475,7 @@
         title: "Мятежный староста",
         text: "Староста в земле {province} отказался платить подати и собрал вокруг себя мужиков с вилами.",
         // Stage 20: a symptom of П1 (oppression): the estates split or the people restless.
-        when: Any([AxisAbove("strata", 50), AxisBelow("loyalty_people", 48)]),
+        when: Any([AxisAbove("strata", 50), AxisBelow("loyalty_people", 50)]),
         weight: 3,
         weight_bonus: [(AxisAbove("strata", 55), 3)],
         omen: true,

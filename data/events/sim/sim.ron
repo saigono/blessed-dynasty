@@ -329,14 +329,13 @@
         ],
     ),
     (
-        // Stage 20: the failure of С1 (bread and price): only with the barns low, the more
-        // likely the emptier.
+        // Stage 20: the failure of С1 (bread and price): the emptier the barns, the likelier.
         id: "great_famine",
         title: "Великий голод",
         text: "В тот год хлеб не уродился по всему королевству. Люди едят лебеду и кору, по дорогам бредут толпы нищих.",
-        when: AxisBelow("grain", 35),
-        weight: 2,
-        weight_bonus: [(AxisBelow("grain", 30), 4), (AxisBelow("grain", 20), 6), (AxisBelow("treasury", 0), 2), (AxisBelow("stability", 30), 2)],
+        when: All([]),
+        weight: 1,
+        weight_bonus: [(AxisBelow("grain", 40), 3), (AxisBelow("grain", 30), 4), (AxisBelow("grain", 20), 6), (AxisBelow("treasury", 0), 2), (AxisBelow("stability", 30), 2)],
         once: false,
         cooldown_years: 25,
         importance: 4,

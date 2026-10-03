@@ -189,10 +189,12 @@ fn a_node_added_by_data_alone_works() {
     let parts = graph::parts(&d, &g.world, &people, graph::InfluenceKind::Target);
     let j2 = parts.into_iter().find(|(i, _)| d.influences[*i].id == "j2");
     assert_eq!(j2.map(|(_, c)| c), Some(Fx(2_860))); // 0.2 * (34.3 - 20)
-    // And the game plays on it.
+    // And the game plays on it, to the end of the reign at most.
     for _ in 0..30 {
-        if let Step::Event(_) = g.wait().unwrap() {
-            g.choose(0).unwrap();
+        match g.wait().unwrap() {
+            Step::Event(_) => g.choose(0).unwrap(),
+            Step::ReignEnded(_) => break,
+            _ => {}
         }
     }
 }

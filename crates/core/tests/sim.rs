@@ -7,9 +7,10 @@ use bd_core::rng::Rng;
 use bd_core::rules::Target;
 use bd_core::sim::{self, AutoChooser, Chronicle, FallReason};
 use bd_core::state::{
-    AxisId, Heir, HeirStatus, Holder, MarkKey, Preset, ProvinceId, Sex, VassalId,
+    AxisId, Heir, HeirStatus, Holder, MarkKey, NeighbourId, Preset, ProvinceId, Sex, VassalId,
 };
 use bd_core::time::Tick;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
@@ -905,6 +906,40 @@ fn an_unfinished_war_starts_over_under_the_heir() {
     assert!(events.contains(&"war_clash"), "{events:?}");
 }
 
+/// Stage 26c, a bug of the samples: a neighbour that lost its last land has left the world
+/// (`drop_landless`, in the same step as the crown took that land), and the land is told
+/// without its name, not «отняв край у .». Here Берг is held by a neighbour already gone.
+#[test]
+fn land_taken_from_a_vanished_neighbour_is_told_without_its_name() {
+    let mut data = content();
+    let mut g = game(&data, 1);
+    let berg = g.world.provinces.get_mut(&pid("berg")).unwrap();
+    berg.holder = Holder::Foreign(NeighbourId("gone".into()));
+    quiet(&mut data);
+    data.sim.threshold = 9;
+    data.add_events(
+        r#"[(id: "take", title: "", text: "", when: All([]), weight: 1, once: true,
+         cooldown_years: 0, importance: 1, target: None,
+         choices: [(text: "", cause_tag: "take", effects: [
+            TransferProvince(ById("berg"), Crown)])])]"#,
+    )
+    .unwrap();
+    data.sim.max_years = 4;
+    let mut told = BTreeSet::new();
+    for seed in 0..20 {
+        let c = sim::run(end_now(&g), &data, Rng::from_seed(seed));
+        let t = c.entries.iter().find(|e| e.title == "Земля возвращена");
+        told.insert(t.expect("Берг comes back").text.clone());
+    }
+    assert!(told.len() > 1, "{told:?}");
+    for t in told {
+        assert!(
+            !t.contains(" .") && !t.contains("  ") && !t.contains(" ,"),
+            "{t}"
+        );
+    }
+}
+
 #[test]
 fn lost_and_regained_provinces_are_told_with_the_hint_of_their_cause() {
     let mut data = content();
@@ -955,7 +990,7 @@ fn lost_and_regained_provinces_are_told_with_the_hint_of_their_cause() {
             (
                 5,
                 "Земля возвращена",
-                "В церквях Берга снова молились за Конрада, а не за Нордмарк.",
+                "Над стенами Берга снова подняли королевское знамя, и мытари короны вернулись в свои старые конторы.",
                 // Stage 26c: the same hint two entries on is not told again.
                 None
             ),

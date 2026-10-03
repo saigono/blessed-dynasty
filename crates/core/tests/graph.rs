@@ -89,10 +89,11 @@ fn runs_hash(dir: &str, data: &Data, n: u64) -> u64 {
 /// Re-pinned in stage 26c: the world keeps the turn of every event's texts (`World.retold`);
 /// without that field the dump hashes as before, the play is the same. Again: a hint told
 /// within six entries before is not told again; with every hint blanked the dumps match.
+/// Again for more variants of the records: with every text blanked the dumps match.
 #[test]
 fn data_without_edges_plays_as_main() {
     let data = content(MAIN, &read(&format!("{MAIN}/rules.ron")));
-    assert_eq!(runs_hash(MAIN, &data, 50), 8073723140242135868);
+    assert_eq!(runs_hash(MAIN, &data, 50), 16026909974099544602);
 }
 
 /// data/ with `extra` axes and edges added to rules.ron, nothing else.

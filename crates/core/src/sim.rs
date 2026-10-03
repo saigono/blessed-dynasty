@@ -617,10 +617,14 @@ fn breach(g: &mut Game, c: &mut Chronicle, reign: &mut Reign, salt: u64) {
 /// The text of entry kind `key`: `own` or one of its `SimTexts.variants`, by the entry's
 /// index `n`.
 fn variant(t: &crate::data::SimTexts, key: &str, own: &str, salt: u64, n: usize) -> String {
-    let all: Vec<String> = std::iter::once(own.to_string())
+    text::pick(&variants(t, key, own), salt, n as u64).to_string()
+}
+
+/// `own` and the `SimTexts.variants` of entry kind `key`.
+fn variants(t: &crate::data::SimTexts, key: &str, own: &str) -> Vec<String> {
+    std::iter::once(own.to_string())
         .chain(t.variants.get(key).into_iter().flatten().cloned())
-        .collect();
-    text::pick(&all, salt, n as u64).to_string()
+        .collect()
 }
 
 /// The founder's reign as `finish` takes it, from the world at its end: his deeds by the
@@ -1189,8 +1193,12 @@ fn province_entries(g: &Game, holders: &[Holder], c: &mut Chronicle, r: &mut Rei
         ];
         let fill = |s: &str| text::fill(s, &g.data.names, &named);
         let causes = causes(w, [MarkKey::Province(p.id.clone())].into());
-        let text = variant(t, key, text, salt, c.entries.len());
-        let told = (fill(title), fill(&text));
+        let mut all = variants(t, key, text);
+        // A neighbour that lost its last land has left the world (`drop_landless`): told
+        // without its name.
+        all.retain(|s| !neighbour.is_empty() || !s.contains("{neighbour"));
+        let text = text::pick(&all, salt, c.entries.len() as u64);
+        let told = (fill(title), fill(text));
         c.entries.push(entry(g, told, g.data.sim.notable, causes));
         r.count(key);
     }

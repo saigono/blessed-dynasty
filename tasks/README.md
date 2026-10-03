@@ -36,8 +36,10 @@
 | 24 | 24-testament.md | 19, 22 |
 | 25 | 25-playtest-02.md | 24 |
 | 26 | 26-realms.md | 25 |
-| 27 | 27-wars-and-breakups.md | 26 |
-| 28 | 28-big-map-empire.md | 27 |
+| 26b | 26b-playtest-03.md | 26 |
+| 26c | 26c-rich-texts.md | 26b |
+| 27 | 27-wars-and-breakups.md | 26b |
+| 28 | 28-big-map-empire.md | 26c, 27 |
 
 После этапа 2 параллельно можно вести 3, 5, 8a, 9, 10a. На соло-разработке реально две-три ветки за раз.
 

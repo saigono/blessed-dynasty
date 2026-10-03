@@ -397,7 +397,7 @@ impl Dynasty {
             step => Some(step.expect("the reign goes on")),
         };
         // News from afar (stage 27), told as they came.
-        for n in g.realms.news[heard..].to_vec() {
+        for n in g.realms.news[heard..].iter().cloned() {
             let e = entry(g, (n.title, n.text), n.importance, vec![]);
             c.entries.push(ChronicleEntry { news: true, ..e });
         }

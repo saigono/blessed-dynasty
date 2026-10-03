@@ -216,8 +216,19 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
     while d.fall.is_none() {
         d.tick();
     }
-    d.close()
+    let mut c = d.close();
+    // The same hint again within a few entries reads as a stammer (stage 26c): told once.
+    let hints: Vec<_> = c.entries.iter().map(|e| e.hint.clone()).collect();
+    for (i, e) in c.entries.iter_mut().enumerate() {
+        if hints[i.saturating_sub(HINT_GAP)..i].contains(&e.hint) {
+            e.hint = None;
+        }
+    }
+    c
 }
+
+/// Entries within which a hint is not told again.
+const HINT_GAP: usize = 6;
 
 /// A chronicle with its first ruler.
 fn chronicle(first: RulerRecord) -> Chronicle {

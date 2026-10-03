@@ -169,9 +169,8 @@ fn golden_seed_42_script_a() {
             (
                 "Потеря земли",
                 "Конрад не удержал Арден, и тамошние люди стали подданными Ардена.",
-                hint(
-                    "С того набега, отбитого в первое царствование, сосед ходил к границе с оглядкой."
-                ),
+                // Told in the entry before: not again (stage 26c).
+                None,
             ),
         ]
     );
@@ -957,10 +956,12 @@ fn lost_and_regained_provinces_are_told_with_the_hint_of_their_cause() {
                 5,
                 "Земля возвращена",
                 "В церквях Берга снова молились за Конрада, а не за Нордмарк.",
-                hint
+                // Stage 26c: the same hint two entries on is not told again.
+                None
             ),
         ]
     );
+    assert_eq!(c.entries[2].causes[0].cause_tag, "road_built");
     let lost = &c.entries[1];
     assert_eq!(
         (lost.event.clone(), lost.importance),

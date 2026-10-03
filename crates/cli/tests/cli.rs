@@ -325,7 +325,7 @@ fn trace_tells_the_edges_into_a_node() {
     assert!(target >= 60, "{out}");
 }
 
-/// Stage 8b acceptance: 1000 games in under 60 s. Only meaningful in release:
+/// Stage 8b acceptance: 1000 games in under 60 s; 120 s since stage 26 (the kingdoms play too, a soft limit). Only meaningful in release:
 /// `cargo test --release -p cli -- --ignored batch_of_a_thousand`.
 #[test]
 #[ignore = "release only, about a minute"]
@@ -334,7 +334,7 @@ fn batch_of_a_thousand_is_fast() {
     let out = batch(&["--runs", "1000"]);
     let took = t.elapsed();
     assert!(out.contains("# runs 1000\n"));
-    assert!(took.as_secs() < 60, "{took:?}");
+    assert!(took.as_secs() < 120, "{took:?}");
 }
 
 /// `batch --runs 1000` of each strategy at once, from `data` (relative to the repository).

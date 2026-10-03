@@ -862,7 +862,15 @@ fn testaments(runs: &str, strategy: &str, wills: &[&str]) -> Vec<String> {
             };
             std::fs::write(&script, steps).unwrap();
             Command::new(env!("CARGO_BIN_EXE_cli"))
-                .args(["batch", "--runs", runs, "--strategy", strategy, "--script", &script])
+                .args([
+                    "batch",
+                    "--runs",
+                    runs,
+                    "--strategy",
+                    strategy,
+                    "--script",
+                    &script,
+                ])
                 .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
                 .stdout(std::process::Stdio::piped())
                 .spawn()
@@ -889,8 +897,18 @@ fn wars(out: &str) -> i64 {
 fn the_treasury_precept_hoards_and_wars_less() {
     let outs = testaments("300", "neutral", &["", "precept: Some(\"treasury\")"]);
     let treasury = |o: &str| median(o, "#   казна в конце ");
-    assert!(treasury(&outs[1]) > treasury(&outs[0]), "{} {}", outs[0], outs[1]);
-    assert!(wars(&outs[1]) < wars(&outs[0]), "{} {}", wars(&outs[0]), wars(&outs[1]));
+    assert!(
+        treasury(&outs[1]) > treasury(&outs[0]),
+        "{} {}",
+        outs[0],
+        outs[1]
+    );
+    assert!(
+        wars(&outs[1]) < wars(&outs[0]),
+        "{} {}",
+        wars(&outs[0]),
+        wars(&outs[1])
+    );
 }
 
 const PRECEPTS: [&str; 6] = ["treasury", "sword", "faith", "land", "peace", "law"];
@@ -901,16 +919,28 @@ const PRECEPTS: [&str; 6] = ["treasury", "sword", "faith", "land", "peace", "law
 #[test]
 #[ignore = "release only, a minute"]
 fn no_precept_dominates() {
-    let wills: Vec<String> = (PRECEPTS.iter()).map(|p| format!("precept: Some(\"{p}\")")).collect();
-    let wills: Vec<&str> = [""].into_iter().chain(wills.iter().map(String::as_str)).collect();
+    let wills: Vec<String> = (PRECEPTS.iter())
+        .map(|p| format!("precept: Some(\"{p}\")"))
+        .collect();
+    let wills: Vec<&str> = [""]
+        .into_iter()
+        .chain(wills.iter().map(String::as_str))
+        .collect();
     let outs = testaments("1000", "neutral", &wills);
     let scores: Vec<i64> = outs.iter().map(|o| median(o, "#   счёт ")).collect();
     for (o, will) in outs.iter().zip(&wills) {
         let (_, _, _, falls) = summary(o);
         let years = median(o, "#   лет династии ");
-        eprintln!("{will:24} счёт {} лет {years} войн {} {falls:?}", median(o, "#   счёт "), wars(o));
+        eprintln!(
+            "{will:24} счёт {} лет {years} войн {} {falls:?}",
+            median(o, "#   счёт "),
+            wars(o)
+        );
     }
-    let (best, worst) = (scores[1..].iter().max().unwrap(), scores[1..].iter().min().unwrap());
+    let (best, worst) = (
+        scores[1..].iter().max().unwrap(),
+        scores[1..].iter().min().unwrap(),
+    );
     assert!(best * 100 <= worst * 125, "{scores:?}");
 }
 
@@ -920,12 +950,23 @@ fn no_precept_dominates() {
 #[test]
 #[ignore = "release only, a minute"]
 fn an_order_keeps_the_charters() {
-    let outs = testaments("1000", "free_towns", &["", "order: Some(KeepLaw(\"law_charters\"))"]);
+    let outs = testaments(
+        "1000",
+        "free_towns",
+        &["", "order: Some(KeepLaw(\"law_charters\"))"],
+    );
     let share = |o: &str| {
-        let l = o.lines().find(|l| l.contains("законы при падении:")).unwrap();
+        let l = o
+            .lines()
+            .find(|l| l.contains("законы при падении:"))
+            .unwrap();
         let at = l.split(" law_charters ").nth(1).unwrap_or("0%");
         at.split('%').next().unwrap().parse::<i64>().unwrap()
     };
-    eprintln!("law_charters при падении: {}% без наказа, {}% с наказом", share(&outs[0]), share(&outs[1]));
+    eprintln!(
+        "law_charters при падении: {}% без наказа, {}% с наказом",
+        share(&outs[0]),
+        share(&outs[1])
+    );
     assert!(share(&outs[1]) > share(&outs[0]));
 }

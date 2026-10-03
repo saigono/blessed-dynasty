@@ -177,9 +177,9 @@ fn golden_seed_42_script_a_with_a_testament() {
     let mut todo = vec!["berg", "lugovo", "gart"];
     let will = bd_core::testament::Testament {
         precept: Some("treasury".into()),
-        order: Some(bd_core::testament::Order::Peace(bd_core::state::NeighbourId(
-            "nordmark".into(),
-        ))),
+        order: Some(bd_core::testament::Order::Peace(
+            bd_core::state::NeighbourId("nordmark".into()),
+        )),
         ..Default::default()
     };
     let mut will = Some(will);
@@ -197,7 +197,10 @@ fn golden_seed_42_script_a_with_a_testament() {
         }
     });
     let c = sim::run(end, &g.data, g.rng.clone());
-    assert_eq!((c.years, &c.fall, c.entries.len()), (104, &FallReason::Usurped, 27));
+    assert_eq!(
+        (c.years, &c.fall, c.entries.len()),
+        (104, &FallReason::Usurped, 27)
+    );
     // The bad luck of seed 42 under a will paid for at 32: usurped in the year 104.
     assert_eq!(
         texts(&c)[0],

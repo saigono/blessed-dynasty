@@ -248,6 +248,9 @@ fn testament_texts(data: &Data) -> Vec<(String, Vec<&String>)> {
             vec![&rule.what, &rule.what],
         ));
     }
+    for (k, v) in [("rumour", &tx.rumour), ("sealed", &tx.sealed)] {
+        all.push((format!("testament.texts.{k}"), vec![v, v]));
+    }
     all
 }
 

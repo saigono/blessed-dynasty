@@ -1133,6 +1133,8 @@ pub struct TestamentTexts {
     pub forebears: Vec<(String, String)>,
     /// The year's summary after a testament written at a cost.
     pub rumour: String,
+    /// The year's summary after a testament sealed; `{founder}`.
+    pub sealed: String,
 }
 
 #[derive(Debug)]

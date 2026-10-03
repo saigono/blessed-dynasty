@@ -16,6 +16,7 @@ use bd_core::sim::{self, Chronicle};
 use bd_core::state::{
     AxisId, Change, HeirStatus, Holder, NeighbourId, Preset, ProvinceId, Sex, Stance, World,
 };
+use bd_core::testament::{Order, Testament};
 use bd_core::war::War;
 use eframe::egui::{self, Button, Grid, ProgressBar, RichText, Ui};
 use map::{BG, BG2, FG, FG2, GOOD, MapView, RUBRIC, WARN, holder_name, round};
@@ -86,6 +87,10 @@ enum Cmd {
     Tree(bool),
     /// Open or close the list of succession laws to bring in.
     Laws(bool),
+    /// Open the testament card with this draft, keep its edits, or close it (stage 24).
+    Will(Option<Testament>),
+    /// Seal the testament: `Game::write_testament`.
+    WriteWill(Testament),
 }
 
 /// A line of the journal or of an effect list; `Some(true)` good, `Some(false)` bad.
@@ -130,6 +135,8 @@ struct App {
     tree: bool,
     /// The list of laws to bring in is up, in place of the actions.
     laws: bool,
+    /// The testament card is up with its draft (stage 24).
+    will: Option<Testament>,
     /// What happened, year by year: the date and its lines, oldest first.
     journal: Vec<(String, Vec<Line>)>,
     /// The world when «Подождать год» was pressed, and the choices made since: the year's
@@ -199,6 +206,7 @@ impl App {
             intro: false,
             tree: false,
             laws: false,
+            will: None,
             journal: Vec::new(),
             year_start: None,
             chosen: Vec::new(),
@@ -242,6 +250,11 @@ impl App {
                 (self.laws, self.picking) = (open, None);
                 return;
             }
+            Cmd::Will(draft) => {
+                (self.will, self.picking) = (draft, None);
+                return;
+            }
+            Cmd::WriteWill(_) => self.will = None,
             Cmd::Choose(i) => {
                 if let Screen::Event(v) = &self.screen
                     && let Some(c) = v.choices.get(i)
@@ -295,7 +308,24 @@ impl App {
                 res => res.map(|_| Step::Idle),
             },
             Cmd::Abdicate => g.abdicate().and_then(|_| g.wait()),
-            Cmd::Start(_)
+            Cmd::WriteWill(t) => {
+                // The rumours it stirs, told in the year's record.
+                let rumour = !bd_core::testament::cost(&g.data, &g.world).is_empty();
+                let res = g.write_testament(t).map(|_| Step::Idle);
+                if res.is_ok() {
+                    let tx = g.data.testament.as_ref().map(|r| &r.texts);
+                    let said = tx.map_or(String::new(), |tx| {
+                        bd_core::testament::fill(&g.data, &g.world, &tx.sealed)
+                    });
+                    self.chosen.push((said, None));
+                    if let Some(tx) = tx.filter(|_| rumour) {
+                        self.chosen.push((tx.rumour.clone(), Some(false)));
+                    }
+                }
+                res
+            }
+            Cmd::Will(_)
+            | Cmd::Start(_)
             | Cmd::Restart
             | Cmd::NewSeed
             | Cmd::Entry(_)
@@ -418,7 +448,7 @@ impl App {
         (self.screen, self.picking, self.dynasty) = (Screen::Reign, None, None);
         (self.played, self.seed, self.entry) = (seed, seed.to_string(), 0);
         (self.intro, self.tree, self.year_start) = (true, false, None);
-        self.laws = false;
+        (self.laws, self.will) = (false, None);
         (self.journal, self.chosen, self.money) = (Vec::new(), Vec::new(), None);
     }
 
@@ -456,6 +486,11 @@ impl App {
             Screen::Reign if self.laws => {
                 self.reign(ui);
                 laws(&ctx, self.game.as_ref().expect("in a game"))
+            }
+            Screen::Reign if self.will.is_some() => {
+                self.reign(ui);
+                let draft = self.will.as_ref().expect("checked");
+                testament(&ctx, self.game.as_ref().expect("in a game"), draft)
             }
             Screen::Reign => self.reign(ui),
             Screen::Event(v) => {
@@ -683,6 +718,21 @@ impl App {
                             });
                         }
                     }
+                    // Stage 24: written once, rewritten any time.
+                    let written = w.testament.as_ref().filter(|t| !t.by.0.is_empty());
+                    let label = match written {
+                        Some(_) => "Переписать завещание",
+                        None => "Составить завещание",
+                    };
+                    if d.testament.is_some() && ui.button(label).clicked() {
+                        let draft = written.map_or_else(Testament::default, |t| Testament {
+                            precept: t.precept.clone(),
+                            order: t.order.clone(),
+                            heir: t.heir,
+                            ..Default::default()
+                        });
+                        cmd = Some(Cmd::Will(Some(draft)));
+                    }
                     let abdicate = Button::new(RichText::new("Отречься").color(RUBRIC));
                     if ui.add(abdicate.stroke((1.0, RUBRIC))).clicked() {
                         cmd = Some(Cmd::Abdicate);
@@ -797,6 +847,123 @@ fn laws(ctx: &egui::Context, g: &Game) -> Option<Cmd> {
             cmd = Some(Cmd::Laws(false));
         }
     });
+    cmd
+}
+
+/// «Завещание» (stage 24): the precept, the order and its object, the heir, what writing it
+/// costs now; sealed by «Скрепить печатью» once it names something known.
+fn testament(ctx: &egui::Context, g: &Game, draft: &Testament) -> Option<Cmd> {
+    let (w, d) = (&g.world, &g.data);
+    let r = d.testament.as_ref()?;
+    let (mut t, mut cmd) = (draft.clone(), None);
+    egui::Modal::new(egui::Id::new("testament")).show(ctx, |ui| {
+        ui.set_width(600.0);
+        ui.label(RichText::new("Завещание").size(20.0).strong());
+        ui.label("Завещание вскроют над гробом государя. Чем громче его слава, тем крепче потомки держатся наказа; с годами он слабеет, а государь с шаткими правами чтит его ревностнее. Переписать можно в любой год.");
+        heading(ui, "Заповедь");
+        ui.radio_value(&mut t.precept, None, "Без заповеди");
+        for p in &r.precepts {
+            ui.radio_value(&mut t.precept, Some(p.id.clone()), &p.name);
+            ui.small(RichText::new(&p.description).color(FG2));
+        }
+        heading(ui, "Наказ");
+        let kinds = [
+            ("Без наказа", None),
+            (r.orders.keep_law.name.as_str(), Some(0)),
+            (r.orders.keep_province.name.as_str(), Some(1)),
+            (r.orders.peace.name.as_str(), Some(2)),
+        ];
+        let kind = |o: &Option<Order>| match o {
+            None => None,
+            Some(Order::KeepLaw(_)) => Some(0),
+            Some(Order::KeepProvince(_)) => Some(1),
+            Some(Order::Peace(_)) => Some(2),
+        };
+        let crown = || (w.provinces.iter()).filter(|(_, p)| !matches!(p.holder, Holder::Foreign(_)));
+        ui.horizontal_wrapped(|ui| {
+            for (name, k) in kinds {
+                if ui.radio(kind(&t.order) == k, name).clicked() && kind(&t.order) != k {
+                    t.order = match k {
+                        Some(0) => d.laws.list.first().map(|l| Order::KeepLaw(l.id.clone())),
+                        Some(1) => Some(Order::KeepProvince(w.capital.province.clone())),
+                        Some(_) => w.neighbours.keys().next().cloned().map(Order::Peace),
+                        None => None,
+                    };
+                }
+            }
+        });
+        let pick = |ui: &mut Ui, order: &mut Option<Order>, now: String, all: Vec<(String, Order)>| {
+            egui::ComboBox::from_id_salt("order").selected_text(now).show_ui(ui, |ui| {
+                for (name, o) in all {
+                    ui.selectable_value(order, Some(o), name);
+                }
+            });
+        };
+        match t.order.clone() {
+            Some(Order::KeepLaw(l)) => {
+                let name = |id: &str| d.law(id).map_or(id.to_string(), |l| {
+                    let on = if w.flags.contains(&l.id) { " · действует" } else { "" };
+                    format!("{}{on}", l.name)
+                });
+                let all = (d.laws.list.iter()).map(|l| (name(&l.id), Order::KeepLaw(l.id.clone())));
+                pick(ui, &mut t.order, name(&l), all.collect());
+            }
+            Some(Order::KeepProvince(p)) => {
+                let name = |id: &ProvinceId| w.provinces.get(id).map_or(id.0.clone(), |p| p.name.clone());
+                let all = crown().map(|(id, _)| (name(id), Order::KeepProvince(id.clone())));
+                pick(ui, &mut t.order, name(&p), all.collect());
+            }
+            Some(Order::Peace(n)) => {
+                let name = |id: &NeighbourId| w.neighbours.get(id).map_or(id.0.clone(), |n| n.name.clone());
+                let all = w.neighbours.keys().map(|id| (name(id), Order::Peace(id.clone())));
+                pick(ui, &mut t.order, name(&n), all.collect());
+            }
+            None => {}
+        }
+        heading(ui, "Наследник");
+        let rightful = rightful_heir(g).map(|h| h.id);
+        let heir = |id: Option<u32>| match id.and_then(|id| w.heir_index(id)) {
+            None => "По закону".to_string(),
+            Some(i) => {
+                let h = &w.heirs[i];
+                let how = if rightful == Some(h.id) { "по закону" } else { "в обход закона, тайно" };
+                format!("{}, {} {} · {how}", h.name, h.age, years(h.age))
+            }
+        };
+        egui::ComboBox::from_id_salt("heir").selected_text(heir(t.heir)).show_ui(ui, |ui| {
+            ui.selectable_value(&mut t.heir, None, heir(None));
+            for h in &w.heirs {
+                ui.selectable_value(&mut t.heir, Some(h.id), heir(Some(h.id)));
+            }
+        });
+        ui.small(RichText::new("Наследник в завещании запечатан: пока государь жив, закон о престоле не нарушен. Коронация по завещанию оспаривается чаще, чем открытое назначение.").color(FG2));
+        ui.separator();
+        // What sealing it costs now (testament::cost).
+        let cost: Vec<Effect> = (bd_core::testament::cost(d, w).into_iter())
+            .map(|(a, v)| Effect::Axis(a, v))
+            .collect();
+        match cost.is_empty() {
+            true => ui.label(RichText::new("Сейчас завещание не встревожит двор: государь стар или болен.").color(FG2)),
+            false => {
+                let lines: Vec<String> = effects(d, &cost).into_iter().map(|(l, _)| l).collect();
+                let text = format!("{} Сейчас: {}. Каждое переписывание — снова.", r.texts.rumour, lines.join(", "));
+                ui.label(RichText::new(text).color(RUBRIC))
+            }
+        };
+        ui.horizontal(|ui| {
+            let valid = bd_core::testament::valid(d, w, &t);
+            let seal = Button::new(RichText::new("Скрепить печатью").color(BG)).fill(FG);
+            if ui.add_enabled(valid, seal).clicked() {
+                cmd = Some(Cmd::WriteWill(t.clone()));
+            }
+            if ui.button("Отмена").clicked() {
+                cmd = Some(Cmd::Will(None));
+            }
+        });
+    });
+    if cmd.is_none() && t != *draft {
+        cmd = Some(Cmd::Will(Some(t)));
+    }
     cmd
 }
 
@@ -2403,6 +2570,14 @@ mod tests {
         texts(&h.frame(vec![]))
     }
 
+    /// The texts once a card just opened has laid itself out.
+    fn settled(h: &mut Harness) -> Vec<String> {
+        for _ in 0..3 {
+            h.frame(vec![]);
+        }
+        texts_of(h)
+    }
+
     fn pos(texts: &[String], t: &str) -> usize {
         texts
             .iter()
@@ -2461,6 +2636,64 @@ mod tests {
         let mut other = Harness::new();
         other.app.open(&h.app.link());
         assert!(!other.app.intro && other.game().world.tick.0 == 1);
+    }
+
+    /// Stage 24: «Составить завещание» opens the card with its cost now; a precept picked,
+    /// it is sealed into the world and the year's record, then rewritten; the dynasty reads
+    /// it at the founder's death, and the chronicle shows its strength to his heirs.
+    #[test]
+    fn the_testament_is_written_rewritten_and_read() {
+        let mut h = Harness::new();
+        h.height = 1000.0;
+        h.app.apply(Cmd::Start(1));
+        h.click_label("Править");
+        h.click_label("Составить завещание");
+        assert_eq!(h.app.will, Some(Testament::default()));
+        let shown = settled(&mut h);
+        assert!(shown.iter().any(|t| t.contains("Сейчас: ")), "{shown:?}");
+        h.click_label("Полная казна — крепость державы");
+        let draft = h.app.will.clone().unwrap();
+        assert_eq!(draft.precept.as_deref(), Some("treasury"));
+        h.click_label("Скрепить печатью");
+        assert_eq!(h.app.will, None);
+        let t = h.game().world.testament.clone().unwrap();
+        assert_eq!(t.precept.as_deref(), Some("treasury"));
+        assert!(h.app.chosen.iter().any(|(l, _)| l.contains("завещание")));
+        assert!(h.app.chosen.iter().any(|(_, up)| *up == Some(false)));
+        // Rewritten: the card opens on the testament in force.
+        h.click_label("Переписать завещание");
+        assert_eq!(
+            h.app.will.as_ref().unwrap().precept.as_deref(),
+            Some("treasury")
+        );
+        h.click_label("Отмена");
+        assert_eq!(h.app.will, None);
+        // To the end of the reign and the chronicle.
+        let g = h.app.game.as_mut().unwrap();
+        g.world.ruler.health = Fx(0);
+        let end = ReignEnd {
+            cause: "illness".into(),
+            tick: g.world.tick,
+            world: g.world.clone(),
+        };
+        h.app.step(Ok(Step::ReignEnded(end)));
+        let shown = settled(&mut h);
+        assert!(shown.contains(&"ЗАВЕЩАНИЕ".to_string()), "{shown:?}");
+        assert!(
+            shown
+                .iter()
+                .any(|t| t.contains("Полная казна — крепость державы"))
+        );
+        let (c, _) = h.app.dynasty.as_ref().unwrap();
+        let heir = (chronicle::reigns(c, &h.game().data).iter()).position(|&(r, _)| r == 1);
+        h.app.apply(Cmd::Entry(heir.expect("an heir reigned")));
+        let shown = settled(&mut h);
+        assert!(
+            shown
+                .iter()
+                .any(|t| t.starts_with("Завет ") && t.contains("сила")),
+            "{shown:?}"
+        );
     }
 
     #[test]

@@ -19,4 +19,6 @@
     // So does a law of rules.ron `laws` in force at the fall for this many years since it was
     // brought in; the law the preset starts with was never brought in.
     legacy_law_years: 100,
+    // So does the order of the founder's testament kept this many years after his death (stage 24).
+    testament_years: 100,
 )

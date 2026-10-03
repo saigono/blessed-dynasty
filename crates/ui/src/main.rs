@@ -36,7 +36,10 @@ const EVENTS: [&str; 6] = [
     include_str!("../../../data/events/war.ron"),
 ];
 /// Every file of data/events/sim, in file name order.
-const SIM_EVENTS: [&str; 1] = [include_str!("../../../data/events/sim/sim.ron")];
+const SIM_EVENTS: [&str; 2] = [
+    include_str!("../../../data/events/sim/sim.ron"),
+    include_str!("../../../data/events/sim/testament.ron"),
+];
 /// `(id, preset, map)`; the id is the file name and goes into game links.
 const PRESETS: [(&str, &str, &str); 1] = [(
     "default",

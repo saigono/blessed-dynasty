@@ -1,5 +1,5 @@
 // Stage 20, scenario «Ловушка: золотой век барщины» (docs/design/hidden-state.html,
-// section 6), seed 3: «Крепостное право» in the 3rd year, «Десятина» in the 8th. Played by
+// section 6), seed 53 (3 before stage 24): «Крепостное право» in the 3rd year, «Десятина» in the 8th. Played by
 // `cli trace` (soft): the middle choice of every event, so the founder is not openly generous
 // to the barons; the serfdom alone lifts the nobles.
 [

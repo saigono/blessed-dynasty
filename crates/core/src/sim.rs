@@ -11,6 +11,7 @@ use crate::state::{
     Axes, AxisId, CauseTag, HeirStatus, Holder, Kin, MarkKey, NeighbourId, ProvinceId, Ruler, Sex,
     Vassal, VassalId, World,
 };
+use crate::testament;
 use crate::text;
 use crate::time::Tick;
 use crate::war::WarStage;
@@ -175,6 +176,11 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
     finish(&mut c, reign, told, &world, &data, salt);
     let deserted = world.deserted;
     died(&mut world, &data, c.rulers[0].cause.as_deref());
+    // The founder's testament binds from his death, with the legend he leaves.
+    let legend = testament::legend(&data, &world);
+    if let Some(t) = &mut world.testament {
+        (t.legend, t.since) = (legend, Some(reign_end.tick));
+    }
     let mut g = Game {
         world,
         rng,
@@ -194,6 +200,9 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
         };
         g.queue.push((g.world.tick, p));
     }
+    if let Some(told) = testament::read(&g.data, &g.world, salt, TESTAMENT) {
+        c.entries.push(entry(&g, told, s.notable, vec![]));
+    }
     let tpy = g.world.time_unit.ticks_per_year;
     // The death of a young first heir who was the last one, with its place in the entries:
     // told only if no heir comes after and the dynasty ends for want of one.
@@ -205,8 +214,17 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
             }
             break FallReason::NoHeir;
         };
-        let auto = AutoChooser::for_ruler(&g.data, &g.world.ruler);
+        let base = AutoChooser::for_ruler(&g.data, &g.world.ruler);
         let fall = loop {
+            // A ruler mindful of the testament, at its strength this year.
+            let mindful;
+            let auto = match g.world.testament.as_ref().and_then(|t| t.since) {
+                Some(_) => {
+                    mindful = testament::chooser(&base, &g.data, &g.world);
+                    &mindful
+                }
+                None => &base,
+            };
             if let Some(fall) = fallen(&g) {
                 break fall;
             }
@@ -223,6 +241,9 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
                 && let Some(a) = g.data.actions.iter().find(|a| a.id == id)
             {
                 reign.count(&a.cause_tag);
+                if testament::faithful_action(&g, a) {
+                    keep(&mut g, &mut reign);
+                }
             }
             let holders: Vec<Holder> = g
                 .world
@@ -230,6 +251,7 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
                 .values()
                 .map(|p| p.holder.clone())
                 .collect();
+            let war = g.world.war.as_ref().map(|x| x.enemy.clone());
             let first = successor(&g.world, &g.data).map(|i| g.world.heirs[i].clone());
             let law = g.data.heirs.law(&g.world).map(|l| l.flag.clone());
             let laws: Vec<String> = (g.data.laws_in_force(&g.world))
@@ -276,9 +298,15 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
                         (causes(&g.world, keys), chain(&g.data, &g.world, e))
                     });
                     let idx = auto.choose(&mut g, &v.choices);
-                    let past = g.told(idx).unwrap_or(v.text);
+                    let faithful = testament::faithful(&g, &v.choices, idx);
+                    let mut past = g.told(idx).unwrap_or(v.text);
                     reign.count(&v.choices[idx].cause_tag);
                     g.resolve(idx, false).expect("a listed choice");
+                    if faithful {
+                        keep(&mut g, &mut reign);
+                        let n = TESTAMENT + c.entries.len() as u64;
+                        past += &format!(" {}", testament::faithful_text(&g.data, &g.world, salt, n));
+                    }
                     if let Some((causes, chain)) = told {
                         let e = entry(&g, (v.title, past), v.importance, causes);
                         c.entries.push(ChronicleEntry {
@@ -300,6 +328,9 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
             province_entries(&g, &holders, &mut c, &mut reign, salt);
             law_entry(&g, law, &mut c, &mut reign, salt);
             laws_entry(&g, &laws, &mut c, &mut reign, salt);
+            if testament::broken(&g.world, &laws, &holders, war.as_ref()) {
+                breach(&mut g, &mut c, &mut reign, salt);
+            }
         };
         // The dynasty ends under a living ruler.
         c.rulers.last_mut().expect("a ruler reigned").end = g.world.tick;
@@ -323,7 +354,38 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
 
 /// Namespaces of `text::pick` beside the entries (numbered by their index).
 const LIFE: u64 = 1 << 40;
+const TESTAMENT: u64 = 1 << 44;
 const EPILOGUE: u64 = 1 << 48;
+
+/// A decision true to the testament: `testament.faithful` shifts times its strength.
+fn keep(g: &mut Game, reign: &mut Reign) {
+    let k = testament::strength(&g.data, &g.world);
+    let shifts = g.data.testament.as_ref().map_or(&[][..], |r| &r.faithful.axes);
+    for (a, v) in shifts {
+        add_axis(&mut g.world, &g.data, a, *v * k);
+    }
+    g.world.recompute_loyalty(&g.data);
+    reign.count("testament_kept");
+}
+
+/// The order of the testament broken: `testament.breach` shifts times its strength, an
+/// entry, and the order binds no more.
+fn breach(g: &mut Game, c: &mut Chronicle, reign: &mut Reign, salt: u64) {
+    let k = testament::strength(&g.data, &g.world);
+    let shifts = g.data.testament.as_ref().map_or(&[][..], |r| &r.breach);
+    for (a, v) in shifts {
+        add_axis(&mut g.world, &g.data, a, *v * k);
+    }
+    g.world.recompute_loyalty(&g.data);
+    if let Some(t) = &mut g.world.testament {
+        t.broken = Some(g.world.tick);
+    }
+    let n = TESTAMENT + c.entries.len() as u64;
+    if let Some(told) = testament::breach_text(&g.data, &g.world, salt, n) {
+        c.entries.push(entry(g, told, g.data.sim.notable, vec![]));
+    }
+    reign.count("testament_broken");
+}
 
 /// The text of entry kind `key`: `own` or one of its `SimTexts.variants`, by the entry's
 /// index `n`.
@@ -338,23 +400,17 @@ fn variant(t: &crate::data::SimTexts, key: &str, own: &str, salt: u64, n: usize)
 /// cause tags of his decisions (the marks they left), his traits and the laws he left in
 /// force; the hints of his heaviest decisions as sentences.
 fn founder_reign(w: &World, d: &Data, salt: u64) -> (Reign, Vec<String>) {
-    let mut by: BTreeMap<usize, (Fx, &str)> = BTreeMap::new();
-    for t in w.marks.values().flatten() {
-        let m = by.entry(t.decision_idx).or_insert((Fx(0), &t.cause_tag));
-        m.0 = m.0 + t.weight;
-    }
+    let by = founder_decisions(w);
     let life = &d.sim.texts.life;
     let named = [("ruler", w.ruler.name.as_str(), Some(w.ruler.sex))];
     let year = (w.start_year + w.ruler.reign_start.year(w.time_unit)).to_string();
     let accession = text::pick(&life.founder, salt, LIFE);
-    let mut reign = Reign {
+    let reign = Reign {
         sex: w.ruler.sex,
         accession: text::fill(accession, &d.names, &named).replace("{year}", &year),
-        deeds: BTreeMap::new(),
+        deeds: founder_deeds(w),
         from: 0,
     };
-    by.values().for_each(|(_, tag)| reign.count(tag));
-    w.laws.keys().for_each(|_| reign.count("law"));
     let mut heaviest: Vec<_> = by.into_values().collect();
     heaviest.sort_by_key(|(weight, _)| Reverse(*weight));
     let mut told: Vec<String> = vec![];
@@ -366,6 +422,27 @@ fn founder_reign(w: &World, d: &Data, salt: u64) -> (Reign, Vec<String>) {
     }
     told.truncate(life.deeds);
     (reign, told)
+}
+
+/// The founder's decisions by the marks they left: their weight and cause tag.
+fn founder_decisions(w: &World) -> BTreeMap<usize, (Fx, &str)> {
+    let mut by: BTreeMap<usize, (Fx, &str)> = BTreeMap::new();
+    for t in w.marks.values().flatten() {
+        let m = by.entry(t.decision_idx).or_insert((Fx(0), &t.cause_tag));
+        m.0 = m.0 + t.weight;
+    }
+    by
+}
+
+/// The founder's deeds as `Epithet` counts them: the cause tag of every decision that left a
+/// mark, `law` for every law he brought in.
+pub(crate) fn founder_deeds(w: &World) -> BTreeMap<String, u32> {
+    let mut deeds: BTreeMap<String, u32> = BTreeMap::new();
+    let tags = founder_decisions(w).into_values().map(|(_, tag)| tag);
+    for tag in tags.chain(w.laws.keys().map(|_| "law")) {
+        *deeds.entry(tag.to_string()).or_default() += 1;
+    }
+    deeds
 }
 
 /// The main entries of the reign from entry `from` on, as sentences of `life.deed` (of
@@ -454,10 +531,11 @@ fn finish(c: &mut Chronicle, reign: Reign, told: Vec<String>, w: &World, d: &Dat
             .map(|(_, v)| v),
     };
     let end = text::pick(end.map_or(&[][..], |v| v), salt, LIFE + n + 1);
+    let will = testament::life(d, w, &deeds, salt, LIFE + n + 3);
     let phrases = std::iter::once(reign.accession.as_str())
         .chain([why])
         .chain(told.iter().map(String::as_str))
-        .chain([end]);
+        .chain([will.as_str(), end]);
     let named = [
         ("ruler", r.name.as_str(), Some(reign.sex)),
         ("epithet", name, Some(reign.sex)),
@@ -550,11 +628,20 @@ pub fn next_heir(w: &World) -> Option<usize> {
 /// the last reign (`sim.reign_flags`) go. None: no heir; else the new reign, told how it
 /// began (`sim.texts.life`).
 fn crown(g: &mut Game, c: &mut Chronicle, salt: u64) -> Option<Reign> {
+    // The heir of a will goes first, as one designated, for this coronation only.
+    let sealed = g.world.testament.as_mut().and_then(|t| t.heir.take());
+    let w = &g.world;
+    let home = |id: &u32| (w.heir_index(*id)).is_some_and(|i| w.heirs[i].status == HeirStatus::Home);
+    let sealed = sealed.filter(home);
+    if sealed.is_some() {
+        g.world.designated = sealed;
+    }
     let ruler = succession(&g.world, &g.data, &mut g.rng)?;
     let (d, w, rng) = (&g.data, &mut g.world, &mut g.rng);
     let i = successor(w, d).expect("succession found one");
     let lawful = rightful(w, d) == Some(i);
     let mut heir = w.heirs.remove(i);
+    let willed = sealed == Some(heir.id);
     w.designated = None;
     if let Some(l) = d.heirs.law(w).filter(|_| lawful && !heir.bastard) {
         heir.claim = heir.claim.max(l.rightful_claim);
@@ -593,7 +680,11 @@ fn crown(g: &mut Game, c: &mut Chronicle, salt: u64) -> Option<Reign> {
         let quarrel = roll(l.dispute_per_heir * Fx::from_int(w.heirs.len() as i64));
         let queen = heir.sex == Sex::Female && l.female_heir.is_some();
         // Named over the rightful heir, who keeps his claim: a rival.
-        let named = !lawful && roll(d.heirs.designate_dispute);
+        let dispute = match d.testament.as_ref().filter(|_| willed) {
+            Some(t) => t.heir_dispute,
+            None => d.heirs.designate_dispute,
+        };
+        let named = !lawful && roll(dispute);
         let h = &d.heirs;
         let minor = ruler.age < d.sim.regency_age && roll(h.dispute_minor);
         let weak = heir.ability < h.dispute_weak.0 && roll(h.dispute_weak.1);
@@ -628,13 +719,19 @@ fn crown(g: &mut Game, c: &mut Chronicle, salt: u64) -> Option<Reign> {
         fill(title),
         fill(&variant(t, "crowned", text, salt, c.entries.len())),
     );
+    let tt = d.testament.as_ref().map(|t| &t.texts);
+    if let Some(tt) = tt.filter(|_| willed && !lawful) {
+        let n = TESTAMENT + c.entries.len() as u64;
+        told.1 = format!("{} {}", told.1, fill(text::pick(&tt.crowned, salt, n)));
+    }
     if let Some(cheer) = cheer {
         told.1 = format!("{} {cheer}", told.1);
     }
     let life = &t.life;
     let contested = w.flags.contains(&d.abdication.contested_flag);
-    let accession = match () {
+    let accession: &[String] = match () {
         _ if ruler.age < d.sim.regency_age => &life.regency,
+        _ if !lawful && willed && tt.is_some() => &tt.expect("checked").willed,
         _ if !lawful => &life.designated,
         _ if contested => &life.contested,
         _ => &life.lawful,
@@ -650,6 +747,13 @@ fn crown(g: &mut Game, c: &mut Chronicle, salt: u64) -> Option<Reign> {
         ..record(&ruler)
     });
     w.ruler = ruler;
+    if let Some(t) = d.testament.as_ref().filter(|_| willed) {
+        let k = testament::strength(d, w);
+        for (a, v) in &t.heir {
+            add_axis(w, d, a, *v * k);
+        }
+        w.recompute_loyalty(d);
+    }
     (g.ended, g.reported) = (None, false);
     let causes = causes(&g.world, [MarkKey::Heir(heir.id)].into());
     c.entries.push(entry(g, told, g.data.sim.notable, causes));
@@ -1189,6 +1293,12 @@ impl AutoChooser {
 
     /// Index of the best choice.
     pub fn choose(&self, g: &mut Game, choices: &[Choice]) -> usize {
+        let scores = self.scores(g, choices);
+        self.best(&scores, &mut g.rng)
+    }
+
+    /// The score of every choice of the event waiting, without the noise.
+    pub(crate) fn scores(&self, g: &Game, choices: &[Choice]) -> Vec<Fx> {
         // The neighbour of the event, for a suit among the choices.
         let p = g.pending_event.as_ref();
         let nb = p.and_then(|p| match &p.target {
@@ -1198,8 +1308,7 @@ impl AutoChooser {
         let scores = choices
             .iter()
             .map(|c| self.worth(&c.effects, &g.world, &g.data, nb));
-        let scores: Vec<Fx> = scores.collect();
-        self.best(&scores, &mut g.rng)
+        scores.collect()
     }
 
     /// The best action of `available_actions` with a free slot of its kind (its cost counts
@@ -1276,10 +1385,16 @@ impl AutoChooser {
     /// (by the delta), `build`, `grant`, `revoke`, `secede`, `war`, `hostage`, `death`,
     /// `abdicate` (+1 each), `overreach` (+1 for a grant while the crown holds more than its
     /// room, `crown_capacity`), `province` (+1 gained, -1 given away), `heir` (+1 born, -1 lost),
-    /// `heir_ability`, `heir_claim` (by the delta), `army_upkeep` (by the change in the yearly
+    /// `heir_ability`, `heir_claim` (by the delta), `bequeath` (+1 an heir named in a will), `army_upkeep` (by the change in the yearly
     /// upkeep a change of the army brings), `law` (+1 for a change of the laws in force, then
     /// each law brought in or ended by `law_worth`, a law brought in also by its resistance). A chance weighs both branches by its odds.
-    fn worth(&self, effects: &[Effect], w: &World, data: &Data, nb: Option<&NeighbourId>) -> Fx {
+    pub(crate) fn worth(
+        &self,
+        effects: &[Effect],
+        w: &World,
+        data: &Data,
+        nb: Option<&NeighbourId>,
+    ) -> Fx {
         let one = Fx::from_int(1);
         let mut sum = Fx(0);
         for e in effects {
@@ -1325,6 +1440,7 @@ impl AutoChooser {
                 }
                 Effect::HeirOp(HeirOp::Add) => ("heir", one),
                 Effect::HeirOp(HeirOp::TargetMarry) => ("marriage", one),
+                Effect::HeirOp(HeirOp::TargetBequeath) => ("bequeath", one),
                 Effect::HeirOp(HeirOp::Remove(_) | HeirOp::TargetRemove) => {
                     ("heir", Fx::from_int(-1))
                 }

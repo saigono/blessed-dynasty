@@ -1,5 +1,5 @@
 // Stage 20, scenario «Долгая стабильность» (docs/design/hidden-state.html, section 6),
-// seed 2: a progress, «Свод законов» in the 16th year (skipped: the bureaucracy never reaches
+// seed 14 (2 before stage 24): a progress, «Свод законов» in the 16th year (skipped: the bureaucracy never reaches
 // 40 by then), «Королевские житницы» in the 20th, «Монастырские школы» in the 25th; the
 // peasants stay by custom. Played by `cli trace` (soft).
 [

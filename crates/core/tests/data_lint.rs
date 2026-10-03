@@ -98,8 +98,11 @@ fn every_cause_tag_has_a_hint() {
     let tags_only = |(k, _): (&String, &String)| !k.starts_with("chain:");
     let events = data.events.iter().chain(&data.sim_events);
     let tags = events.flat_map(|e| &e.choices).map(|c| &c.cause_tag);
+    // Stage 24: the testament is a decision of its own (Game::write_testament).
+    let testament = bd_core::testament::TAG.to_string();
     let tags: BTreeSet<_> = tags
         .chain(data.actions.iter().map(|a| &a.cause_tag))
+        .chain([&testament])
         .collect();
     let missing: BTreeSet<_> = tags.iter().filter(|t| !hints.contains_key(**t)).collect();
     assert!(missing.is_empty(), "no hint for {missing:?}");
@@ -192,7 +195,8 @@ fn every_reign_choice_is_hinted() {
 #[test]
 fn sim_events_follow_the_brief() {
     let data = load_all();
-    assert_eq!(data.sim_events.len(), 15);
+    // Stage 24: royal_will, forged_will.
+    assert_eq!(data.sim_events.len(), 17);
     for e in &data.sim_events {
         assert!((2..=3).contains(&e.choices.len()), "{}", e.id);
         assert!(e.importance >= data.sim.threshold, "{}", e.id);
@@ -510,7 +514,13 @@ fn every_choice_is_told() {
 /// The `{…}` of a template that `text::fill` would leave as they are: an unknown key, an
 /// unknown case, a sex choice without two forms.
 fn bad_braces(s: &str) -> Vec<String> {
-    const KEYS: [&str; 14] = [
+    // Stage 24 (testament.rs): founder, forebear, precept, order, will.
+    const KEYS: [&str; 19] = [
+        "founder",
+        "forebear",
+        "precept",
+        "order",
+        "will",
         "ruler",
         "prev",
         "heir",
@@ -580,6 +590,29 @@ fn templates_use_known_names_cases_and_two_forms() {
             .flat_map(|e| e.told.iter().chain([&e.name.0, &e.name.1])),
     );
     all.extend(data.sim.traits.iter().flat_map(|r| [&r.told.0, &r.told.1]));
+    // Stage 24: the testament.
+    let r = data.testament.as_ref().expect("rules.ron testament");
+    let tx = &r.texts;
+    for v in [
+        &tx.read.1,
+        &tx.precept,
+        &tx.order,
+        &tx.heir,
+        &tx.faithful,
+        &tx.crowned,
+        &tx.willed,
+        &tx.life_founder,
+        &tx.life_kept,
+        &tx.life_broken,
+    ] {
+        assert!((2..=3).contains(&v.len()), "{v:?}");
+        all.extend(v);
+    }
+    let o = &r.orders;
+    for rule in [&o.keep_law, &o.keep_province, &o.peace] {
+        assert!((2..=3).contains(&rule.breach.len()), "{}", rule.name);
+        all.extend(rule.breach.iter().chain([&rule.what]));
+    }
     let l = &t.life;
     for v in [
         &l.founder,

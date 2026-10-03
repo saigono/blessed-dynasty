@@ -60,6 +60,9 @@ pub struct Data {
     pub coronation: CoronationRules,
     #[serde(default)]
     pub marriage: MarriageRules,
+    /// The founder's testament (stage 24, `testament.rs`); None: none may be written.
+    #[serde(default)]
+    pub testament: Option<TestamentRules>,
     /// From `add_events`, not from `rules.ron`.
     #[serde(default)]
     pub events: Vec<Event>,
@@ -1016,6 +1019,122 @@ pub struct Life {
     pub years: (String, String, String),
 }
 
+/// rules.ron `testament` (stage 24, `testament.rs`).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct TestamentRules {
+    pub precepts: Vec<Precept>,
+    pub orders: Orders,
+    pub legend: Legend,
+    /// The share of the legend left, `curve` points `(years since the founder's death, k)`.
+    pub decay: Vec<(Fx, Fx)>,
+    pub zeal: Zeal,
+    pub rumours: Rumours,
+    /// Chance in percent that the coronation of an heir named by a testament over the law is
+    /// contested (`heirs.designate_dispute` for one named openly).
+    pub heir_dispute: Fx,
+    /// Shifts at the coronation of the heir named by a testament, times its strength.
+    pub heir: Vec<(AxisId, Fx)>,
+    pub faithful: Faithful,
+    /// Shifts when the order is broken, times the strength.
+    pub breach: Vec<(AxisId, Fx)>,
+    pub texts: TestamentTexts,
+}
+
+/// A precept: `weights` on the keys of `sim::AutoChooser`, times the strength, added to the
+/// weights of every ruler after the founder.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Precept {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub weights: BTreeMap<String, Fx>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Orders {
+    pub keep_law: OrderRule,
+    pub keep_province: OrderRule,
+    pub peace: OrderRule,
+}
+
+/// A kind of order (`testament::Order`).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct OrderRule {
+    /// The kind for the UI.
+    pub name: String,
+    /// On the automaton, times the strength: on the law's id, on `province`, on `war`.
+    pub weight: Fx,
+    /// The order in words; `{law}`, `{province}`, `{neighbour}`.
+    pub what: String,
+    /// The text of the entry when it is broken, variants.
+    pub breach: Vec<String>,
+}
+
+/// `base + sum(axis * k) + years of the reign * years + sum(deeds * k)`, clamped to
+/// `0..=max`; deeds as `testament::legend` counts them.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Legend {
+    pub base: Fx,
+    pub axes: Vec<(AxisId, Fx)>,
+    pub years: Fx,
+    pub deeds: Vec<(Vec<String>, Fx)>,
+    pub max: Fx,
+}
+
+/// `curve` points `(axis, k)`, plus `traits` of the ruler's traits.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Zeal {
+    pub axis: AxisId,
+    pub curve: Vec<(Fx, Fx)>,
+    pub traits: BTreeMap<String, Fx>,
+}
+
+/// A testament written by a ruler younger than `age`, with health at least `health`, shifts
+/// `per_year` for every year short of `age`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Rumours {
+    pub age: u32,
+    pub health: Fx,
+    pub per_year: Vec<(AxisId, Fx)>,
+}
+
+/// A choice or an action true to the testament (`testament::faithful`) shifts `axes` times
+/// the strength.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Faithful {
+    pub margin: Fx,
+    pub axes: Vec<(AxisId, Fx)>,
+}
+
+/// See `testament.rs`. `{founder}` the testator, `{ruler}`, `{forebear}` the founder from the
+/// ruler, `{precept}`, `{order}` (`OrderRule.what`), `{heir}`, `{prev}`, `{will}`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct TestamentTexts {
+    /// The testament read at the founder's death: the title and the first sentence, then
+    /// one of `precept`, `order`, `heir` for each part it has.
+    pub read: (String, Vec<String>),
+    pub precept: Vec<String>,
+    pub order: Vec<String>,
+    pub heir: Vec<String>,
+    /// After the entry of a choice true to the testament.
+    pub faithful: Vec<String>,
+    /// The title of the entry of a broken order.
+    pub breach: String,
+    /// After «Новое правление» of an heir crowned by a testament.
+    pub crowned: Vec<String>,
+    /// A life: how an heir crowned by a testament over the law came to the throne.
+    pub willed: Vec<String>,
+    /// A life: of the founder who left one, of a ruler true to it, of one who broke it.
+    pub life_founder: Vec<String>,
+    pub life_kept: Vec<String>,
+    pub life_broken: Vec<String>,
+    /// The founder from his heirs in the genitive, (of a man, of a woman): his child's word,
+    /// his grandchild's, …; the last for all after.
+    pub forebears: Vec<(String, String)>,
+    /// The year's summary after a testament written at a cost.
+    pub rumour: String,
+}
+
 #[derive(Debug)]
 pub enum DataError {
     Parse(ron::error::SpannedError),
@@ -1067,7 +1186,14 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
         .chain(&data.coronation.legitimacy_from_claim)
         .chain(&data.marriage.axes)
         .chain(&data.heirs.designate_penalty)
-        .map(|(a, _)| a);
+        .chain(data.testament.iter().flat_map(|t| {
+            (t.legend.axes.iter().chain(&t.rumours.per_year))
+                .chain(&t.heir)
+                .chain(&t.faithful.axes)
+                .chain(&t.breach)
+        }))
+        .map(|(a, _)| a)
+        .chain(data.testament.iter().map(|t| &t.zeal.axis));
     for a in [
         &data.action_slots.axis,
         &data.economy.treasury,
@@ -1132,6 +1258,9 @@ pub fn load(rules: &str) -> Result<Data, DataError> {
         }
     }
     unique(data.laws.list.iter().map(|l| l.id.as_str()))?;
+    if let Some(t) = &data.testament {
+        unique(t.precepts.iter().map(|p| p.id.as_str()))?;
+    }
     for l in &data.laws.list {
         let axes = l.anchors.iter().chain(&l.resistance);
         let axis = axes

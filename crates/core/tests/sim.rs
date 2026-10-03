@@ -136,9 +136,11 @@ fn golden_seed_42_script_a() {
     // Stage 20: events move the hidden nodes, omens and the schism, the founder's reign draws
     // other events: Конрад reigns three years, Хедвига 23, and the dynasty lives to the
     // horizon; omens are told whatever their importance.
+    // Stage 24: the trait `defiant` rolls at every coronation and two events join the pool
+    // (royal_will, forged_will): the same outcome by another road, Конрад reigns 22 years.
     assert_eq!(
         (c.years, &c.fall, c.entries.len()),
-        (300, &FallReason::Alive, 129)
+        (300, &FallReason::Alive, 79)
     );
     let hint = |h: &'static str| Some(h);
     assert_eq!(
@@ -150,13 +152,13 @@ fn golden_seed_42_script_a() {
                 hint("Основатель породнил наследника с домом своего барона."),
             ),
             (
-                "Новое правление",
-                "Престол Конрада Недолгого унаследовала Хедвига. Страна вздохнула спокойно: новая королева не любила поспешных решений.",
-                None,
+                "Мятеж дома Вейр",
+                "Дом Вейр поднял мятеж в земле Берг и отказался присягать короне, и Конрад двинул на мятежников войско.",
+                hint("Вассал, которому основатель доверил меч, привык к нему."),
             ),
             (
-                "Мятеж дома Вейр",
-                "Дом Вейр поднял мятеж в земле Вейр, но корона откупилась от него золотом и титулами.",
+                "Мятеж дома Арден",
+                "Дом Арден поднял мятеж в земле Арден, но корона откупилась от него золотом и титулами.",
                 hint("Вассал, которому основатель доверил меч, привык к нему."),
             ),
         ]
@@ -1088,23 +1090,23 @@ fn kin_of_seed_42_script_a() {
     );
     assert_eq!((k[0].crowned, k[0].parent), (Some(1187), None));
     assert_eq!(k[0].died, Some(1187 + c.rulers[0].end.0));
-    // Конрад, 6 at the start, reigned 1229..1232; his siblings died uncrowned, as below.
+    // Конрад, 6 at the start, reigned 1229..1251 (stage 24); his siblings died uncrowned.
     assert_eq!(
         (k[1].name.as_str(), k[1].born, k[1].crowned, k[1].died),
-        ("Конрад", 1181, Some(1229), Some(1232))
+        ("Конрад", 1181, Some(1229), Some(1251))
     );
     assert_eq!(
         (k[2].name.as_str(), k[2].born, k[2].parent, k[2].crowned),
         ("Генрих", 1189, Some(0), None)
     );
-    assert_eq!(k[2].died, Some(1261));
+    assert_eq!(k[2].died, Some(1257));
     assert_eq!(
         (k[3].name.as_str(), k[3].born, k[3].parent, k[3].died),
-        ("Ирмгард", 1192, Some(0), Some(1245))
+        ("Ирмгард", 1192, Some(0), Some(1237))
     );
     assert_eq!(
         (k[4].name.as_str(), k[4].born, k[4].parent, k[4].died),
-        ("Гизела", 1198, Some(0), Some(1274))
+        ("Гизела", 1198, Some(0), Some(1271))
     );
     // Every ruler in the chronicle is a crowned kin, in order; children point at a ruler.
     let crowned: Vec<(&str, u32)> = (k.iter())

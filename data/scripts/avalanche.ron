@@ -1,5 +1,5 @@
 // Stage 20, scenario «Лавина: ересь книжников» (docs/design/hidden-state.html, section 6),
-// seed 217: the founder grants the towns their charters in the 5th year and brings in
+// seed 741 (217 before stage 24): the founder grants the towns their charters in the 5th year and brings in
 // «Единоверие» in the 12th; no schools. Played by `cli trace` (soft), the neutral strategy
 // goes on after it. The golden test is in crates/cli/tests/cli.rs.
 [

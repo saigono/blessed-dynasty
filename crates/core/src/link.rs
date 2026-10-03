@@ -3,13 +3,16 @@
 //!
 //! Bytes: `VERSION`, the preset id, the seed, the tick the game was at, then per decision
 //! the ticks since the previous one and a step: 0 and the choice index, 1 and the action
-//! index in `Data.actions` with its target, 2 for abdication. Numbers are LEB128, strings
+//! index in `Data.actions` with its target, 2 for abdication, 3 and a testament (stage 24:
+//! the precept, empty for none; the order, 0 for none, 1 a law, 2 a province, 3 a neighbour,
+//! and its id; the heir's id plus one, 0 for none). Numbers are LEB128, strings
 //! are a length and UTF-8. Event ids, cause tags and choice targets are not stored: the
 //! replay finds them again.
 
 use crate::game::{Decision, DecisionKind, Game};
 use crate::rules::Target;
 use crate::state::{NeighbourId, ProvinceId};
+use crate::testament::{Order, Testament};
 use crate::time::Tick;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
@@ -20,6 +23,7 @@ pub const VERSION: u8 = 1;
 const CHOICE: u8 = 0;
 const ACTION: u8 = 1;
 const ABDICATE: u8 = 2;
+const TESTAMENT: u8 = 3;
 
 /// A decoded link; `play` puts its decisions on a new game of `preset_id` and `seed`.
 #[derive(Debug, PartialEq)]
@@ -66,6 +70,21 @@ pub fn encode(preset_id: &str, seed: u64, g: &Game) -> String {
                 }
             }
             DecisionKind::Abdicate => out.push(ABDICATE),
+            DecisionKind::Testament(t) => {
+                out.push(TESTAMENT);
+                put_str(&mut out, t.precept.as_deref().unwrap_or_default());
+                let (kind, id) = match &t.order {
+                    None => (0, ""),
+                    Some(Order::KeepLaw(l)) => (1, l.as_str()),
+                    Some(Order::KeepProvince(p)) => (2, p.0.as_str()),
+                    Some(Order::Peace(n)) => (3, n.0.as_str()),
+                };
+                out.push(kind);
+                if kind > 0 {
+                    put_str(&mut out, id);
+                }
+                put(&mut out, t.heir.map_or(0, |h| h as u64 + 1));
+            }
         }
     }
     B64.encode(out)
@@ -117,6 +136,23 @@ impl Link {
                     g.start_action(&id, target)
                 }
                 ABDICATE => g.abdicate(),
+                TESTAMENT => {
+                    let precept = Some(string(b)?).filter(|p| !p.is_empty());
+                    let order = match byte(b)? {
+                        0 => None,
+                        1 => Some(Order::KeepLaw(string(b)?)),
+                        2 => Some(Order::KeepProvince(ProvinceId(string(b)?))),
+                        3 => Some(Order::Peace(NeighbourId(string(b)?))),
+                        x => return Err(format!("неизвестный наказ {x}")),
+                    };
+                    let heir = num(b)?.checked_sub(1).map(|h| h as u32);
+                    g.write_testament(Testament {
+                        precept,
+                        order,
+                        heir,
+                        ..Default::default()
+                    })
+                }
                 x => return Err(format!("неизвестный шаг {x}")),
             };
             res.map_err(|e| format!("ссылка не совпадает с игрой на тике {at}: {e:?}"))?;
@@ -134,6 +170,7 @@ pub fn replay(g: &mut Game, decisions: &[Decision], end: Tick) -> Result<(), Str
                 .start_action(action_id, target.clone())
                 .map_err(|e| format!("{e:?}")),
             DecisionKind::Abdicate => g.abdicate().map_err(|e| format!("{e:?}")),
+            DecisionKind::Testament(t) => (g.write_testament(t.clone())).map_err(|e| format!("{e:?}")),
             DecisionKind::EventChoice {
                 event_id,
                 choice_idx,
@@ -291,6 +328,7 @@ mod tests {
             },
             DecisionKind::EventChoice { .. } => "choice",
             DecisionKind::Abdicate => "abdicate",
+            DecisionKind::Testament(_) => "testament",
         };
         let shapes: std::collections::BTreeSet<_> = g.decisions.iter().map(shape).collect();
         let all = ["province", "neighbour", "heir", "action", "choice"];
@@ -329,6 +367,32 @@ mod tests {
         let r = reopen(&g, 5);
         assert_eq!((&r.ended, &r.world), (&g.ended, &g.world));
         assert_eq!(r.decisions, g.decisions);
+    }
+
+    /// Stage 24: a testament and its rewrite come back, every kind of order among them.
+    #[test]
+    fn testaments_come_back() {
+        use crate::testament::{Order, Testament};
+        let mut g = play(7, 6);
+        let heir = g.world.heirs.last().map(|h| h.id);
+        let nb = g.world.neighbours.keys().next().cloned().unwrap();
+        let land = g.world.capital.province.clone();
+        let wills = [
+            (Some("treasury"), Some(Order::KeepLaw("law_charters".into())), heir),
+            (None, Some(Order::Peace(nb)), None),
+            (Some("land"), Some(Order::KeepProvince(land)), None),
+        ];
+        for (precept, order, heir) in wills {
+            let t = Testament { precept: precept.map(String::from), order, heir, ..Default::default() };
+            g.write_testament(t).unwrap();
+            if let Step::Event(_) = g.wait().unwrap() {
+                g.choose(0).unwrap();
+            }
+        }
+        let r = reopen(&g, 7);
+        assert_eq!(r.decisions, g.decisions);
+        assert_eq!(r.world, g.world);
+        assert!(matches!(&g.world.testament, Some(t) if t.precept.as_deref() == Some("land")));
     }
 
     #[test]

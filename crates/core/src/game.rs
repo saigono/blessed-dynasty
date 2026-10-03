@@ -39,6 +39,8 @@ pub enum DecisionKind {
     },
     /// `Game::abdicate`; the confirm or cancel choice follows as an `EventChoice`.
     Abdicate,
+    /// `Game::write_testament` (stage 24).
+    Testament(crate::testament::Testament),
 }
 
 /// The event waiting for `choose`, or deferred in `Game.queue`.
@@ -542,6 +544,43 @@ impl Game {
         Ok(())
     }
 
+    /// The ruler writes his testament, or writes it anew (stage 24): what it costs now
+    /// (`testament::cost`) shifts the axes, marked as this decision; it binds from his death.
+    /// `Unavailable`: it names nothing, or something unknown (`testament::valid`).
+    pub fn write_testament(&mut self, mut t: crate::testament::Testament) -> Result<(), GameError> {
+        if self.ended.is_some() {
+            return Err(GameError::ReignEnded);
+        }
+        if self.pending_event.is_some() {
+            return Err(GameError::EventPending);
+        }
+        if !crate::testament::valid(&self.data, &self.world, &t) {
+            return Err(GameError::Unavailable);
+        }
+        let before = self.world.without_marks();
+        for (a, v) in crate::testament::cost(&self.data, &self.world) {
+            add_axis(&mut self.world, &self.data, &a, v);
+        }
+        self.world.recompute_loyalty(&self.data);
+        let r = &self.world.ruler;
+        t = crate::testament::Testament {
+            by: (r.name.clone(), r.sex),
+            legend: Fx(0),
+            since: None,
+            broken: None,
+            ..t
+        };
+        self.world.testament = Some(t.clone());
+        let tag = crate::testament::TAG;
+        self.mark(self.decisions.len(), tag, &before);
+        self.decisions.push(Decision {
+            tick: self.world.tick,
+            kind: DecisionKind::Testament(t),
+            cause_tag: tag.into(),
+        });
+        Ok(())
+    }
+
     /// Applies effects in order. Those needing the rng or ending the reign are done here.
     fn apply(&mut self, effects: &[Effect], target: Option<&Target>, nb: Option<&NeighbourId>) {
         for e in effects {
@@ -849,6 +888,13 @@ fn candidates<'a>(
                 .filter(|h| !h.married && (*lo..=*hi).contains(&h.age))
                 .map(|h| Target::Heir(h.id)),
         )),
+        EventTarget::Favourite(gap) => {
+            let first = w.heirs.first().map_or(Fx(0), |h| h.ability);
+            // max_by_key keeps the last of equals; going backwards, that is the eldest.
+            let best = (w.heirs.iter().skip(1).rev()).max_by_key(|h| h.ability);
+            let best = best.filter(|h| h.ability > first + *gap);
+            Some(Box::new(best.map(|h| Target::Heir(h.id)).into_iter()))
+        }
     }
 }
 

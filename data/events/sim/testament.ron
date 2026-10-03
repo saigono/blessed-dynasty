@@ -1,0 +1,66 @@
+// Simulation events of stage 24 (the testament, testament.rs): a ruler names his favourite
+// in a sealed will over the law (HeirOp TargetBequeath, crowned after him at the next
+// coronation), and a forged will surfaces while the crown's right is shaky.
+[
+    (
+        // The favourite: the ablest heir after the first in line, abler by more than the gap
+        // (EventTarget Favourite). A defiant ruler does it far more often (sim.auto.traits).
+        id: "royal_will",
+        title: "Тайное завещание",
+        text: "{ruler} всё больше благоволит {heir.дат}, а не старшему в очереди. Писцы шепчутся о запечатанном завещании.",
+        when: All([RulerAge(40, 200), HeirCount(2, 99)]),
+        weight: 2,
+        weight_bonus: [(RulerTrait("defiant"), 6)],
+        once: false,
+        cooldown_years: 15,
+        importance: 4,
+        target: Favourite(10),
+        choices: [
+            (
+                text: "Назвать любимца наследником в тайном завещании",
+                effects: [HeirOp(TargetBequeath)],
+                cause_tag: "will_sealed",
+                told: "{ruler} {ruler:составил|составила} тайное завещание и {ruler:запечатал|запечатала} его своей печатью; о том, чьё имя в нём стояло, при дворе лишь шептались.",
+            ),
+            (
+                text: "Оставить престол закону",
+                effects: [Axis("legitimacy", 2)],
+                cause_tag: "will_lawful",
+                told: "{ruler} долго {ruler:благоволил|благоволила} {heir.дат}, но так и не {ruler:решился|решилась} обойти закон: престол остался за старшим.",
+            ),
+        ],
+    ),
+    (
+        // Only while the crown's right is shaky does anyone dare bring a forged will to court.
+        id: "forged_will",
+        title: "Подложное завещание",
+        text: "При дворе объявилось завещание, будто бы написанное прежним государем: престол в нём отдан другому, а не {ruler.дат}.",
+        when: All([AxisBelow("legitimacy", 30), HeirCount(1, 99)]),
+        weight: 3,
+        weight_bonus: [(AxisBelow("legitimacy", 15), 4)],
+        once: false,
+        cooldown_years: 20,
+        importance: 5,
+        target: None,
+        choices: [
+            (
+                text: "Объявить завещание подложным и казнить писцов",
+                effects: [Axis("legitimacy", 4), Axis("loyalty_nobles", -8), Axis("loyalty_people", -3)],
+                cause_tag: "forged_will_exposed",
+                told: "При дворе объявилось подложное завещание прежнего государя, и {ruler} {ruler:велел|велела} казнить писцов, что его составили.",
+            ),
+            (
+                text: "Отдать дело на суд прелатов",
+                effects: [Axis("treasury", -40), Axis("loyalty_church", 5), Axis("legitimacy", 2)],
+                cause_tag: "forged_will_judged",
+                told: "При дворе объявилось завещание, отдававшее престол другому, и {ruler} {ruler:отдал|отдала} дело на суд прелатов; те признали грамоту подложной.",
+            ),
+            (
+                text: "Замять дело, откупившись от претендента",
+                effects: [Axis("treasury", -60), SetFlag("succession_contested")],
+                cause_tag: "forged_will_hushed",
+                told: "Чтобы замять дело о подложном завещании, {ruler} {ruler:откупился|откупилась} от претендента, но слух о нём уже пошёл по стране.",
+            ),
+        ],
+    ),
+]

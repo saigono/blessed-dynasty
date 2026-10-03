@@ -109,6 +109,8 @@ enum ScriptStep {
     /// The first choice with this cause tag, else choice 0.
     ChooseByTag(String),
     Abdicate,
+    /// Stage 24: `Game::write_testament`, e.g. `Testament((precept: Some("treasury")))`.
+    Testament(bd_core::testament::Testament),
 }
 
 /// What `replay` reads from the `run --json` output.
@@ -687,7 +689,7 @@ fn trace(g: &Game, c: &sim::Chronicle) -> String {
             let target = match &d.kind {
                 DecisionKind::EventChoice { target, .. }
                 | DecisionKind::ActionStarted { target, .. } => target_name(target),
-                DecisionKind::Abdicate => String::new(),
+                DecisionKind::Abdicate | DecisionKind::Testament(_) => String::new(),
             };
             out += &format!(
                 "  решение #{} (тик {}, {}{target}) → метка ({}) → {event}\n",
@@ -868,7 +870,7 @@ fn print_dynasty(g: &Game, c: &sim::Chronicle, s: &score::Score) {
     }
 }
 
-/// `soft`: a Wait or an Action while an event waits takes its middle choice instead of
+/// `soft`: a Wait, an Action or a Testament while an event waits takes its middle choice instead of
 /// failing, and a step
 /// that does not fit the game (a script of another seed) is skipped. `log` gets
 /// the treasury at the end of every year (see `note`).
@@ -885,7 +887,7 @@ fn play_script(
         }
         // Soft: an action waits for no event, it takes the middle choice first.
         if soft
-            && let ScriptStep::Action(..) = step
+            && let ScriptStep::Action(..) | ScriptStep::Testament(_) = step
             && let Some(choices) = pending_choices(g)
         {
             g.choose((choices.len() - 1) / 2).map_err(err)?;
@@ -905,6 +907,7 @@ fn play_script(
                 None => Err("нет события".into()),
             },
             ScriptStep::Abdicate => g.abdicate().map_err(err),
+            ScriptStep::Testament(t) => g.write_testament(t.clone()).map_err(err),
         };
         if !soft {
             res.map_err(|e| format!("шаг {} {step:?}: {e}", i + 1))?;
@@ -1001,6 +1004,7 @@ fn describe(g: &Game, d: &Decision) -> String {
             target: t,
         } => format!("действие {action_id}{}", target(t)),
         DecisionKind::Abdicate => "отречение".into(),
+        DecisionKind::Testament(_) => "завещание".into(),
     };
     format!("{date} {what} [{}]", d.cause_tag)
 }

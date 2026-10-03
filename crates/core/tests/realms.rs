@@ -574,7 +574,11 @@ fn a_kingdom_without_land_is_no_more_and_its_land_goes_by_rule() {
             .map(|(id, _, f)| (id.0.as_str(), f))
             .collect();
         assert_eq!(falls, [("purpur", &FallReason::Conquered)]);
-        assert_eq!(news(&g, |n| &n.fallen).len(), 1);
+        let told = news(&g, |n| &n.fallen);
+        assert!(
+            told.len() == 1 && told[0].contains("Пурпуляндия"),
+            "{told:?}"
+        );
         one_map(&g);
         g
     };

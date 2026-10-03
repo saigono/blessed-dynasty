@@ -81,6 +81,10 @@ pub fn start(data: &Data, preset: &Preset, seed: u64, w: &mut World) -> Realms {
         let own = World::from_preset(&kd, &preset.realm(r));
         let mut d = Dynasty::new(kingdom(own, stream(seed, &r.id), &kd));
         d.house = r.house.clone();
+        d.name = w
+            .neighbours
+            .get(&r.id)
+            .map_or(r.id.0.clone(), |n| n.name.clone());
         list.insert(r.id.clone(), d);
     }
     let founding = start.founded.as_ref().map(|f| {
@@ -267,7 +271,7 @@ pub(crate) fn year(g: &mut Game) {
         let w = &d.g.world;
         let vassal = |p: &ProvinceId| matches!(w.provinces[p].holder, Holder::Vassal(_));
         let crown = (owners.iter()).any(|(p, o)| *o == id && !vassal(p));
-        let realm = name(ours, &id);
+        let realm = d.name.clone();
         if crown {
             let (old, house) = rehouse(realms, &owners, &id, data, &rules.usurper);
             ours.unions.remove(&id);
@@ -435,7 +439,7 @@ fn found(
         w.neighbours.insert(from.clone(), stranger(lord, grudge));
     }
     let mut d = Dynasty::new(kingdom(w, rng, &f.data));
-    d.house = name.to_string();
+    (d.house, d.name) = (name.to_string(), name.to_string());
     realms.list.insert(id.clone(), d);
     let ordinal = (ours.neighbours.values().map(|n| n.ordinal + 1).max()).unwrap_or(0);
     // Our own vassal that broke away has his entry already (`Effect::Secede`).
@@ -498,7 +502,7 @@ fn rehouse(
     let f = realms.founding.clone().expect("checked by the caller");
     let houses: BTreeSet<String> = realms.list.values().map(|d| d.house.clone()).collect();
     let mut d = realms.list.remove(id).expect("listed");
-    let (g, old) = (&mut d.g, d.house);
+    let (g, old, called) = (&mut d.g, d.house, d.name);
     let w = &mut g.world;
     let ours = |p: &Province| owners[&p.id] == *id;
     let landed = |v: &crate::state::VassalId| {
@@ -566,7 +570,7 @@ fn rehouse(
     w.recompute_crown_power(d_);
     (g.queue, g.pending_event, g.ended, g.reported) = (Vec::new(), None, None, false);
     let mut d = Dynasty::under(d.c, d.g);
-    d.house = house.clone();
+    (d.house, d.name) = (house.clone(), called);
     realms.list.insert(id.clone(), d);
     (old, house)
 }

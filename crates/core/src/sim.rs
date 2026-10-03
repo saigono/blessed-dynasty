@@ -214,6 +214,7 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
         deserted,
         fall: None,
         house: String::new(),
+        name: String::new(),
     };
     while d.fall.is_none() {
         d.tick();
@@ -256,6 +257,8 @@ pub struct Dynasty {
     pub fall: Option<FallReason>,
     /// The ruling house of a foreign kingdom (`realm.rs`); empty for ours.
     pub house: String,
+    /// The name of a foreign kingdom (`realm.rs`), told when it is no more; empty for ours.
+    pub name: String,
 }
 
 impl Dynasty {
@@ -276,6 +279,7 @@ impl Dynasty {
             deserted: g.world.deserted,
             fall: None,
             house: String::new(),
+            name: String::new(),
             g,
         }
     }

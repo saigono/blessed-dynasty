@@ -94,7 +94,9 @@ impl Preset {
         let mut map = self.map.clone();
         for p in &mut map.provinces {
             p.holder = match &p.holder {
-                h if *h == me => (r.fiefs.get(&p.id)).map_or(Holder::Crown, |v| Holder::Vassal(v.clone())),
+                h if *h == me => {
+                    (r.fiefs.get(&p.id)).map_or(Holder::Crown, |v| Holder::Vassal(v.clone()))
+                }
                 Holder::Foreign(n) => Holder::Foreign(n.clone()),
                 _ => Holder::Foreign(realms.us.clone()),
             };
@@ -162,7 +164,10 @@ impl Preset {
             }
             for (p, v) in &r.fiefs {
                 if !own(p) || !r.vassals.iter().any(|x| x.id == *v) {
-                    return Err(at(format!("fief {}: not its land or no vassal {}", p.0, v.0)));
+                    return Err(at(format!(
+                        "fief {}: not its land or no vassal {}",
+                        p.0, v.0
+                    )));
                 }
             }
         }
@@ -233,6 +238,28 @@ mod tests {
             (r#"Vassal("weir")"#, r#"Vassal("nobody")"#),
             (r#"Foreign("nordmark")"#, r#"Foreign("nobody")"#),
             (r#""legitimacy": 45"#, r#""loyalty": 45"#),
+            // Stage 26: a kingdom's capital and fiefs are its own land, its axes known.
+            (r#"capital: "nordheim""#, r#"capital: "holm""#),
+            (
+                r#"fiefs: {"kirm": "melissin"}"#,
+                r#"fiefs: {"porfir": "nobody"}"#,
+            ),
+            (
+                r#"fiefs: {"kirm": "melissin"}"#,
+                r#"fiefs: {"amaran": "melissin"}"#,
+            ),
+            (
+                r#"fiefs: {"kirm": "melissin"}"#,
+                r#"fiefs: {"skala": "melissin"}"#,
+            ),
+            (
+                r#""army": 70, "legitimacy": 75"#,
+                r#""army": 70, "nothing": 75"#,
+            ),
+            (
+                "\n                id: \"vestrum\",",
+                "\n                id: \"nowhere\",",
+            ),
         ] {
             let (preset, map) = (PRESET.replacen(from, to, 1), MAP.replacen(from, to, 1));
             assert!(preset != PRESET || map != MAP, "{from}");

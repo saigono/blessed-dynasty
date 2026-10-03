@@ -157,6 +157,28 @@ fn trace_links_entries_to_decisions() {
     assert!(out.contains("  без решений основателя\n"), "{out}");
 }
 
+/// Stage 26: `trace --realm` tells a foreign kingdom's own chronicle, hidden from the player:
+/// no decision of ours behind its entries; an unknown kingdom is an error.
+#[test]
+fn trace_tells_a_kingdom_by_its_id() {
+    let args = ["trace", "--seed", "42", "--script", "data/scripts/test.ron"];
+    let ours = stdout(cli(&args));
+    let nordmark = stdout(cli(&[&args[..], &["--realm", "nordmark"]].concat()));
+    assert_ne!(nordmark, ours);
+    assert!(!nordmark.contains("решение #"), "{nordmark}");
+    assert!(nordmark.lines().count() > 3, "{nordmark}");
+    assert!(
+        nordmark.lines().last().unwrap().starts_with("конец "),
+        "{nordmark}"
+    );
+    let bad = Command::new(env!("CARGO_BIN_EXE_cli"))
+        .args([&args[..], &["--realm", "nowhere"]].concat())
+        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("нет королевства nowhere"));
+}
+
 /// Stage 20: `trace` of a scenario of section 6 of docs/design/hidden-state.html, its script
 /// data/scripts/{name}.ron on its seed; the entries of `event`, the first one with the line
 /// under it, and the last line (how the dynasty ended).

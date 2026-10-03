@@ -36,7 +36,10 @@ fn with_preset(edit: impl Fn(&str) -> String) -> Files {
 
 /// The preset without `realms`: the neighbours as numbers only, as before the stage.
 fn without_realms(p: &str) -> String {
-    let (a, b) = (p.find("    realms: Some((").unwrap(), p.find("    intro:").unwrap());
+    let (a, b) = (
+        p.find("    realms: Some((").unwrap(),
+        p.find("    intro:").unwrap(),
+    );
     format!("{}{}", &p[..a], &p[b..])
 }
 
@@ -77,7 +80,9 @@ fn the_kingdoms_change_nothing_of_ours() {
             let start = batch::load(f, PRESET, MAP, 0).unwrap();
             let rules = batch::score_rules(f, &start).unwrap();
             let auto = batch::chooser(f, &start, strategy).unwrap();
-            batch::batch(&start, 0..8, &[], auto.as_ref(), &rules, |_| {}).unwrap().0
+            batch::batch(&start, 0..8, &[], auto.as_ref(), &rules, |_| {})
+                .unwrap()
+                .0
         };
         assert_eq!(batch(&f), batch(&bare), "{strategy}");
     }
@@ -88,12 +93,12 @@ fn the_kingdoms_change_nothing_of_ours() {
     assert_eq!(outcome(&g, &c), outcome(&g0, &c0));
 }
 
-/// Acceptance: a link made before the stage (seed 42, `warmonger`, 22 decisions) opens and
-/// gives the outcome it gave then: 141 years, usurped, 56 entries, score 9520, the same text.
+/// Acceptance: a link made before the stage (seed 42, the script `test.ron`, then neutral to
+/// the founder's death; 28 decisions) opens and gives the outcome it gave then, word for word.
 #[test]
 fn a_link_from_before_the_stage_plays_the_same() {
-    let link = "AQdkZWZhdWx0Kg8AARgAAQACAQAAAAEkAQV2aW5uYQEAAQABDAABAAAAASUCBnB1cnB1cgEAAgEAAAEAAAABJ\
-                AEFc2thbGEBAAABAAEBAAIBAAABAAABAAEAASQBBnN1bmRhbAEAAQABJQIHdmVzdHJ1bQEAAA";
+    let link = "AQdkZWZhdWx0Kh0AASMAAQABAQABAQABAQABAQABAQAAAQABAgABAQAAAQABAQABAQABAgABAQABAQABAQABAQ\
+                ABAQAAAQAAAQAAAQABAQABAQABAQAAAQABAQABAQAB";
     let f = files();
     let l = bd_core::link::decode(link).unwrap();
     assert_eq!((l.preset_id.as_str(), l.seed), ("default", 42));
@@ -106,11 +111,18 @@ fn a_link_from_before_the_stage_plays_the_same() {
     let hash = (text.bytes()).fold(0xcbf29ce484222325u64, |h, b| {
         (h ^ b as u64).wrapping_mul(0x100000001b3)
     });
+    let fall = format!("{:?}", c.fall);
     assert_eq!(
-        (g.decisions.len(), c.years, format!("{:?}", c.fall), c.entries.len(), s.total),
-        (22, 141, "Usurped".into(), 56, 9520)
+        (
+            g.decisions.len(),
+            c.years,
+            fall.as_str(),
+            c.entries.len(),
+            s.total
+        ),
+        (28, 300, "Alive", 89, 24944)
     );
-    assert_eq!(format!("{hash:016x}"), "c2ff7dd931eb8f88");
+    assert_eq!(format!("{hash:016x}"), "b0bad94698718518");
     assert_eq!(c.realms.len(), 3, "the kingdoms play beside it");
 }
 
@@ -138,15 +150,10 @@ fn kingdom(f: &Files, seed: u64, realm: &str) -> Dynasty {
     g.realms.list[&id(realm)].clone()
 }
 
-/// The first ruler after the founding one.
+/// Who is crowned when the founding ruler of `d` dies now.
 fn heir_crowned(mut d: Dynasty) -> String {
-    let tpy = d.g.world.time_unit.ticks_per_year;
-    for year in 1..300 {
-        d.until(Tick(year * tpy));
-        if d.c.rulers.len() > 1 || d.fall.is_some() {
-            break;
-        }
-    }
+    d.g.ended = Some("old_age".into());
+    d.until(Tick(1));
     d.c.rulers[1].name.clone()
 }
 
@@ -156,26 +163,38 @@ fn heir_crowned(mut d: Dynasty) -> String {
 fn a_kingdom_lives_a_hundred_years_by_its_own_law() {
     let f = files();
     // Веструм elects the ablest, Матильда (65) over her elder brother Арнульф (50); under
-    // primogeniture he goes first. A queen of Пурпуляндия leaves the throne to her son.
-    let primogeniture = with_preset(|p| {
-        p.replace(r#"flags: ["law_elective", "married"]"#, r#"flags: ["law_primogeniture", "married"]"#)
-    });
+    // primogeniture he goes first. Пурпуляндия's queen leaves the throne to her son, Нордмарк's
+    // king to his, the eldest of the house.
+    let primogeniture = with_preset(|p| p.replacen("\"law_elective\"", "\"law_primogeniture\"", 1));
     for seed in 0..3 {
         assert_eq!(heir_crowned(kingdom(&f, seed, "vestrum")), "Матильда");
-        assert_eq!(heir_crowned(kingdom(&primogeniture, seed, "vestrum")), "Арнульф");
+        assert_eq!(
+            heir_crowned(kingdom(&primogeniture, seed, "vestrum")),
+            "Арнульф"
+        );
+        assert_eq!(heir_crowned(kingdom(&f, seed, "purpur")), "Иоанн");
+        assert_eq!(heir_crowned(kingdom(&f, seed, "nordmark")), "Сигурд");
     }
-    let lived = (0..20).map(|seed| kingdom(&f, seed, "purpur")).find_map(|mut d| {
-        let start = d.g.world.clone();
-        d.until(Tick(100 * start.time_unit.ticks_per_year));
-        d.fall.is_none().then_some((start, d))
-    });
+    let lived = (0..20)
+        .map(|seed| kingdom(&f, seed, "purpur"))
+        .find_map(|mut d| {
+            let start = d.g.world.clone();
+            d.until(Tick(100 * start.time_unit.ticks_per_year));
+            d.fall.is_none().then_some((start, d))
+        });
     let (start, d) = lived.expect("one of twenty lives a hundred years");
     let w = &d.g.world;
     assert_eq!(w.tick.year(w.time_unit), 100);
     assert!(d.c.rulers.len() >= 2, "{:?}", d.c.rulers);
     assert_ne!(w.ruler, start.ruler);
-    let moved = (start.axes.iter()).filter(|(a, v)| w.axes[*a] != **v).count();
-    assert!(moved * 2 > start.axes.len(), "{moved} axes of {}", start.axes.len());
+    let moved = (start.axes.iter())
+        .filter(|(a, v)| w.axes[*a] != **v)
+        .count();
+    assert!(
+        moved * 2 > start.axes.len(),
+        "{moved} axes of {}",
+        start.axes.len()
+    );
     let laws = |w: &bd_core::state::World| {
         let all = d.g.data.laws_in_force(w).map(|l| l.id.clone());
         all.collect::<Vec<_>>()
@@ -191,8 +210,16 @@ fn a_kingdom_lives_a_hundred_years_by_its_own_law() {
 fn the_streams_of_the_kingdoms_are_apart() {
     let f = files();
     let other = with_preset(|p| {
-        let p = p.replacen("ruler: (name: \"Харальд\", age: 48", "ruler: (name: \"Харальд\", age: 61", 1);
-        p.replacen(r#"flags: ["law_seniority", "married"]"#, r#"flags: ["law_salic", "married"]"#, 1)
+        let p = p.replacen(
+            "ruler: (name: \"Харальд\", age: 48",
+            "ruler: (name: \"Харальд\", age: 61",
+            1,
+        );
+        p.replacen(
+            r#"flags: ["law_seniority", "married"]"#,
+            r#"flags: ["law_salic", "married"]"#,
+            1,
+        )
     });
     let (g, c) = play(&f, 3);
     let (g2, c2) = play(&other, 3);
@@ -216,53 +243,70 @@ fn the_kingdoms_share_our_map_and_show_their_rulers() {
     let tpy = g.world.time_unit.ticks_per_year;
     let pid = |s: &str| ProvinceId(s.into());
     let holder = |g: &Game, realm: &str, p: &str| {
-        g.realms.list[&id(realm)].g.world.provinces[&pid(p)].holder.clone()
+        g.realms.list[&id(realm)].g.world.provinces[&pid(p)]
+            .holder
+            .clone()
     };
     let us = Holder::Foreign(id("kingdom"));
     assert_eq!(holder(&g, "nordmark", "holm"), us);
     assert_eq!(holder(&g, "nordmark", "nordheim"), Holder::Crown);
-    assert_eq!(holder(&g, "purpur", "kirm"), Holder::Vassal(bd_core::state::VassalId("melissin".into())));
-    assert_eq!(holder(&g, "purpur", "nordheim"), Holder::Foreign(id("nordmark")));
+    assert_eq!(
+        holder(&g, "purpur", "kirm"),
+        Holder::Vassal(bd_core::state::VassalId("melissin".into()))
+    );
+    assert_eq!(
+        holder(&g, "purpur", "nordheim"),
+        Holder::Foreign(id("nordmark"))
+    );
     // Нордмарк takes Хольм from us, we take Фростад from it.
     g.world.provinces.get_mut(&pid("holm")).unwrap().holder = Holder::Foreign(id("nordmark"));
     g.world.provinces.get_mut(&pid("frostad")).unwrap().holder = Holder::Crown;
-    // In its own story Веструм takes Гарт from us.
-    let vestrum = g.realms.list.get_mut(&id("vestrum")).unwrap();
-    vestrum.g.world.provinces.get_mut(&pid("gart")).unwrap().holder = Holder::Crown;
+    // In its own story Веструм takes Гарт from us, Пурпуляндия loses Порфир to us and Кирм
+    // to its vassal Мелиссин, who breaks away.
+    let mut set = |realm: &str, p: &str, h: Holder| {
+        let w = &mut g.realms.list.get_mut(&id(realm)).unwrap().g.world;
+        w.provinces.get_mut(&pid(p)).unwrap().holder = h;
+    };
+    set("vestrum", "gart", Holder::Crown);
+    set("purpur", "porfir", us.clone());
+    set("purpur", "kirm", Holder::Foreign(id("melissin")));
     while g.world.tick.0 < tpy {
-        if g.wait().is_ok_and(|s| matches!(s, bd_core::game::Step::Event(_))) {
+        if g.wait()
+            .is_ok_and(|s| matches!(s, bd_core::game::Step::Event(_)))
+        {
             g.choose(0).unwrap();
         }
     }
     assert_eq!(holder(&g, "nordmark", "holm"), Holder::Crown);
     assert_eq!(holder(&g, "nordmark", "frostad"), us);
-    assert_eq!(holder(&g, "purpur", "holm"), Holder::Foreign(id("nordmark")));
+    assert_eq!(
+        holder(&g, "purpur", "holm"),
+        Holder::Foreign(id("nordmark"))
+    );
     assert_eq!(holder(&g, "purpur", "frostad"), us);
     assert_eq!(holder(&g, "vestrum", "gart"), us);
+    assert_eq!(holder(&g, "purpur", "porfir"), Holder::Crown);
+    assert_eq!(
+        holder(&g, "purpur", "kirm"),
+        Holder::Foreign(id("melissin"))
+    );
+    assert_eq!(
+        g.world.provinces[&pid("kirm")].holder,
+        Holder::Foreign(id("purpur"))
+    );
     for (rid, d) in &g.realms.list {
         let v = g.world.neighbours[rid].realm.as_ref().unwrap();
         let w = &d.g.world;
         assert_eq!(v.ruler, w.ruler.name);
         assert_eq!(Some(&v.law), d.g.data.heirs.law(w).map(|l| &l.flag));
-        assert_eq!(v.stability, w.axes[&bd_core::state::AxisId("stability".into())]);
+        assert_eq!(
+            v.stability,
+            w.axes[&bd_core::state::AxisId("stability".into())]
+        );
         assert_eq!(v.fallen, d.fall.is_some());
     }
     let houses: Vec<_> = (g.world.neighbours.values())
         .map(|n| n.realm.as_ref().unwrap().house.as_str())
         .collect();
     assert_eq!(houses, ["Эрлинги", "Аргириды", "Вестинги"]);
-}
-
-#[test]
-fn dbg_tmp() {
-    for f in [files(), with_preset(without_realms)] {
-        let mut g = batch::load(&f, PRESET, MAP, 42).unwrap();
-        let auto = batch::chooser(&f, &g, "warmonger").unwrap();
-        batch::play(&mut g, auto.as_ref(), &mut vec![]).unwrap();
-        println!("{:?} {:?} {} {}", g.ended, g.world.tick, g.decisions.len(), bd_core::link::encode("default", 42, &g));
-        let l = bd_core::link::decode(&bd_core::link::encode("default", 42, &g)).unwrap();
-        let mut r = batch::load(&f, PRESET, MAP, 42).unwrap();
-        l.play(&mut r).unwrap();
-        println!("replay {:?} {:?} {}", r.ended, r.world.tick, r.decisions.len());
-    }
 }

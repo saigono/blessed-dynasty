@@ -288,7 +288,7 @@
             ),
             (
                 text: "Отдать порубежье пограничным баронам",
-                effects: [Axis("loyalty_nobles", 5), Axis("army", -5), Axis("bureaucracy", -2)],
+                effects: [Axis("loyalty_nobles", 5), Axis("bureaucracy", -3)],
                 cause_tag: "border_barons",
                 hint: "Барон на рубеже воюет за себя, а не за корону.",
                 told: "На рубеже прошли {prev_event} и {then_event}, и {ruler} {ruler:отдал|отдала} его оборону пограничным баронам.",

@@ -152,7 +152,7 @@ fn golden_seed_42_script_a() {
     // is that of stage 27, only the texts differ.
     assert_eq!(
         (c.years, &c.fall, c.entries.len()),
-        (172, &FallReason::Conquered, 67)
+        (172, &FallReason::Conquered, 66)
     );
     let hint = |h: &'static str| Some(h);
     assert_eq!(
@@ -245,7 +245,7 @@ fn golden_seed_42_script_a_with_a_testament() {
     // Stage 26c on top of 27 (the compound events): alive at the horizon.
     assert_eq!(
         (c.years, &c.fall, c.entries.len()),
-        (300, &FallReason::Alive, 108)
+        (300, &FallReason::Alive, 93)
     );
     assert_eq!(
         texts(&c)[0],
@@ -284,6 +284,14 @@ fn dynasties(n: u64) {
             c.rulers.len() >= 2 || c.fall == FallReason::NoHeir,
             "seed {seed}"
         );
+        // Stage 26c: a link of a life or a join of two entries never puts a second colon in
+        // a sentence.
+        let lives = c.rulers.iter().map(|r| r.biography.as_str());
+        for text in lives.chain(c.entries.iter().map(|e| e.text.as_str())) {
+            for s in text.split(". ") {
+                assert!(s.matches(':').count() <= 1, "seed {seed}: {s}");
+            }
+        }
     }
 }
 
@@ -1691,6 +1699,18 @@ fn linked_events_are_fused_into_one_entry() {
     assert!(same(&text, &f.same_year), "{text}");
     let (_, text) = fuse(&a, &b(4)).unwrap();
     assert!(same(&text, &f.next_year), "{text}");
+    // A second part with its own colon never takes a join with another, a pair's either
+    // (stage 26c).
+    let riot = sim::Told {
+        text: "Толпа пошла на дворец: горели факелы.",
+        ..told("cap_riot", None, 3)
+    };
+    assert!(pair.unwrap().joins.iter().all(|j| j.contains(": {b}")));
+    for salt in 0..40 {
+        let fire = told("cap_fire", None, 3);
+        let (_, text) = sim::fuse(&data, &g.world, &fire, &riot, salt, 1).unwrap();
+        assert_eq!(text.matches(':').count(), 1, "{text}");
+    }
     // A first part with its own «а» never takes a join with another (stage 26c).
     let a2 = sim::Told {
         text: "Разбойники грабили обозы, а стража спала.",
@@ -1700,6 +1720,16 @@ fn linked_events_are_fused_into_one_entry() {
     for salt in 0..40 {
         let (_, text) = sim::fuse(&data, &g.world, &a2, &b(4), salt, 1).unwrap();
         assert_eq!(text.matches(", а ").count(), 1, "{text}");
+    }
+    // A second part opening a clause of its own never follows «как» (stage 26c).
+    let a3 = sim::Told {
+        text: "После того как стража ушла, разбойники грабили обозы.",
+        ..told("prov_brigands", Some(&berg), 4)
+    };
+    assert!(f.next_year.iter().any(|j| j.ends_with("как {b}.")));
+    for salt in 0..40 {
+        let (_, text) = sim::fuse(&data, &g.world, &a, &a3, salt, 1).unwrap();
+        assert!(!text.contains(" как, "), "{text}");
     }
     // Two years apart, another target, an omen: apart.
     assert_eq!(fuse(&a, &b(5)), None);

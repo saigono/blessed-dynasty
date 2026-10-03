@@ -615,15 +615,30 @@ pub fn fuse(
         None if years == 0 => &f.same_year,
         None => &f.next_year,
     };
-    // «…, а …, а …» reads as a stammer: a first part with its own «а» takes another join.
-    let stammer = |j: &&String| a.text.contains(", а ") && j.starts_with("{a}, а ");
-    let fit: Vec<String> = joins.iter().filter(|j| !stammer(j)).cloned().collect();
-    let joins = if fit.is_empty() { joins } else { &fit };
-    let join = Some(text::pick(joins, salt, n)).filter(|j| !j.is_empty())?;
     // Both without their full stops: the join ends the sentence.
     let bare = |s: &'_ str| s.trim_end().trim_end_matches('.').to_string();
     let second = lower(d, w, &bare(b.text));
-    let text = put(join, "{b}", &second, &d.sim.texts.clauses).replace("{a}", &bare(a.text));
+    let first = bare(a.text);
+    let told = |j: &str| put(j, "{b}", &second, &d.sim.texts.clauses).replace("{a}", &first);
+    // «…, а …, а …», two colons in a sentence or «как, после того как» read as a stammer:
+    // another join instead.
+    let stammer = |j: &str| a.text.contains(", а ") && j.starts_with("{a}, а ");
+    let colons = |t: &str| t.split(". ").any(|s| s.matches(':').count() > 1);
+    let fits = |j: &&String| !stammer(j) && !colons(&told(j)) && !told(j).contains(" как, ");
+    // A pair none of whose joins fits takes a plain one of its years.
+    let plain = if years == 0 {
+        &f.same_year
+    } else {
+        &f.next_year
+    };
+    let fit: Vec<String> = joins.iter().filter(fits).cloned().collect();
+    let fit = match fit.is_empty() {
+        true => plain.iter().filter(fits).cloned().collect(),
+        false => fit,
+    };
+    let joins = if fit.is_empty() { joins } else { &fit };
+    let join = Some(text::pick(joins, salt, n)).filter(|j| !j.is_empty())?;
+    let text = told(join);
     Some((pair.map_or(String::new(), |p| p.title.clone()), text))
 }
 
@@ -753,16 +768,24 @@ fn reign_deeds<'a>(c: &Chronicle, from: usize, g: &'a Game, salt: u64) -> Vec<St
                 Some(_) => some(&life.later),
             };
             let phrases = phrases.unwrap_or(&life.deed);
-            let mut phrase = text::pick(phrases, salt, LIFE + i as u64);
-            // Never the same link twice in a row: the next one of its list instead.
-            if phrase == said {
-                let k = phrases.iter().position(|p| p == phrase).unwrap_or(0);
-                phrase = &phrases[(k + 1) % phrases.len()];
-            }
+            let phrase = text::pick(phrases, salt, LIFE + i as u64);
+            // Never the same link twice in a row, nor a colon before a deed with its own: the
+            // next one of its list that fits instead.
+            let k = phrases.iter().position(|p| p == phrase).unwrap_or(0);
+            let fits = |p: &&str| *p != said && colons(p, "{deed}", deed);
+            let phrase = (0..phrases.len())
+                .map(|j| phrases[(k + j) % phrases.len()].as_str())
+                .find(fits)
+                .unwrap_or(phrase);
             said = phrase;
             put(phrase, "{deed}", deed, &d.sim.texts.clauses).replace("{year}", &year)
         })
         .collect()
+}
+
+/// Whether `phrase` takes `part` at `key` without two colons in one sentence.
+fn colons(phrase: &str, key: &str, part: &str) -> bool {
+    !(part.contains(':') && phrase.contains(&format!(": {key}")))
 }
 
 /// `phrase` with `part` at `key`, a comma before it when it opens a clause of its own

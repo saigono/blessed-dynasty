@@ -305,7 +305,8 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
                     if faithful {
                         keep(&mut g, &mut reign);
                         let n = TESTAMENT + c.entries.len() as u64;
-                        past += &format!(" {}", testament::faithful_text(&g.data, &g.world, salt, n));
+                        past +=
+                            &format!(" {}", testament::faithful_text(&g.data, &g.world, salt, n));
                     }
                     if let Some((causes, chain)) = told {
                         let e = entry(&g, (v.title, past), v.importance, causes);
@@ -360,7 +361,11 @@ const EPILOGUE: u64 = 1 << 48;
 /// A decision true to the testament: `testament.faithful` shifts times its strength.
 fn keep(g: &mut Game, reign: &mut Reign) {
     let k = testament::strength(&g.data, &g.world);
-    let shifts = g.data.testament.as_ref().map_or(&[][..], |r| &r.faithful.axes);
+    let shifts = g
+        .data
+        .testament
+        .as_ref()
+        .map_or(&[][..], |r| &r.faithful.axes);
     for (a, v) in shifts {
         add_axis(&mut g.world, &g.data, a, *v * k);
     }
@@ -631,7 +636,8 @@ fn crown(g: &mut Game, c: &mut Chronicle, salt: u64) -> Option<Reign> {
     // The heir of a will goes first, as one designated, for this coronation only.
     let sealed = g.world.testament.as_mut().and_then(|t| t.heir.take());
     let w = &g.world;
-    let home = |id: &u32| (w.heir_index(*id)).is_some_and(|i| w.heirs[i].status == HeirStatus::Home);
+    let home =
+        |id: &u32| (w.heir_index(*id)).is_some_and(|i| w.heirs[i].status == HeirStatus::Home);
     let sealed = sealed.filter(home);
     if sealed.is_some() {
         g.world.designated = sealed;

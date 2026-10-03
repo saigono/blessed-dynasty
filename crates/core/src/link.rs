@@ -170,7 +170,9 @@ pub fn replay(g: &mut Game, decisions: &[Decision], end: Tick) -> Result<(), Str
                 .start_action(action_id, target.clone())
                 .map_err(|e| format!("{e:?}")),
             DecisionKind::Abdicate => g.abdicate().map_err(|e| format!("{e:?}")),
-            DecisionKind::Testament(t) => (g.write_testament(t.clone())).map_err(|e| format!("{e:?}")),
+            DecisionKind::Testament(t) => {
+                (g.write_testament(t.clone())).map_err(|e| format!("{e:?}"))
+            }
             DecisionKind::EventChoice {
                 event_id,
                 choice_idx,
@@ -378,12 +380,21 @@ mod tests {
         let nb = g.world.neighbours.keys().next().cloned().unwrap();
         let land = g.world.capital.province.clone();
         let wills = [
-            (Some("treasury"), Some(Order::KeepLaw("law_charters".into())), heir),
+            (
+                Some("treasury"),
+                Some(Order::KeepLaw("law_charters".into())),
+                heir,
+            ),
             (None, Some(Order::Peace(nb)), None),
             (Some("land"), Some(Order::KeepProvince(land)), None),
         ];
         for (precept, order, heir) in wills {
-            let t = Testament { precept: precept.map(String::from), order, heir, ..Default::default() };
+            let t = Testament {
+                precept: precept.map(String::from),
+                order,
+                heir,
+                ..Default::default()
+            };
             g.write_testament(t).unwrap();
             if let Step::Event(_) = g.wait().unwrap() {
                 g.choose(0).unwrap();

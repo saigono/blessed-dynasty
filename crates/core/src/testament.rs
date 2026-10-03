@@ -98,7 +98,9 @@ pub fn cost(d: &Data, w: &World) -> Vec<(AxisId, Fx)> {
         return vec![];
     }
     let years = Fx::from_int(years as i64);
-    (r.per_year.iter()).map(|(a, k)| (a.clone(), *k * years)).collect()
+    (r.per_year.iter())
+        .map(|(a, k)| (a.clone(), *k * years))
+        .collect()
 }
 
 /// The founder's legend from the world at his death (`testament.legend`): `base`, the axes,
@@ -109,7 +111,11 @@ pub fn legend(d: &Data, w: &World) -> Fx {
         return Fx(0);
     };
     let deeds = crate::sim::founder_deeds(w);
-    let count = |tags: &[String]| tags.iter().map(|t| deeds.get(t).copied().unwrap_or(0)).sum::<u32>();
+    let count = |tags: &[String]| {
+        tags.iter()
+            .map(|t| deeds.get(t).copied().unwrap_or(0))
+            .sum::<u32>()
+    };
     let years = (w.tick.0 - w.ruler.reign_start.0) / w.time_unit.ticks_per_year;
     let sum = (l.axes.iter()).fold(l.base, |s, (a, k)| s + w.axes[a] * *k);
     let sum = (l.deeds.iter()).fold(sum, |s, (tags, k)| {
@@ -128,7 +134,9 @@ pub fn parts(d: &Data, w: &World) -> Option<(Fx, Fx, Fx)> {
     let years = (w.tick.0.saturating_sub(since.0)) / w.time_unit.ticks_per_year;
     let decay = curve(&r.decay, Fx::from_int(years as i64));
     let traits = (r.zeal.traits.iter()).filter(|(k, _)| w.ruler.traits.contains(*k));
-    let zeal = traits.fold(curve(&r.zeal.curve, w.axes[&r.zeal.axis]), |s, (_, v)| s + *v);
+    let zeal = traits.fold(curve(&r.zeal.curve, w.axes[&r.zeal.axis]), |s, (_, v)| {
+        s + *v
+    });
     Some((t.legend, decay, zeal.max(Fx(0))))
 }
 
@@ -154,7 +162,11 @@ pub fn weights(d: &Data, w: &World, k: Fx) -> BTreeMap<String, Fx> {
         };
         (key.to_string(), r.order(o).weight)
     });
-    for (key, v) in precept.into_iter().flat_map(|p| p.weights.clone()).chain(order) {
+    for (key, v) in precept
+        .into_iter()
+        .flat_map(|p| p.weights.clone())
+        .chain(order)
+    {
         let e = out.entry(key).or_insert(Fx(0));
         *e = *e + v * k;
     }
@@ -203,7 +215,11 @@ pub fn faithful_action(g: &Game, a: &Action, base: &AutoChooser) -> bool {
         return false;
     };
     let (w, d) = (&g.world, &g.data);
-    let treasury = base.weights.get(&d.economy.treasury.0).copied().unwrap_or_default();
+    let treasury = base
+        .weights
+        .get(&d.economy.treasury.0)
+        .copied()
+        .unwrap_or_default();
     let worth = base.worth(&a.on_complete, w, d, None) - treasury * d.auto_cost(a);
     own(d, w).worth(&a.on_complete, w, d, None) >= r.faithful.margin && worth <= Fx(0)
 }
@@ -262,12 +278,16 @@ pub fn fill(d: &Data, w: &World, s: &str) -> String {
     ];
     match &t.order {
         Some(Order::KeepLaw(l)) => named.push(("law", d.law(l).map_or(l, |l| &l.name), None)),
-        Some(Order::KeepProvince(p)) => {
-            named.extend(w.provinces.get(p).map(|p| ("province", p.name.as_str(), None)))
-        }
-        Some(Order::Peace(n)) => {
-            named.extend(w.neighbours.get(n).map(|n| ("neighbour", n.name.as_str(), None)))
-        }
+        Some(Order::KeepProvince(p)) => named.extend(
+            w.provinces
+                .get(p)
+                .map(|p| ("province", p.name.as_str(), None)),
+        ),
+        Some(Order::Peace(n)) => named.extend(
+            w.neighbours
+                .get(n)
+                .map(|n| ("neighbour", n.name.as_str(), None)),
+        ),
         None => {}
     }
     text::fill(s, &d.names, &named)

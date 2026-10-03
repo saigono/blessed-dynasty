@@ -28,7 +28,8 @@ fn content() -> Data {
         data.add_events(&read(&format!("events/{f}.ron"))).unwrap();
     }
     for f in ["sim", "testament"] {
-        data.add_sim_events(&read(&format!("events/sim/{f}.ron"))).unwrap();
+        data.add_sim_events(&read(&format!("events/sim/{f}.ron")))
+            .unwrap();
     }
     data.add_actions(&read("actions.ron")).unwrap();
     data.add_names(&read("names.ron")).unwrap();
@@ -100,8 +101,17 @@ fn a_precept_shifts_the_automaton() {
     let k = testament::strength(&data, &w);
     assert!(k > Fx(0));
     for key in ["treasury", "war"] {
-        let p = data.testament.as_ref().unwrap().precept("treasury").unwrap();
-        assert_eq!(mindful.weights[key], base.weights[key] + p.weights[key] * k, "{key}");
+        let p = data
+            .testament
+            .as_ref()
+            .unwrap()
+            .precept("treasury")
+            .unwrap();
+        assert_eq!(
+            mindful.weights[key],
+            base.weights[key] + p.weights[key] * k,
+            "{key}"
+        );
     }
     // Gold over glory: the base takes prestige, the mindful the treasury.
     let mut g = game(&data, 1);
@@ -122,14 +132,16 @@ fn a_precept_shifts_the_automaton() {
 #[test]
 fn the_strength_fades_and_grows_with_the_legend() {
     let data = content();
-    let s = |legend, years| testament::strength(&data, &after(&data, precept("law"), legend, years));
+    let s =
+        |legend, years| testament::strength(&data, &after(&data, precept("law"), legend, years));
     assert!(s(1, 0) > s(1, 35) && s(1, 35) > s(1, 70) && s(1, 70) > s(1, 140));
     assert_eq!(s(1, 70) * Fx::from_int(2), s(1, 0));
     assert_eq!(s(2, 70), s(1, 0));
     let mut w = game(&data, 1).world;
     let legend = |w: &World| testament::legend(&data, w);
     let l0 = legend(&w);
-    w.axes.insert(ax("prestige"), w.axes[&ax("prestige")] + Fx::from_int(40));
+    w.axes
+        .insert(ax("prestige"), w.axes[&ax("prestige")] + Fx::from_int(40));
     let l1 = legend(&w);
     w.tick = Tick(30);
     let l2 = legend(&w);
@@ -181,7 +193,10 @@ fn an_early_testament_costs_and_a_late_one_does_not() {
     assert!(l1 < l0 && l2 < l1, "{l0:?} {l1:?} {l2:?}");
     let wills = (g.decisions.iter()).filter(|d| matches!(d.kind, DecisionKind::Testament(_)));
     assert_eq!(wills.count(), 2);
-    assert_eq!(g.world.testament.as_ref().unwrap().precept.as_deref(), Some("sword"));
+    assert_eq!(
+        g.world.testament.as_ref().unwrap().precept.as_deref(),
+        Some("sword")
+    );
     // Old: free.
     g.world.ruler.age = 60;
     let l3 = loyalty(&g);
@@ -218,8 +233,13 @@ fn a_law_repealed_breaks_the_order_once() {
 }
 
 /// The first entry where two chronicles part, with both.
-fn parting<'a>(a: &'a Chronicle, b: &'a Chronicle) -> (&'a sim::ChronicleEntry, &'a sim::ChronicleEntry) {
-    let i = (a.entries.iter().zip(&b.entries)).position(|(x, y)| x != y).unwrap();
+fn parting<'a>(
+    a: &'a Chronicle,
+    b: &'a Chronicle,
+) -> (&'a sim::ChronicleEntry, &'a sim::ChronicleEntry) {
+    let i = (a.entries.iter().zip(&b.entries))
+        .position(|(x, y)| x != y)
+        .unwrap();
     (&a.entries[i], &b.entries[i])
 }
 
@@ -228,7 +248,13 @@ fn parting<'a>(a: &'a Chronicle, b: &'a Chronicle) -> (&'a sim::ChronicleEntry, 
 #[test]
 fn a_broken_order_costs_and_is_told() {
     let data = content();
-    let nb = game(&data, 1).world.neighbours.keys().next().cloned().unwrap();
+    let nb = game(&data, 1)
+        .world
+        .neighbours
+        .keys()
+        .next()
+        .cloned()
+        .unwrap();
     let t = Testament {
         precept: Some("treasury".into()),
         order: Some(Order::Peace(nb)),
@@ -236,22 +262,38 @@ fn a_broken_order_costs_and_is_told() {
     };
     let title = &data.testament.as_ref().unwrap().texts.breach;
     let seed = (0..40)
-        .find(|s| dynasty(&data, *s, Some(t.clone())).entries.iter().any(|e| &e.title == title))
+        .find(|s| {
+            dynasty(&data, *s, Some(t.clone()))
+                .entries
+                .iter()
+                .any(|e| &e.title == title)
+        })
         .expect("a war with the neighbour within 40 dynasties");
     let mut free = data.clone();
     free.testament.as_mut().unwrap().breach = vec![];
-    let (a, b) = (dynasty(&data, seed, Some(t.clone())), dynasty(&free, seed, Some(t)));
+    let (a, b) = (
+        dynasty(&data, seed, Some(t.clone())),
+        dynasty(&free, seed, Some(t)),
+    );
     let (x, y) = parting(&a, &b);
     assert_eq!((&x.title, &y.title), (title, title));
     for axis in ["legitimacy", "loyalty_nobles", "loyalty_church"] {
-        assert!(x.snapshot.axes[&ax(axis)] < y.snapshot.axes[&ax(axis)], "{axis}");
+        assert!(
+            x.snapshot.axes[&ax(axis)] < y.snapshot.axes[&ax(axis)],
+            "{axis}"
+        );
     }
     assert!(x.snapshot.testament.as_ref().unwrap().broken.is_some());
-    let broke = &a.rulers.iter().find(|r| r.start <= x.tick && x.tick <= r.end).unwrap();
+    let broke = &a
+        .rulers
+        .iter()
+        .find(|r| r.start <= x.tick && x.tick <= r.end)
+        .unwrap();
     let life = &data.testament.as_ref().unwrap().texts.life_broken;
     assert!(
-        life.iter().any(|l| broke.biography.contains(l.split('{').next().unwrap())
-            || broke.biography.contains("нарушен")),
+        life.iter()
+            .any(|l| broke.biography.contains(l.split('{').next().unwrap())
+                || broke.biography.contains("нарушен")),
         "{}",
         broke.biography
     );
@@ -265,16 +307,32 @@ fn faith_to_the_testament_raises_legitimacy_and_is_told() {
     let t = precept("treasury");
     let mut cold = data.clone();
     cold.testament.as_mut().unwrap().faithful.axes = vec![];
-    let (a, b) = (dynasty(&data, 3, Some(t.clone())), dynasty(&cold, 3, Some(t)));
+    let (a, b) = (
+        dynasty(&data, 3, Some(t.clone())),
+        dynasty(&cold, 3, Some(t)),
+    );
     let (x, y) = parting(&a, &b);
     assert!(x.snapshot.axes[&ax("legitimacy")] > y.snapshot.axes[&ax("legitimacy")]);
     let tx = &data.testament.as_ref().unwrap().texts;
     // The testament read at the founder's death, first.
     assert_eq!(a.entries[0].title, tx.read.0);
-    assert!(a.entries[0].text.contains("«Полная казна — крепость державы»"), "{}", a.entries[0].text);
-    let faithful = a.entries.iter().filter(|e| e.text.contains("завет") || e.text.contains("наказ"));
+    assert!(
+        a.entries[0]
+            .text
+            .contains("«Полная казна — крепость державы»"),
+        "{}",
+        a.entries[0].text
+    );
+    let faithful = a
+        .entries
+        .iter()
+        .filter(|e| e.text.contains("завет") || e.text.contains("наказ"));
     assert!(faithful.count() > 0);
-    assert!(a.rulers[0].biography.contains("Полная казна"), "{}", a.rulers[0].biography);
+    assert!(
+        a.rulers[0].biography.contains("Полная казна"),
+        "{}",
+        a.rulers[0].biography
+    );
     assert!(a.rulers[1..].iter().any(|r| r.biography.contains("завет")));
 }
 
@@ -282,7 +340,11 @@ fn faith_to_the_testament_raises_legitimacy_and_is_told() {
 #[test]
 fn a_forged_will_needs_low_legitimacy() {
     let data = content();
-    let e = data.sim_events.iter().find(|e| e.id == "forged_will").unwrap();
+    let e = data
+        .sim_events
+        .iter()
+        .find(|e| e.id == "forged_will")
+        .unwrap();
     let mut w = game(&data, 1).world;
     assert!(!w.heirs.is_empty());
     for (legitimacy, fires) in [(90, false), (50, false), (31, false), (29, true), (5, true)] {
@@ -296,13 +358,22 @@ fn a_forged_will_needs_low_legitimacy() {
 #[test]
 fn rulers_of_the_simulation_name_heirs_in_wills() {
     let data = content();
-    let e = data.sim_events.iter().find(|e| e.id == "royal_will").unwrap();
-    assert_eq!(e.choices[0].effects, [Effect::HeirOp(HeirOp::TargetBequeath)]);
+    let e = data
+        .sim_events
+        .iter()
+        .find(|e| e.id == "royal_will")
+        .unwrap();
+    assert_eq!(
+        e.choices[0].effects,
+        [Effect::HeirOp(HeirOp::TargetBequeath)]
+    );
     let mut g = game(&data, 1);
     let mut picks = |traits: &[&str]| {
         g.world.ruler.traits = traits.iter().map(|t| t.to_string()).collect();
         let auto = AutoChooser::for_ruler(&data, &g.world.ruler);
-        (0..50).filter(|_| auto.choose(&mut g, &e.choices) == 0).count()
+        (0..50)
+            .filter(|_| auto.choose(&mut g, &e.choices) == 0)
+            .count()
     };
     assert_eq!(picks(&["defiant"]), 50);
     let some = picks(&[]);

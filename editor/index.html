@@ -1,0 +1,1391 @@
+<title>Редактор Blessed Dynasty</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+SC:wght@600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a scribe's desk. A strip with the realm's actions on top, the data tree as the
+   ledger on the left, the open record (or map, runs, edits) on the right. Heraldic tinctures:
+   azure for the crown and actions, or for edits, gules for errors. */
+:root {
+  --bg: #eceff2;
+  --panel: #fbfcfd;
+  --sunk: #e3e7ec;
+  --ink: #1b222b;
+  --muted: #5b6672;
+  --line: #d2d8df;
+  --accent: #26598c;
+  --accent-ink: #ffffff;
+  --or: #8a6209;
+  --or-soft: #f5ead0;
+  --bad: #b02a22;
+  --bad-soft: #f8e1df;
+  --ok: #2b7547;
+  --ok-soft: #dff0e5;
+  --m-crown: #3a6ea5;
+  --m1: #c08a2c;
+  --m2: #8c5aa8;
+  --m3: #3f8f6e;
+  --m4: #b5523c;
+  --m5: #7a8a3a;
+  --m6: #5d7f96;
+  --font-display: "Cormorant SC", "Palatino Linotype", Georgia, serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --radius: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12161b; --panel: #191e25; --sunk: #222831; --ink: #e2e6eb; --muted: #95a0ac;
+    --line: #2d343d; --accent: #7eaee0; --accent-ink: #0d1520; --or: #e0b44c; --or-soft: #3a3020;
+    --bad: #f07d73; --bad-soft: #3d2222; --ok: #6cc58f; --ok-soft: #1e3427; --m-crown: #5f93cc;
+    --m1: #c9a052; --m2: #a77fc0; --m3: #5fae8c; --m4: #cf7a63; --m5: #9caf5a; --m6: #7ea0b8;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12161b; --panel: #191e25; --sunk: #222831; --ink: #e2e6eb; --muted: #95a0ac;
+  --line: #2d343d; --accent: #7eaee0; --accent-ink: #0d1520; --or: #e0b44c; --or-soft: #3a3020;
+  --bad: #f07d73; --bad-soft: #3d2222; --ok: #6cc58f; --ok-soft: #1e3427; --m-crown: #5f93cc;
+  --m1: #c9a052; --m2: #a77fc0; --m3: #5fae8c; --m4: #cf7a63; --m5: #9caf5a; --m6: #7ea0b8;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.45 var(--font-body); display: flex; flex-direction: column; }
+button, input, select, textarea { font: inherit; color: inherit; }
+.mono, code, pre, .num { font-family: var(--font-mono); font-size: 12.5px; }
+.muted { color: var(--muted); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+.top {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px;
+  padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+}
+.brand { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-right: auto; }
+.brand h1 { margin: 0; font: 700 23px/1.1 var(--font-display); letter-spacing: .02em; }
+.store { display: flex; align-items: center; gap: 8px; font-size: 13px; max-width: 48ch; }
+.store .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+.store[data-state="db"] .dot { background: var(--ok); }
+.store[data-state="memory"] .dot, .store[data-state="readonly"] .dot { background: var(--or); }
+.store[data-state="memory"], .store[data-state="readonly"] { color: var(--or); }
+.actions { display: flex; align-items: center; gap: 8px; }
+button {
+  border: 1px solid var(--line); background: var(--panel); border-radius: var(--radius);
+  padding: 5px 11px; cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button.quiet { border-color: transparent; background: none; color: var(--muted); padding: 3px 6px; }
+button.quiet:hover { color: var(--ink); }
+button:disabled { opacity: .55; cursor: default; }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 99px; font-size: 12px; background: var(--sunk); white-space: nowrap; }
+.chip.bad { background: var(--bad-soft); color: var(--bad); }
+.chip.ok { background: var(--ok-soft); color: var(--ok); }
+.chip.or { background: var(--or-soft); color: var(--or); }
+
+.app { display: grid; grid-template-columns: minmax(250px, 320px) minmax(0, 1fr); flex: 1; min-height: 0; }
+.top { flex: none; }
+.side { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; background: var(--panel); }
+.side .search { padding: 10px 12px 8px; border-bottom: 1px solid var(--line); }
+.side input[type="search"] { width: 100%; box-sizing: border-box; padding: 6px 9px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); }
+.tree, .results { overflow: auto; padding: 6px 4px 24px; flex: 1; min-height: 0; }
+.tree details > :not(summary) { margin-left: 13px; border-left: 1px solid var(--line); padding-left: 3px; }
+.tree summary { list-style: none; display: flex; align-items: center; cursor: pointer; }
+.tree summary::-webkit-details-marker { display: none; }
+.tree summary::before { content: "▸"; width: 13px; flex: none; color: var(--muted); font-size: 11px; text-align: center; }
+.tree details[open] > summary::before { content: "▾"; }
+.tleaf { padding-left: 13px; }
+.tlabel { display: flex; align-items: baseline; gap: 6px; width: 100%; text-align: left; border: 0; background: none; padding: 2px 6px; border-radius: 4px; min-width: 0; }
+.tlabel:hover { background: var(--sunk); }
+.tlabel .tl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; min-width: 0; }
+.tlabel .ts { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 0; min-width: 0; }
+.tlabel.sel { background: var(--accent); color: var(--accent-ink); }
+.tlabel.sel .ts { color: inherit; opacity: .8; }
+.tlabel.edited .tl::after { content: " •"; color: var(--or); font-weight: 700; }
+.tlabel.sel.edited .tl::after { color: inherit; }
+.tlabel.bad .tl { color: var(--bad); }
+.tlabel.sel.bad .tl { color: inherit; }
+.tlabel.lint .tl { text-decoration: underline wavy var(--or); text-underline-offset: 3px; }
+.tgroup { font: 600 11px/1 var(--font-body); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 12px 8px 4px; }
+.results button { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: none; padding: 7px 8px; }
+.results button:hover { background: var(--sunk); }
+.results .snip { display: block; color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.results mark { background: var(--or-soft); color: inherit; }
+
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.tabs { display: flex; gap: 2px; padding: 8px 16px 0; border-bottom: 1px solid var(--line); overflow-x: auto; flex: none; }
+.tabs button { border: 1px solid transparent; border-bottom: 0; border-radius: var(--radius) var(--radius) 0 0; background: none; padding: 7px 14px; color: var(--muted); white-space: nowrap; }
+.tabs button[aria-selected="true"] { background: var(--panel); border-color: var(--line); color: var(--ink); margin-bottom: -1px; font-weight: 500; }
+.tab { overflow: auto; padding: 16px; flex: 1; min-height: 0; }
+.tab h2 { font: 700 21px/1.2 var(--font-display); margin: 0; letter-spacing: .02em; text-wrap: balance; }
+.tab h3 { font: 600 12px/1.2 var(--font-body); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 18px 0 8px; }
+.note { color: var(--muted); max-width: 70ch; margin: 6px 0; }
+.empty { max-width: 56ch; padding: 24px 0; color: var(--muted); }
+
+.rec-head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 16px; margin-bottom: 12px; }
+.rec-head .crumbs { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+.rec-head .tools { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.seg button { border: 0; border-radius: 0; }
+.seg button[aria-pressed="true"] { background: var(--sunk); font-weight: 600; }
+.form { display: grid; gap: 6px; max-width: 980px; }
+.row { display: grid; grid-template-columns: minmax(110px, 180px) minmax(0, 1fr); gap: 4px 12px; align-items: start; }
+.row > label { padding-top: 5px; font-size: 13px; overflow-wrap: anywhere; }
+.row > label .k { display: block; font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+.row.wide { grid-template-columns: minmax(0, 1fr); }
+.row > [size], .row > input[type="checkbox"] { justify-self: start; }
+.row.wide > label { padding-top: 6px; }
+.box { border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; background: var(--panel); display: grid; gap: 6px; min-width: 0; }
+.box.flat { background: none; }
+.bhead { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: start; }
+.inline { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
+.vname { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
+input[type="text"], input:not([type]), textarea, select, input[type="number"] {
+  border: 1px solid var(--line); border-radius: 4px; background: var(--panel); padding: 4px 7px; min-width: 0; max-width: 100%;
+}
+.form input:not([type]):not([size]) { width: 100%; box-sizing: border-box; }
+textarea { width: 100%; box-sizing: border-box; resize: vertical; line-height: 1.5; }
+textarea.ron { font-family: var(--font-mono); font-size: 12.5px; min-height: 360px; white-space: pre; tab-size: 4; }
+.num { text-align: right; }
+.bad-field { border-color: var(--bad) !important; box-shadow: 0 0 0 1px var(--bad); }
+.issue { font-size: 12.5px; color: var(--bad); background: var(--bad-soft); border-radius: 4px; padding: 3px 8px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.issue.lint { color: var(--or); background: var(--or-soft); }
+.cases { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px 8px; min-width: 0; }
+.cases label { display: grid; font-size: 11px; color: var(--muted); }
+.cases input { font-size: 13.5px; color: var(--ink); }
+.panel-cases { margin-top: 14px; max-width: 980px; }
+
+.mapwrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, 240px); gap: 16px; align-items: start; }
+.mapwrap svg { width: 100%; height: auto; background: var(--sunk); border-radius: var(--radius); display: block; }
+.mapwrap polygon { stroke: var(--panel); stroke-width: 1.2; cursor: pointer; fill-opacity: .82; transition: fill-opacity .12s; }
+.mapwrap polygon:hover, .mapwrap polygon:focus-visible { fill-opacity: 1; outline: none; }
+.mapwrap polygon.sel { stroke: var(--ink); stroke-width: 2; }
+.mapwrap text { pointer-events: none; fill: var(--ink); font-family: var(--font-body); }
+.legend { display: grid; gap: 6px; font-size: 13px; }
+.legend label { display: grid; gap: 4px; }
+.legend span.sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 6px; }
+
+.runform { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: end; }
+.runform label { display: grid; gap: 3px; font-size: 12px; color: var(--muted); }
+.runform input[type="number"] { width: 9ch; }
+.runform .check { display: flex; align-items: center; gap: 6px; color: var(--ink); font-size: 13px; }
+.progress { display: flex; align-items: center; gap: 10px; margin: 12px 0; flex-wrap: wrap; }
+.progress .bar { flex: 1 1 200px; max-width: 420px; height: 8px; background: var(--sunk); border-radius: 99px; overflow: hidden; }
+.progress .bar > i { display: block; height: 100%; width: 0; background: var(--accent); }
+.tablewrap { overflow-x: auto; max-width: 100%; }
+table { border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 4px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 12px; }
+td.n { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--font-mono); font-size: 12.5px; white-space: nowrap; }
+td.up { color: var(--ok); } td.down { color: var(--bad); }
+tr.zero td:first-child { color: var(--bad); }
+pre.out { background: var(--sunk); border-radius: var(--radius); padding: 10px 12px; overflow: auto; max-height: 460px; white-space: pre-wrap; }
+details.more > summary { cursor: pointer; color: var(--accent); margin: 10px 0 6px; }
+.issues { display: grid; gap: 4px; max-width: 980px; }
+.issues button { text-align: left; border: 0; border-radius: 4px; background: none; padding: 4px 8px; display: grid; grid-template-columns: minmax(90px, auto) minmax(0, 1fr); gap: 8px; }
+.issues button:hover { background: var(--sunk); }
+.issues .where { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+
+@media (max-width: 760px) {
+  body { display: block; height: auto; }
+  .app { grid-template-columns: minmax(0, 1fr); }
+  .side { border-right: 0; border-bottom: 1px solid var(--line); max-height: 42vh; }
+  .row { grid-template-columns: minmax(0, 1fr); }
+  .row > label { padding-top: 0; }
+  .mapwrap { grid-template-columns: minmax(0, 1fr); }
+  .cases { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tab { overflow: visible; }
+  .issues button { grid-template-columns: minmax(0, 1fr); }
+}
+</style>
+
+<header class="top">
+  <div class="brand">
+    <h1>Редактор Blessed Dynasty</h1>
+    <span id="base" class="muted mono"></span>
+  </div>
+  <div class="store" id="store" data-state="connecting"><span class="dot"></span><span id="store-text">Подключаюсь к базе артефакта…</span></div>
+  <div class="actions">
+    <button id="btn-check" class="primary" type="button">Проверить</button>
+    <span id="check-sum" class="chip">не проверено</span>
+  </div>
+</header>
+<div class="app">
+  <aside class="side">
+    <div class="search"><input id="search" type="search" placeholder="Поиск по id и тексту" autocomplete="off" aria-label="Поиск по id и тексту"></div>
+    <nav id="tree" class="tree" aria-label="Данные"></nav>
+    <div id="results" class="results" hidden></div>
+  </aside>
+  <main class="main">
+    <nav class="tabs" role="tablist">
+      <button type="button" data-tab="record" aria-selected="true">Запись</button>
+      <button type="button" data-tab="map" aria-selected="false">Карта</button>
+      <button type="button" data-tab="run" aria-selected="false">Прогон</button>
+      <button type="button" data-tab="edits" aria-selected="false">Правки <span id="edits-n" class="chip">0</span></button>
+      <button type="button" data-tab="check" aria-selected="false">Проверка</button>
+    </nav>
+    <section id="tab-record" class="tab"><p class="empty">Загружаю данные игры…</p></section>
+    <section id="tab-map" class="tab" hidden></section>
+    <section id="tab-run" class="tab" hidden></section>
+    <section id="tab-edits" class="tab" hidden></section>
+    <section id="tab-check" class="tab" hidden></section>
+  </main>
+</div>
+
+<script>
+'use strict';
+// ---------------------------------------------------------------- helpers
+const $ = (s, el = document) => el.querySelector(s);
+const PROPS = new Set(['value', 'checked', 'open', 'disabled', 'hidden', 'selected', 'title']);
+function h(tag, props, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (v == null || v === false) continue;
+    if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (k === 'class') el.className = v;
+    else if (PROPS.has(k)) el[k] = v;
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  for (const k of kids.flat(9)) if (k != null && k !== false) el.append(k instanceof Node ? k : String(k));
+  return el;
+}
+const fnv = s => { let x = 0x811c9dc5; for (const c of s) x = Math.imul(x ^ c.codePointAt(0), 0x01000193) >>> 0; return x.toString(36); };
+const pct = (n, of) => of ? Math.round(n * 100 / of) : 0;
+const SEP = '\u0001';
+
+// ---------------------------------------------------------------- RON
+// A node: {k: str|num|ident|list|map|tuple|struct, s, e (offsets), v | items | entries | fields, name}.
+function parseRon(text) {
+  let i = 0;
+  const fail = m => { const e = new Error(m); e.pos = i; throw e; };
+  const IDENT = /[A-Za-z_][A-Za-z0-9_]*/y, NUM = /[-+]?(\d[\d_]*)?(\.\d+)?([eE][-+]?\d+)?/y;
+  const mk = (k, s, o) => Object.assign({ k, s, e: i }, o);
+  function ws() {
+    for (;;) {
+      const c = text[i];
+      if (c === ' ' || c === '\n' || c === '\t' || c === '\r') i++;
+      else if (c === '/' && text[i + 1] === '/') { const j = text.indexOf('\n', i); i = j < 0 ? text.length : j; }
+      else if (c === '/' && text[i + 1] === '*') { const j = text.indexOf('*/', i + 2); if (j < 0) fail('незакрытый комментарий'); i = j + 2; }
+      else return;
+    }
+  }
+  function str() {
+    i++;
+    let v = '';
+    for (;;) {
+      const c = text[i++];
+      if (c === undefined) fail('незакрытая строка');
+      if (c === '"') return v;
+      if (c !== '\\') { v += c; continue; }
+      const d = text[i++];
+      if (d === 'n') v += '\n'; else if (d === 't') v += '\t'; else if (d === 'r') v += '\r';
+      else if (d === 'u') {
+        const m = /^\{([0-9a-fA-F]+)\}/.exec(text.slice(i, i + 10));
+        if (!m) fail('плохой \\u');
+        v += String.fromCodePoint(parseInt(m[1], 16)); i += m[0].length;
+      } else v += d;
+    }
+  }
+  function seq(close) {
+    const items = [];
+    for (;;) {
+      ws();
+      if (text[i] === close) { i++; return items; }
+      items.push(value()); ws();
+      if (text[i] === ',') i++; else if (text[i] !== close) fail(`ожидалось «,» или «${close}»`);
+    }
+  }
+  function group(name, s) {
+    i++; ws();
+    IDENT.lastIndex = i;
+    const m = IDENT.exec(text);
+    let struct = false;
+    if (m) { const back = i; i += m[0].length; ws(); struct = text[i] === ':'; i = back; }
+    if (!struct) { const items = seq(')'); return mk('tuple', s, { name, items }); }
+    const fields = [];
+    for (;;) {
+      ws();
+      if (text[i] === ')') { i++; break; }
+      IDENT.lastIndex = i;
+      const f = IDENT.exec(text);
+      if (!f) fail('ожидалось имя поля');
+      i += f[0].length; ws();
+      if (text[i] !== ':') fail('ожидалось «:»');
+      i++;
+      fields.push({ key: f[0], val: value() }); ws();
+      if (text[i] === ',') i++; else if (text[i] !== ')') fail('ожидалось «,» или «)»');
+    }
+    return mk('struct', s, { name, fields });
+  }
+  function value() {
+    ws();
+    const s = i, c = text[i];
+    if (c === '"') { const v = str(); return mk('str', s, { v }); }
+    if (c === '[') { i++; const items = seq(']'); return mk('list', s, { items }); }
+    if (c === '{') {
+      i++;
+      const entries = [];
+      for (;;) {
+        ws();
+        if (text[i] === '}') { i++; break; }
+        const key = value(); ws();
+        if (text[i] !== ':') fail('ожидалось «:»');
+        i++;
+        entries.push({ key, val: value() }); ws();
+        if (text[i] === ',') i++; else if (text[i] !== '}') fail('ожидалось «,» или «}»');
+      }
+      return mk('map', s, { entries });
+    }
+    if (c === '(') return group(null, s);
+    NUM.lastIndex = i;
+    let m = NUM.exec(text);
+    if (m && /\d/.test(m[0])) { i += m[0].length; return mk('num', s, { v: m[0] }); }
+    IDENT.lastIndex = i;
+    m = IDENT.exec(text);
+    if (m) {
+      i += m[0].length;
+      const back = i; ws();
+      if (text[i] === '(') return group(m[0], s);
+      i = back;
+      return mk('ident', s, { v: m[0] });
+    }
+    fail(c === undefined ? 'неожиданный конец' : `неожиданный символ «${c}»`);
+  }
+  const root = value(); ws();
+  if (i < text.length) fail('лишний текст после значения');
+  return root;
+}
+const q = v => '"' + v.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\t/g, '\\t') + '"';
+function flat(n) {
+  switch (n.k) {
+    case 'str': return q(n.v);
+    case 'num': case 'ident': return n.v;
+    case 'list': return '[' + n.items.map(flat).join(', ') + ']';
+    case 'map': return '{' + n.entries.map(e => flat(e.key) + ': ' + flat(e.val)).join(', ') + '}';
+    case 'tuple': return (n.name || '') + '(' + n.items.map(flat).join(', ') + ')';
+    case 'struct': return (n.name || '') + '(' + n.fields.map(f => f.key + ': ' + flat(f.val)).join(', ') + ')';
+  }
+}
+const COMPOSITE = new Set(['list', 'map', 'tuple', 'struct']);
+// Multi-line once a line would pass ~96 characters; the caller indents lines after the first.
+function pretty(n, ind = '') {
+  const one = flat(n);
+  if (!COMPOSITE.has(n.k) || ind.length + one.length <= 96) return one;
+  const in2 = ind + '    ';
+  const [open, close, parts] =
+    n.k === 'list' ? ['[', ']', n.items.map(x => pretty(x, in2))]
+    : n.k === 'map' ? ['{', '}', n.entries.map(e => flat(e.key) + ': ' + pretty(e.val, in2))]
+    : n.k === 'tuple' ? [(n.name || '') + '(', ')', n.items.map(x => pretty(x, in2))]
+    : [(n.name || '') + '(', ')', n.fields.map(f => f.key + ': ' + pretty(f.val, in2))];
+  if (!parts.length) return one;
+  return open + '\n' + parts.map(p => in2 + p + ',\n').join('') + ind + close;
+}
+
+// Paths: a list of segments, `f:field`, `i:index`, `id:<id of a list item>`, `k:<map key>`.
+const idOf = x => x.k === 'struct' ? x.fields.find(f => f.key === 'id' && f.val.k === 'str')?.val.v : undefined;
+const keyText = k => k.k === 'str' ? k.v : flat(k);
+function kids(n) {
+  if (!n) return [];
+  if (n.k === 'struct') return n.fields.map(f => ({ seg: 'f:' + f.key, key: f.key, node: f.val }));
+  if (n.k === 'tuple') return n.items.map((x, j) => ({ seg: 'i:' + j, key: String(j), node: x }));
+  if (n.k === 'list') return n.items.map((x, j) => { const id = idOf(x); return { seg: id != null ? 'id:' + id : 'i:' + j, key: id ?? String(j), node: x }; });
+  if (n.k === 'map') return n.entries.map(en => ({ seg: 'k:' + keyText(en.key), key: keyText(en.key), node: en.val, entry: en }));
+  return [];
+}
+function resolve(root, path) {
+  let n = root;
+  for (const seg of path) { n = kids(n).find(c => c.seg === seg)?.node; if (!n) return null; }
+  return n;
+}
+// The deepest node holding the offset, and its path.
+function locate(root, pos) {
+  const segs = [];
+  let n = root;
+  for (;;) {
+    const c = kids(n).find(c => (c.entry ? c.entry.key.s : c.node.s) <= pos && pos < c.node.e);
+    if (!c) return { segs, node: n };
+    segs.push(c.seg); n = c.node;
+  }
+}
+const isPrefix = (a, b) => a.length <= b.length && a.every((s, j) => b[j] === s);
+const lineIndent = (text, pos) => /^[ \t]*/.exec(text.slice(text.lastIndexOf('\n', pos - 1) + 1))[0];
+const reindent = (ron, ind) => ron.replace(/\n/g, '\n' + ind);
+const dedent = (ron, ind) => ind ? ron.split('\n' + ind).join('\n') : ron;
+
+// ---------------------------------------------------------------- labels
+const FILE_LABELS = {
+  'rules.ron': 'Правила', 'actions.ron': 'Действия', 'names.ron': 'Имена', 'hints.ron': 'Намёки хроники',
+  'score.ron': 'Счёт', 'strategies.ron': 'Стратегии', 'events/reign.ron': 'События правления',
+  'events/death.ron': 'Смерть и болезни', 'events/heirs.ron': 'Наследники и браки', 'events/neighbours.ron': 'Соседи',
+  'events/omens.ron': 'Знамения', 'events/war.ron': 'Война', 'events/sim/sim.ron': 'События симуляции',
+  'presets/default.ron': 'Пресет «Наследник угасшего дома»', 'maps/default.ron': 'Карта',
+};
+const GROUPS = [
+  ['Механика', f => ['rules.ron', 'actions.ron', 'score.ron', 'strategies.ron'].includes(f)],
+  ['События', f => f.startsWith('events/')],
+  ['Тексты и имена', f => ['hints.ron', 'names.ron'].includes(f)],
+  ['Мир', f => f.startsWith('presets/') || f.startsWith('maps/')],
+  ['Сценарии', f => f.startsWith('scripts/')],
+  ['Прочее', () => true],
+];
+const FIELD_LABELS = {
+  axes: 'Оси и скрытые узлы', influences: 'Рёбра графа', loops: 'Петли графа', symptoms: 'Катастрофы и симптомы',
+  laws: 'Законы', list: 'Список', factions: 'Фракции', sim: 'Симуляция', texts: 'Тексты хроники',
+  life: 'Жизнеописания', epithets: 'Прозвища', variants: 'Варианты текстов', traits: 'Черты правителей',
+  auto: 'Автомат', heirs: 'Наследники', neighbours: 'Страны-соседи', vassals: 'Вассальные дома',
+  ruler: 'Правитель', intro: 'Предыстория', flags: 'Флаги', capital: 'Столица', provinces: 'Провинции',
+  polygons: 'Контуры', rulers: 'Правители, м.', daughters: 'Дочери, ж.', forms: 'Падежи земель, стран, прозвищ',
+  choices: 'Варианты выбора', effects: 'Эффекты', weights: 'Веса', war: 'Война', death: 'Смерть',
+  abdication: 'Отречение', coronation: 'Воцарение', marriage: 'Браки', economy: 'Экономика',
+  neighbour_ai: 'ИИ соседей', crown_power: 'Сила короны', crown_capacity: 'Предел владений', reveal: 'Видимость узлов',
+  stability: 'Стабильность', start_year: 'Год начала', title: 'Заголовок', text: 'Текст', told: 'Рассказ хроники',
+  hint: 'Подсказка', name: 'Имя', description: 'Описание', cause_tag: 'Тег причины', weight: 'Вес',
+  income: 'Доход', population: 'Население', holder: 'Держатель', loyalty: 'Лояльность', strength: 'Сила',
+  relation: 'Отношения', stance: 'Характер ИИ', age: 'Возраст', health: 'Здоровье', when: 'Условие',
+  requires: 'Условие', on_complete: 'По завершении', cost: 'Цена', duration_years: 'Лет',
+};
+function labelOf(c, parent) {
+  const n = c.node;
+  if (parent?.k === 'list' && n.k === 'struct') {
+    const f = k => n.fields.find(x => x.key === k && x.val.k === 'str')?.val.v;
+    const id = idOf(n), title = f('title') || f('name') || f('text');
+    if (id != null) return [title ? title.slice(0, 60) : id, title ? id : ''];
+    return [title ? title.slice(0, 60) : '#' + c.key, ''];
+  }
+  if (parent?.k === 'list' || parent?.k === 'tuple') return [n.k === 'str' ? n.v.split('|')[0].slice(0, 60) : flat(n).slice(0, 60), ''];
+  if (parent?.k === 'map') return [c.key, ''];
+  const l = FIELD_LABELS[c.key];
+  return l ? [l, c.key] : [c.key, ''];
+}
+function pathLabels(file, path) {
+  const out = [FILE_LABELS[file] || file];
+  let n = S.ast[file];
+  for (const seg of path) {
+    const c = kids(n).find(c => c.seg === seg);
+    if (!c) break;
+    out.push(labelOf(c, n)[0]); n = c.node;
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- state
+const S = {
+  base: '', files: [], orig: {}, origAst: {}, text: {}, ast: {},
+  edits: new Map(), failed: new Set(), rev: 0, sig: '',
+  sel: null, raw: false, open: new Set(), issues: [], checked: false,
+  db: null, user: null, me: null, store: 'connecting', names: {},
+  preset: 'presets/default.ron', results: { orig: {}, edit: {} }, lastRun: null,
+};
+
+// The texts: the published ones with every edit applied in the order of time.
+function rebuild() {
+  S.text = { ...S.orig };
+  S.ast = { ...S.origAst };
+  S.failed = new Set();
+  const edits = [...S.edits.entries()].sort((a, b) => (a[1].at || '').localeCompare(b[1].at || ''));
+  for (const [key, e] of edits) {
+    const root = S.ast[e.file];
+    const t = root && applyEdit(S.text[e.file], root, e);
+    let r = null;
+    if (t != null) try { r = parseRon(t); } catch { r = null; }
+    if (!r) { S.failed.add(key); continue; }
+    S.text[e.file] = t; S.ast[e.file] = r;
+  }
+  S.rev++;
+}
+function applyEdit(text, root, e) {
+  if (e.op === 'set') {
+    const n = resolve(root, e.path);
+    return n ? text.slice(0, n.s) + reindent(e.ron, lineIndent(text, n.s)) + text.slice(n.e) : null;
+  }
+  if (e.op === 'insert') {
+    const n = resolve(root, e.path);
+    if (!n || (n.k !== 'list' && n.k !== 'map')) return null;
+    const ks = kids(n);
+    const after = ks.find(c => c.seg === e.after) || ks[ks.length - 1];
+    if (!after) {
+      const outer = lineIndent(text, n.s), ind = outer + '    ', at = n.e - 1;
+      return text.slice(0, at) + '\n' + ind + reindent(e.ron, ind) + ',\n' + outer + text.slice(at);
+    }
+    const ind = lineIndent(text, (after.entry ? after.entry.key : after.node).s);
+    return text.slice(0, after.node.e) + ',\n' + ind + reindent(e.ron, ind) + text.slice(after.node.e);
+  }
+  if (e.op === 'delete') {
+    const parent = resolve(root, e.path.slice(0, -1));
+    const c = kids(parent).find(c => c.seg === e.path[e.path.length - 1]);
+    if (!c) return null;
+    let s = (c.entry ? c.entry.key : c.node).s, end = c.node.e;
+    const comma = /^\s*,/.exec(text.slice(end));
+    if (comma) end += comma[0].length;
+    const ls = text.lastIndexOf('\n', s - 1) + 1, nl = /^[ \t]*\n/.exec(text.slice(end));
+    if (/^[ \t]*$/.test(text.slice(ls, s)) && nl) { s = ls; end += nl[0].length; }
+    return text.slice(0, s) + text.slice(end);
+  }
+  return null;
+}
+
+// A change of a record: the edit is stored with base, author and time, every view rebuilt.
+function commit(key, e) {
+  const old = S.edits.get(key);
+  e.at = new Date().toISOString();
+  e.author = S.me || old?.author || null;
+  e.base = S.base;
+  if (old?.before != null) e.before = old.before;
+  e.label = pathLabels(e.file, e.path).join(' › ');
+  if (e.op === 'set') {
+    for (const [k, x] of [...S.edits]) {
+      if (k !== key && x.file === e.file && x.op === 'set' && x.path.length > e.path.length && isPrefix(e.path, x.path)) {
+        S.edits.delete(k); dbDelete(k);
+      }
+    }
+  }
+  S.edits.set(key, e);
+  afterChange();
+  dbWrite(key, e);
+}
+function revert(key) { S.edits.delete(key); dbDelete(key); afterChange(true); }
+function afterChange(full) {
+  const sig = [...S.edits].map(([k, e]) => k + '@' + e.at).sort().join();
+  if (sig !== S.sig) {
+    S.sig = sig;
+    rebuild();
+    const t = $('#tree'), top = t.scrollTop;
+    renderTree(); t.scrollTop = top;
+    S.checked = false;
+    $('#check-sum').className = 'chip';
+    $('#check-sum').textContent = 'данные изменены, проверьте';
+  }
+  markTree();
+  renderEditsCount();
+  if (full || !document.activeElement?.closest('#tab-record')) renderEditor();
+  if (!$('#tab-map').hidden) renderMap();
+  if (!$('#tab-edits').hidden) renderEdits();
+}
+const editKey = (file, path, op) => 'e' + fnv(file + SEP + path.join(SEP) + SEP + op);
+
+// ---------------------------------------------------------------- the artifact's db
+function setStore(state, text) {
+  S.store = state;
+  $('#store').dataset.state = state;
+  $('#store-text').textContent = text || {
+    connecting: 'Подключаюсь к базе артефакта…',
+    db: 'Правки сохраняются в базе артефакта: их видят все и Claude.',
+    memory: 'Без базы артефакта: правки живут только в этой вкладке и пропадут при перезагрузке.',
+    readonly: 'База только для чтения: новые правки остаются в этой вкладке.',
+  }[state];
+  if (!$('#tab-edits').hidden) renderEdits();
+}
+const writes = {};
+function dbWrite(key, e) {
+  if (!S.db || S.store !== 'db') return;
+  writes[key] = (writes[key] || Promise.resolve()).then(() => S.db.doc('edits/' + key).set(e)).catch(dbFailed);
+}
+function dbDelete(key) {
+  if (!S.db || S.store !== 'db') return;
+  writes[key] = (writes[key] || Promise.resolve()).then(() => S.db.doc('edits/' + key).delete()).catch(dbFailed);
+}
+function dbFailed(err) {
+  if (err?.code === 'invalid_argument' || err?.code === 'not_granted') setStore('readonly');
+  else if (err?.code === 'quota_exceeded') setStore('readonly', 'База артефакта заполнена: попросите Claude применить и удалить правки.');
+  else console.warn('db', err);
+}
+async function connectDb() {
+  if (!window.claude?.use) return setStore('memory');
+  try {
+    const [db, user] = await Promise.all([window.claude.use('db'), window.claude.use('user')]);
+    if (!db) return setStore('memory');
+    S.db = db; S.user = user;
+    S.me = user ? await user.id() : null;
+    setStore('db');
+    db.collection('edits').onSnapshot(snap => {
+      S.edits = new Map(snap.docs.map(d => [d.id, d.data()]));
+      afterChange();
+      resolveAuthors();
+    }, err => { dbFailed(err); if (S.store === 'db') setStore('memory'); });
+  } catch (err) { console.warn(err); setStore('memory'); }
+}
+async function resolveAuthors() {
+  const ids = [...new Set([...S.edits.values()].map(e => e.author).filter(Boolean))].filter(id => !(id in S.names));
+  if (!ids.length || !S.user?.profiles) return;
+  try {
+    const ps = await S.user.profiles(ids);
+    for (const id of ids) S.names[id] = ps[id]?.name || '';
+    if (!$('#tab-edits').hidden) renderEdits();
+  } catch { /* the names stay unknown */ }
+}
+const authorName = id => !id ? 'неизвестно' : id === S.me ? 'вы' : S.names[id] || 'участник';
+
+// ---------------------------------------------------------------- the core in a Worker
+const WORKER_SRC = `
+self.bdProgress = () => postMessage({ progress: 1 });
+onmessage = ({ data: m }) => {
+  try {
+    let out = null;
+    if (m.cmd === 'init') wasm_bindgen.initSync({ module: m.bytes });
+    else if (m.cmd === 'load') out = wasm_bindgen.load(JSON.stringify(m.files));
+    else if (m.cmd === 'batch') out = wasm_bindgen.batch(m.strategy, m.runs, m.seed, m.law || undefined);
+    else if (m.cmd === 'trace') out = wasm_bindgen.trace(m.seed, m.node || undefined);
+    else if (m.cmd === 'chronicle') out = wasm_bindgen.chronicle(m.seed);
+    postMessage({ id: m.id, out: out && JSON.parse(out) });
+  } catch (e) {
+    postMessage({ id: m.id, error: String((e && e.message) || e) });
+  }
+};`;
+const core = { worker: null, bytes: null, glue: null, seq: 0, waiters: new Map(), loaded: null, onProgress: null };
+async function startWorker() {
+  if (core.worker) return;
+  if (!core.bytes) {
+    const get = (url, how) => fetch(url).then(r => { if (!r.ok) throw new Error(url + ': ' + r.status); return r[how](); });
+    [core.glue, core.bytes] = await Promise.all([get('web_sim.js', 'text'), get('web_sim_bg.wasm', 'arrayBuffer')]);
+  }
+  const url = URL.createObjectURL(new Blob([core.glue, '\n', WORKER_SRC], { type: 'text/javascript' }));
+  const w = new Worker(url);
+  core.worker = w;
+  core.loaded = null;
+  w.onmessage = ({ data }) => {
+    if ('progress' in data) return core.onProgress?.();
+    const p = core.waiters.get(data.id);
+    core.waiters.delete(data.id);
+    if (data.error) { p?.reject(new Error(data.error)); stopWorker(new Error(data.error)); } else p?.resolve(data.out);
+  };
+  w.onerror = ev => { ev.preventDefault(); stopWorker(new Error(ev.message || 'ошибка в Worker')); };
+  await post('init', { bytes: core.bytes });
+}
+function post(cmd, args) {
+  return new Promise((resolve, reject) => {
+    const id = ++core.seq;
+    core.waiters.set(id, { resolve, reject });
+    core.worker.postMessage({ id, cmd, ...args });
+  });
+}
+async function call(cmd, args) { await startWorker(); return post(cmd, args); }
+// Cancels whatever runs: the worker is dropped, the next call starts a new one.
+function stopWorker(err) {
+  core.worker?.terminate();
+  core.worker = null; core.loaded = null;
+  for (const p of core.waiters.values()) p.reject(err);
+  core.waiters.clear();
+}
+// The data the worker holds: the published one (`orig`) or the edited one.
+async function ensureLoaded(which) {
+  const key = which === 'orig' ? 'orig' : 'edit:' + S.rev;
+  if (core.loaded === key) return null;
+  const out = await call('load', { files: which === 'orig' ? S.orig : S.text });
+  core.loaded = out.errors?.length ? null : key;
+  return out;
+}
+
+// ---------------------------------------------------------------- tree
+const TREE_KINDS = new Set(['list', 'map', 'struct']);
+const branchy = n => TREE_KINDS.has(n.k) && kids(n).some(c => TREE_KINDS.has(c.node.k));
+const treeKey = (file, path) => file + '|' + path.join(SEP);
+function renderTree() {
+  const out = [];
+  const used = new Set();
+  for (const [title, test] of GROUPS) {
+    const files = S.files.filter(f => !used.has(f) && test(f));
+    if (!files.length) continue;
+    files.forEach(f => used.add(f));
+    out.push(h('div', { class: 'tgroup' }, title));
+    for (const f of files) {
+      if (!S.ast[f]) { out.push(h('div', { class: 'tleaf' }, h('span', { class: 'issue' }, f + ': RON не читается'))); continue; }
+      out.push(tnode(f, [], S.ast[f], FILE_LABELS[f] || f.replace(/\.ron$/, ''), f, 0));
+    }
+  }
+  $('#tree').replaceChildren(...out);
+  markTree();
+}
+function tnode(file, path, node, label, sub, depth) {
+  const key = treeKey(file, path);
+  const btn = h('button', { type: 'button', class: 'tlabel', 'data-key': key, onclick: () => select(file, path) },
+    h('span', { class: 'tl' }, label), sub ? h('span', { class: 'ts mono' }, sub) : null);
+  const branch = depth === 0 ? COMPOSITE.has(node.k) && kids(node).length > 0 : depth < 6 && branchy(node);
+  if (!branch) return h('div', { class: 'tleaf' }, btn);
+  const d = h('details', {}, h('summary', {}, btn));
+  const fill = () => {
+    if (d.children.length > 1) return;
+    const shown = kids(node).filter(c => depth === 0 || TREE_KINDS.has(c.node.k));
+    d.append(...shown.map(c => {
+      const [l, s] = labelOf(c, node);
+      return tnode(file, [...path, c.seg], c.node, l, s, depth + 1);
+    }));
+    markTree(d);
+  };
+  d.addEventListener('toggle', () => { if (d.open) { S.open.add(key); fill(); } else S.open.delete(key); });
+  if (S.open.has(key)) { fill(); d.open = true; }
+  return d;
+}
+function markTree(root = $('#tree')) {
+  const edited = [...S.edits.values()].map(e => [e.file, e.path]);
+  for (const b of root.querySelectorAll('.tlabel')) {
+    const [file, p] = b.dataset.key.split('|');
+    const path = p ? p.split(SEP) : [];
+    const under = (f, x) => f === file && isPrefix(path, x);
+    b.classList.toggle('edited', edited.some(([f, x]) => under(f, x)));
+    b.classList.toggle('bad', S.issues.some(i => i.kind === 'error' && i.file && under(i.file, i.path)));
+    b.classList.toggle('lint', S.issues.some(i => i.kind === 'lint' && i.file && under(i.file, i.path)));
+    b.classList.toggle('sel', !!S.sel && treeKey(S.sel.file, S.sel.path) === b.dataset.key);
+  }
+}
+function reveal(file, path) {
+  for (let j = 0; j < path.length; j++) S.open.add(treeKey(file, path.slice(0, j)));
+  renderTree();
+  let b = null;
+  for (let j = path.length; !b && j >= 0; j--) b = $(`.tlabel[data-key="${CSS.escape(treeKey(file, path.slice(0, j)))}"]`);
+  b?.scrollIntoView({ block: 'nearest' });
+}
+
+// ---------------------------------------------------------------- search
+function search(qs) {
+  const box = $('#results'), tree = $('#tree');
+  const qq = qs.trim().toLowerCase();
+  box.hidden = !qq; tree.hidden = !!qq;
+  if (!qq) return;
+  const seen = new Set(), out = [];
+  for (const f of S.files) {
+    const text = S.text[f], low = text.toLowerCase(), root = S.ast[f];
+    if (!root) continue;
+    for (let at = low.indexOf(qq); at >= 0 && out.length < 120; at = low.indexOf(qq, at + qq.length)) {
+      let { segs, node } = locate(root, at);
+      while (segs.length && !TREE_KINDS.has(node.k)) { segs = segs.slice(0, -1); node = resolve(root, segs); }
+      const key = treeKey(f, segs);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const ls = Math.max(text.lastIndexOf('\n', at) + 1, at - 50), le = text.indexOf('\n', at);
+      const line = text.slice(ls, le < 0 ? undefined : Math.min(le, at + 90));
+      const j = line.toLowerCase().indexOf(qq);
+      out.push(h('button', { type: 'button', onclick: () => select(f, segs, true) },
+        pathLabels(f, segs).join(' › '),
+        h('span', { class: 'snip mono' }, line.slice(0, j).trimStart(), h('mark', {}, line.slice(j, j + qq.length)), line.slice(j + qq.length))));
+    }
+  }
+  box.replaceChildren(...(out.length ? out : [h('p', { class: 'note' }, 'Ничего не найдено.')]));
+}
+
+// ---------------------------------------------------------------- record editor
+function select(file, path, reveals) {
+  S.sel = { file, path };
+  S.raw = false;
+  showTab('record');
+  renderEditor();
+  if (reveals) { $('#search').value = ''; search(''); reveal(file, path); } else markTree();
+}
+const CASE_NAMES = ['им.', 'род.', 'дат.', 'вин.', 'тв.', 'пр.'];
+const isCases = v => v.split('|').length === 7;
+const formsOf = spec => { const [stem, ...ends] = spec.split('|'); return ends.map(e => stem + e); };
+// Six forms back to `stem|им|род|дат|вин|тв|пр`: the stem is their common start.
+function specOf(fs) {
+  let p = fs[0];
+  for (const f of fs) while (!f.startsWith(p)) p = p.slice(0, -1);
+  return [p, ...fs.map(f => f.slice(p.length))].join('|');
+}
+function casesWidget(spec, set) {
+  const inputs = formsOf(spec).map((f, j) => h('input', { value: f, size: 4, 'aria-label': CASE_NAMES[j] }));
+  inputs.forEach(inp => inp.addEventListener('change', () => set(specOf(inputs.map(x => x.value.trim())))));
+  return h('div', { class: 'cases' }, inputs.map((inp, j) => h('label', {}, CASE_NAMES[j], inp)));
+}
+const NUM_RE = /^[-+]?\d[\d_]*(\.\d+)?([eE][-+]?\d+)?$/;
+const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+// An editor for a value by its kind; `ch(structural)` after every change of `n` in place.
+function field(n, rel, ch) {
+  const tag = el => { el.dataset.path = rel.join(SEP); return el; };
+  switch (n.k) {
+    case 'str': {
+      if (isCases(n.v)) return tag(casesWidget(n.v, v => { n.v = v; ch(); }));
+      const long = n.v.length > 48 || n.v.includes('\n') || (/[А-Яа-яЁё]/.test(n.v) && n.v.length > 20);
+      const el = long
+        ? h('textarea', { rows: Math.min(10, Math.ceil(n.v.length / 80) + 1), value: n.v })
+        : h('input', { value: n.v, class: /^[\w.:-]*$/.test(n.v) ? 'mono' : '' });
+      el.addEventListener('change', () => { n.v = el.value; ch(); });
+      return tag(el);
+    }
+    case 'num': {
+      const el = h('input', { value: n.v, inputmode: 'decimal', class: 'num', size: Math.max(5, n.v.length + 2) });
+      el.addEventListener('change', () => {
+        const v = el.value.trim();
+        el.setCustomValidity(NUM_RE.test(v) ? '' : 'Нужно число: 12, -3 или 0.25');
+        if (!el.reportValidity()) return;
+        n.v = v; ch();
+      });
+      return tag(el);
+    }
+    case 'ident': {
+      if (n.v === 'true' || n.v === 'false') {
+        const el = h('input', { type: 'checkbox', checked: n.v === 'true' });
+        el.addEventListener('change', () => { n.v = String(el.checked); ch(); });
+        return tag(el);
+      }
+      const el = h('input', { value: n.v, class: 'mono', size: Math.max(6, n.v.length + 2) });
+      el.addEventListener('change', () => {
+        el.setCustomValidity(IDENT_RE.test(el.value.trim()) ? '' : 'Вариант: латиница, цифры и _');
+        if (!el.reportValidity()) return;
+        n.v = el.value.trim(); ch();
+      });
+      return tag(el);
+    }
+    case 'tuple': {
+      const name = n.name != null ? h('input', { value: n.name, class: 'mono vname', size: Math.max(4, n.name.length + 1), title: 'Вариант' }) : null;
+      name?.addEventListener('change', () => { if (IDENT_RE.test(name.value.trim())) { n.name = name.value.trim(); ch(); } });
+      const small = n.items.every(x => !COMPOSITE.has(x.k) && !(x.k === 'str' && x.v.length > 40));
+      const parts = kids(n).map(c => field(c.node, [...rel, c.seg], ch));
+      return tag(small ? h('div', { class: 'inline' }, name, parts) : h('div', { class: 'box flat' }, name && h('div', { class: 'bhead' }, name), parts));
+    }
+    case 'struct': {
+      const rows = kids(n).map(c => {
+        const sub = field(c.node, [...rel, c.seg], ch);
+        const l = FIELD_LABELS[c.key];
+        const wide = COMPOSITE.has(c.node.k) && !(c.node.k === 'tuple' && c.node.items.every(x => !COMPOSITE.has(x.k)));
+        return h('div', { class: 'row' + (wide ? ' wide' : '') },
+          h('label', {}, l || c.key, l ? h('span', { class: 'k' }, c.key) : null), sub);
+      });
+      if (n.name) rows.unshift(h('div', { class: 'bhead' }, h('span', { class: 'vname' }, n.name)));
+      return tag(rel.length ? h('div', { class: 'box' }, rows) : h('div', { class: 'form' }, rows));
+    }
+    case 'list': case 'map': {
+      const list = n.k === 'list';
+      const rows = kids(n).map((c, j) => {
+        const rm = h('button', { type: 'button', class: 'quiet', title: 'Убрать', 'aria-label': 'Убрать', onclick: () => {
+          if (list) n.items.splice(j, 1); else n.entries.splice(j, 1);
+          ch(true);
+        } }, '×');
+        const sub = field(c.node, [...rel, c.seg], ch);
+        if (list) return h('div', { class: 'item' }, sub, rm);
+        const keyIn = h('input', { value: c.key, class: 'mono', size: Math.max(6, c.key.length + 2), 'aria-label': 'Ключ' });
+        keyIn.addEventListener('change', () => { n.entries[j].key = { k: 'str', v: keyIn.value }; ch(); });
+        return h('div', { class: 'item' }, h('div', { class: 'inline' }, keyIn, sub), rm);
+      });
+      const last = list ? n.items[n.items.length - 1] : n.entries[n.entries.length - 1];
+      const add = last ? h('button', { type: 'button', class: 'quiet', onclick: () => {
+        const copy = structuredClone(last);
+        if (list) n.items.push(copy); else { copy.key = { k: 'str', v: keyText(last.key) + '_new' }; n.entries.push(copy); }
+        ch(true);
+      } }, list ? '+ ещё один, копией последнего' : '+ ключ, копией последнего') : h('span', { class: 'muted' }, 'пусто: добавьте в режиме RON');
+      return tag(h('div', { class: 'box' + (rel.length ? '' : ' flat') }, rows, h('div', {}, add)));
+    }
+  }
+}
+// The issues of the open record next to their fields (or the nearest one shown), the rest on top.
+function placeIssues(form, base) {
+  const mine = S.issues.filter(i => i.file === S.sel.file && i.path && isPrefix(base, i.path));
+  const top = [];
+  for (const i of mine) {
+    let el = null;
+    for (let rel = i.path.slice(base.length); form && !el && rel.length; rel = rel.slice(0, -1)) {
+      el = form.querySelector(`[data-path="${CSS.escape(rel.join(SEP))}"]`);
+    }
+    const note = h('div', { class: 'issue' + (i.kind === 'lint' ? ' lint' : '') }, i.msg);
+    if (el) { el.classList.add('bad-field'); el.after(note); } else top.push(note);
+  }
+  return top;
+}
+function renderEditor() {
+  const box = $('#tab-record');
+  if (!S.sel) { box.replaceChildren(h('p', { class: 'empty' }, 'Выберите запись в дереве слева, кликните провинцию на карте или найдите запись поиском.')); return; }
+  const { file, path } = S.sel, root = S.ast[file], node = root && resolve(root, path);
+  if (!node) { box.replaceChildren(h('p', { class: 'empty' }, 'Записи больше нет на этом месте: её удалили или переименовали. Выберите другую в дереве.')); return; }
+  const text = S.text[file], ind = lineIndent(text, node.s);
+  const parent = path.length ? resolve(root, path.slice(0, -1)) : null;
+  const inList = parent && (parent.k === 'list' || parent.k === 'map');
+  const own = [...S.edits.entries()].filter(([, e]) => e.file === file && e.op === 'set' && isPrefix(path, e.path));
+  const labels = pathLabels(file, path);
+  const tools = h('div', { class: 'tools' },
+    h('div', { class: 'seg', role: 'group', 'aria-label': 'Вид' },
+      h('button', { type: 'button', 'aria-pressed': String(!S.raw), onclick: () => { S.raw = false; renderEditor(); } }, 'Форма'),
+      h('button', { type: 'button', 'aria-pressed': String(S.raw), onclick: () => { S.raw = true; renderEditor(); } }, 'RON')),
+    inList ? h('button', { type: 'button', onclick: () => duplicate(file, path, parent) }, 'Добавить копию') : null,
+    inList ? h('button', { type: 'button', onclick: () => { commit(editKey(file, path, 'del'), { op: 'delete', file, path }); renderTree(); } }, 'Удалить') : null,
+    own.length ? h('button', { type: 'button', onclick: () => { for (const [k] of own) { S.edits.delete(k); dbDelete(k); } afterChange(true); } }, 'Вернуть исходное') : null);
+  const head = h('div', { class: 'rec-head' },
+    h('div', {}, h('h2', {}, labels[labels.length - 1]),
+      h('div', { class: 'crumbs' }, labels.slice(0, -1).join(' › '), ' · ', h('code', {}, [file, ...path].join(' / ')))),
+    tools);
+  const parts = [head];
+  if (own.length) parts.push(h('p', { class: 'note' }, h('span', { class: 'chip or' }, 'изменено'), ' Запись отличается от опубликованных данных.'));
+  if (file === 'names.ron' && path.length === 0) parts.push(h('p', { class: 'note' }, 'Пол задаёт список: rulers и heirs — мужские имена, daughters — женские; vassals — дома вассалов; forms — земли, страны и прозвища. Каждое имя пишется шестью падежами: им., род., дат., вин., тв., пр.'));
+  if (S.raw) {
+    const ta = h('textarea', { class: 'ron', spellcheck: 'false', value: dedent(text.slice(node.s, node.e), ind) });
+    const msg = h('div');
+    const apply = h('button', { type: 'button', class: 'primary', onclick: () => {
+      try { parseRon(ta.value); } catch (e) {
+        msg.replaceChildren(h('div', { class: 'issue' }, `Строка ${ta.value.slice(0, e.pos).split('\n').length}: ${e.message}`));
+        return;
+      }
+      msg.replaceChildren();
+      commit(editKey(file, path, 'set'), { op: 'set', file, path, ron: ta.value, before: dedent(text.slice(node.s, node.e), ind) });
+      renderTree();
+      renderEditor();
+    } }, 'Применить');
+    parts.push(h('p', { class: 'note' }, 'Режим RON сохраняет комментарии внутри записи. Форма переписывает запись заново, без них.'), ta, msg, h('div', { class: 'inline' }, apply), ...placeIssues(null, path));
+    box.replaceChildren(...parts);
+    return;
+  }
+  if (node.e - node.s > 24000) {
+    parts.push(h('p', { class: 'note' }, 'Раздел большой. Выберите запись внутри него или откройте режим RON.'), ...placeIssues(null, path),
+      h('div', { class: 'issues' }, kids(node).map(c => h('button', { type: 'button', onclick: () => select(file, [...path, c.seg], true) },
+        h('span', { class: 'where' }, c.key), labelOf(c, node)[0]))));
+    box.replaceChildren(...parts);
+    return;
+  }
+  const work = structuredClone(node);
+  const before = dedent(text.slice(node.s, node.e), ind);
+  const key = editKey(file, path, 'set');
+  const changed = structural => {
+    commit(key, { op: 'set', file, path, ron: dedent(pretty(work, ind), ind), before });
+    const id = idOf(work), last = path[path.length - 1];
+    if (id != null && last?.startsWith('id:') && last !== 'id:' + id) {
+      S.sel = { file, path: [...path.slice(0, -1), 'id:' + id] };
+      renderTree();
+    }
+    if (structural) renderEditor();
+  };
+  const form = field(work, [], changed);
+  parts.push(...placeIssues(form, path), COMPOSITE.has(work.k) ? form : h('div', { class: 'form' }, h('div', { class: 'row' }, h('label', {}, 'Значение'), form)));
+  const cases = casesPanel(work);
+  if (cases) parts.push(cases);
+  box.replaceChildren(...parts);
+}
+function duplicate(file, path, parent) {
+  const c = kids(parent).find(c => c.seg === path[path.length - 1]);
+  const copy = structuredClone(c.node);
+  const id = idOf(copy);
+  let next = null;
+  if (id != null) {
+    const ids = new Set(kids(parent).map(x => x.key));
+    let nid = id + '_copy';
+    for (let j = 2; ids.has(nid); j++) nid = id + '_copy' + j;
+    copy.fields.find(f => f.key === 'id').val.v = nid;
+    next = [...path.slice(0, -1), 'id:' + nid];
+  }
+  const ron = parent.k === 'map' ? q(c.key + '_copy') + ': ' + pretty(copy) : pretty(copy);
+  commit('e' + fnv(file + path.join(SEP) + Date.now() + Math.random()), { op: 'insert', file, path: path.slice(0, -1), after: path[path.length - 1], ron });
+  if (next) S.sel = { file, path: next };
+  renderTree();
+  renderEditor();
+}
+// The cases of a record's `name` in names.ron forms: lands, countries, houses.
+function casesPanel(work) {
+  if (work.k !== 'struct' || S.sel.file === 'names.ron') return null;
+  const name = work.fields.find(f => f.key === 'name' && f.val.k === 'str')?.val.v;
+  const forms = resolve(S.ast['names.ron'], ['f:forms']);
+  if (!name || !forms) return null;
+  const k = kids(forms).find(c => c.node.k === 'str' && formsOf(c.node.v)[0] === name);
+  const path = k && ['f:forms', k.seg];
+  const body = k
+    ? casesWidget(k.node.v, v => commit(editKey('names.ron', path, 'set'), { op: 'set', file: 'names.ron', path, ron: q(v), before: q(k.node.v) }))
+    : h('div', {}, h('p', { class: 'note' }, `У «${name}» нет падежей: в текстах имя останется в именительном, а проверка напомнит об этом.`),
+      h('button', { type: 'button', onclick: () => {
+        const last = kids(forms).pop();
+        commit('e' + fnv('forms' + name + Date.now()), { op: 'insert', file: 'names.ron', path: ['f:forms'], after: last?.seg, ron: q(name + '||||||') });
+        renderEditor();
+      } }, 'Добавить падежи'));
+  return h('div', { class: 'panel-cases' }, h('h3', {}, `Падежи «${name}» · names.ron`), body);
+}
+
+// ---------------------------------------------------------------- map
+function renderMap() {
+  const box = $('#tab-map');
+  const map = S.ast['maps/default.ron'], pre = S.ast[S.preset];
+  if (!map || !pre) { box.replaceChildren(h('p', { class: 'empty' }, 'Карта или пресет не читаются: откройте вкладку «Проверка».')); return; }
+  const str = (n, k) => n?.fields?.find(f => f.key === k)?.val.v;
+  const provinces = resolve(map, ['f:provinces'])?.items || [];
+  const polys = resolve(map, ['f:polygons'])?.entries || [];
+  const people = {};
+  for (const v of resolve(pre, ['f:vassals'])?.items || []) people['Vassal:' + str(v, 'id')] = str(v, 'name');
+  for (const v of resolve(pre, ['f:neighbours'])?.items || []) people['Foreign:' + str(v, 'id')] = str(v, 'name');
+  const capital = str(resolve(pre, ['f:capital']), 'province');
+  const owners = ['Crown'];
+  const ownerOf = p => {
+    const hn = p.fields.find(f => f.key === 'holder')?.val;
+    const o = !hn ? 'Crown' : hn.k === 'ident' ? hn.v : hn.name + ':' + (hn.items[0]?.v ?? '');
+    if (!owners.includes(o)) owners.push(o);
+    return o;
+  };
+  const color = o => o === 'Crown' ? 'var(--m-crown)' : `var(--m${((owners.indexOf(o) - 1) % 6) + 1})`;
+  const byId = Object.fromEntries(provinces.map(p => [str(p, 'id'), p]));
+  const pointsOf = e => e.val.items.map(t => t.items.map(x => Number(x.v)));
+  const pts = polys.flatMap(pointsOf);
+  if (!pts.length) { box.replaceChildren(h('p', { class: 'empty' }, 'На карте нет контуров.')); return; }
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const [x0, y0, x1, y1] = [Math.min(...xs) - 8, Math.min(...ys) - 14, Math.max(...xs) + 8, Math.max(...ys) + 8];
+  const NS = 'http://www.w3.org/2000/svg';
+  const s = (tag, attrs, text) => { const el = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v); if (text != null) el.textContent = text; return el; };
+  const svg = s('svg', { viewBox: `${x0} ${y0} ${x1 - x0} ${y1 - y0}`, role: 'img', 'aria-label': 'Карта провинций' });
+  const labels = [];
+  let selPoly = null;
+  for (const e of polys) {
+    const id = keyText(e.key), p = byId[id], xy = pointsOf(e);
+    const o = p ? ownerOf(p) : 'Crown';
+    const cx = xy.reduce((a, v) => a + v[0], 0) / xy.length, cy = xy.reduce((a, v) => a + v[1], 0) / xy.length;
+    const name = (p && str(p, 'name')) || id;
+    const sel = S.sel?.file === 'maps/default.ron' && S.sel.path[1] === 'id:' + id;
+    const poly = s('polygon', { points: xy.map(v => v.join(',')).join(' '), fill: color(o), class: sel ? 'sel' : '', tabindex: '0' });
+    const holder = o === 'Crown' ? 'корона' : people[o] || o;
+    poly.append(s('title', {}, `${name}: доход ${str(p, 'income') ?? '?'}, население ${str(p, 'population') ?? '?'}, держатель ${holder}`));
+    const open = () => select('maps/default.ron', ['f:provinces', 'id:' + id], true);
+    poly.addEventListener('click', open);
+    poly.addEventListener('keydown', ev => { if (ev.key === 'Enter') open(); });
+    if (sel) selPoly = poly; else svg.append(poly);
+    labels.push(s('text', { x: cx, y: cy + 2.5, 'text-anchor': 'middle', 'font-size': 7 }, (id === capital ? '♛ ' : '') + name));
+  }
+  if (selPoly) svg.append(selPoly);
+  svg.append(...labels);
+  const presets = S.files.filter(f => f.startsWith('presets/'));
+  const pick = h('select', { 'aria-label': 'Пресет', onchange: ev => { S.preset = ev.target.value; renderMap(); } },
+    presets.map(f => h('option', { value: f, selected: f === S.preset }, FILE_LABELS[f] || f)));
+  const legend = h('div', { class: 'legend' },
+    h('label', { class: 'muted' }, 'Держатели по пресету', pick),
+    owners.map(o => h('div', {}, h('span', { class: 'sw', style: `background:${color(o)}` }), o === 'Crown' ? 'Корона' : (people[o] || o) + (o.startsWith('Vassal') ? ', вассал' : ''))),
+    h('p', { class: 'note' }, '♛ — столица пресета. Клик по провинции открывает её запись. Контуры правятся числами в «Карта › Контуры».'));
+  box.replaceChildren(h('div', { class: 'mapwrap' }, svg, legend));
+}
+
+// ---------------------------------------------------------------- check
+function offsetOf(text, line, col) {
+  let at = 0;
+  for (let l = 1; l < line; l++) { const j = text.indexOf('\n', at); if (j < 0) return text.length; at = j + 1; }
+  return at + Array.from(text.slice(at, at + col * 2 + 8)).slice(0, col - 1).join('').length;
+}
+// The path of `word` in a file: a field path (`sim.texts.life`), a list item's id, a map key,
+// or the place of a string starting with it.
+function pathFor(file, word) {
+  const root = S.ast[file];
+  if (!root || !word) return null;
+  if (/^[a-z_]+(\.[a-z_]+)*$/.test(word)) {
+    const segs = word.split('.').map(x => 'f:' + x);
+    if (resolve(root, segs)) return segs;
+  }
+  let found = null;
+  const walk = (n, segs) => {
+    for (const c of kids(n)) {
+      if (found) return;
+      const p = [...segs, c.seg];
+      if (c.seg === 'id:' + word || c.seg === 'k:' + word) { found = p; return; }
+      walk(c.node, p);
+    }
+  };
+  walk(root, []);
+  if (found) return found;
+  const off = S.text[file].indexOf('"' + word);
+  return off >= 0 ? locate(root, off).segs : null;
+}
+// The `[0].cooldown_years`-style path `batch::field_path` appends to a parse error, as far as it goes.
+function fieldSegs(root, p) {
+  const segs = [];
+  let n = root;
+  for (const t of p.matchAll(/\[(\d+)\]|\.(\w+)|\["((?:[^"\\]|\\.)*)"\]/g)) {
+    const c = t[1] != null ? kids(n)[+t[1]] : kids(n).find(c => c.seg === (t[2] != null ? 'f:' + t[2] : 'k:' + t[3]));
+    if (!c) break;
+    segs.push(c.seg); n = c.node;
+  }
+  return segs;
+}
+function mapIssue(msg, kind) {
+  let m = /^([\w/.-]+\.ron):(\d+):(\d+)(?:-\d+:\d+)?: /.exec(msg);
+  if (m && S.ast[m[1]]) {
+    const root = S.ast[m[1]], at = locate(root, offsetOf(S.text[m[1]], +m[2], +m[3])).segs;
+    const named = fieldSegs(root, /\[([^\]]*(?:\][^\]]*)*)\]$/.exec(msg)?.[1] ?? '');
+    return { kind, msg, file: m[1], path: named.length > at.length ? named : at };
+  }
+  m = /^([\w/.-]+\.ron): (.*)$/s.exec(msg);
+  if (m && S.text[m[1]] != null) {
+    const words = [/^([^\s:]+):/.exec(m[2])?.[1], /^([\w.]+)/.exec(m[2])?.[1], /([\w-]+)\s*$/.exec(m[2])?.[1]];
+    for (const w of words) { const p = pathFor(m[1], w); if (p) return { kind, msg, file: m[1], path: p }; }
+    return { kind, msg, file: m[1], path: [] };
+  }
+  m = /^([^:]+): /.exec(msg);
+  if (m) for (const f of ['rules.ron', ...S.files]) { const p = pathFor(f, m[1]); if (p) return { kind, msg, file: f, path: p }; }
+  return { kind, msg };
+}
+async function check() {
+  const btn = $('#btn-check'), sum = $('#check-sum');
+  btn.disabled = true; sum.className = 'chip'; sum.textContent = 'проверяю…';
+  try {
+    core.loaded = null;
+    const out = await ensureLoaded('edit');
+    if (out.error) throw new Error(out.error);
+    S.issues = [...out.errors.map(m => mapIssue(m, 'error')), ...out.lint.map(m => mapIssue(m, 'lint'))];
+    S.checked = true;
+    const e = out.errors.length, l = out.lint.length;
+    sum.className = 'chip ' + (e ? 'bad' : l ? 'or' : 'ok');
+    sum.textContent = e ? `ошибок ${e}, замечаний ${l}` : l ? `без ошибок, замечаний ${l}` : 'без ошибок и замечаний';
+  } catch (err) {
+    sum.className = 'chip bad'; sum.textContent = 'ядро не запустилось';
+    S.issues = [{ kind: 'error', msg: 'Ядро в wasm не запустилось: ' + err.message }];
+  }
+  btn.disabled = false;
+  markTree(); renderEditor(); renderCheck();
+}
+function renderCheck() {
+  const box = $('#tab-check');
+  if (!S.checked && !S.issues.length) { box.replaceChildren(h('p', { class: 'empty' }, 'Нажмите «Проверить»: ядро игры в wasm загрузит правленые данные и покажет ошибки схемы и замечания линта у полей.')); return; }
+  const list = kind => S.issues.filter(i => i.kind === kind).map(i => h('button', { type: 'button', disabled: !i.file, onclick: () => select(i.file, i.path, true) },
+    h('span', { class: 'where' }, i.file ? pathLabels(i.file, i.path).slice(-2).join(' › ') : '—'), h('span', { class: 'issue' + (kind === 'lint' ? ' lint' : '') }, i.msg)));
+  const errs = list('error'), lint = list('lint');
+  box.replaceChildren(h('h2', {}, 'Проверка данных'),
+    h('p', { class: 'note' }, 'Ошибки не дают ядру загрузить данные: прогон с ними не запустится. Замечания линта (как в crates/core/tests/data_lint.rs) прогону не мешают, но cargo test на них упадёт.'),
+    h('h3', {}, `Ошибки · ${errs.length}`), errs.length ? h('div', { class: 'issues' }, errs) : h('p', { class: 'note' }, 'Нет.'),
+    h('h3', {}, `Замечания · ${lint.length}`), lint.length ? h('div', { class: 'issues' }, lint) : h('p', { class: 'note' }, 'Нет.'));
+}
+
+// ---------------------------------------------------------------- runs
+// The `#` summary of `cli batch`.
+function parseSummary(text) {
+  const L = text.split('\n');
+  const rest = p => L.find(l => l.startsWith(p) && /^[-\d]/.test(l.slice(p.length)))?.slice(p.length);
+  const q3 = p => rest(p)?.split(' / ').map(Number);
+  const share = p => { const r = rest(p); return r == null ? null : parseInt(r, 10); };
+  const falls = {};
+  const fi = L.indexOf('# причины падения:');
+  for (const l of fi < 0 ? [] : L.slice(fi + 1)) { const m = /^# {3}(\w+) (\d+)%$/.exec(l); if (!m) break; falls[m[1]] = +m[2]; }
+  const nodes = {};
+  const ni = L.findIndex(l => l.startsWith('# скрытые узлы'));
+  for (const l of ni < 0 ? [] : L.slice(ni + 1)) {
+    const m = /^# {3}(\w+) (.+) \| (.+) \| (.+) \| ([\d.]+)%$/.exec(l);
+    if (!m) break;
+    nodes[m[1]] = { at100: m[2].split(' / ').map(Number), at150: m[3].split(' / ').map(Number), fall: m[4].split(' / ').map(Number) };
+  }
+  return {
+    runs: +(/^# runs (\d+)/m.exec(text)?.[1] || 0),
+    score: q3('#   счёт '), score150: q3('#   счёт за 150 лет '), years: q3('#   лет династии '),
+    reign: q3('#   лет правления '), army: q3('#   армия в конце '), treasury: q3('#   казна в конце '),
+    early: share('# ранняя смерть '), deserted: share('# дезертирство в '), fell: share('# доля падений '),
+    falls, nodes,
+  };
+}
+// The criteria of stage 8b (docs/calibration.md, the cli test calibration_criteria_hold).
+function criteria(r) {
+  const n = r.neutral?.summary, c = r.crown_all?.summary, v = r.vassal_all?.summary, w = r.warmonger?.summary;
+  const out = [];
+  const add = (name, need, val, ok) => out.push({ name, need, val, ok: ok == null ? null : !!ok });
+  add('Ранняя смерть на neutral', '≤ 10%', n ? n.early + '%' : null, n && n.early <= 10);
+  add('Медиана правления на neutral', '25–40 лет', n ? n.reign[1] : null, n && n.reign[1] >= 25 && n.reign[1] <= 40);
+  if (c && v && w) {
+    const by = [['vassal_all', v], ['crown_all', c], ['warmonger', w]].sort((a, b) => a[1].score[1] - b[1].score[1]);
+    const apart = by.slice(1).map((x, j) => Math.round((x[1].score[1] / Math.max(1, by[j][1].score[1]) - 1) * 100));
+    add('Медианы счёта соседних стратегий', '≥ 15% друг от друга', by.map(x => `${x[0]} ${x[1].score[1]}`).join(' < ') + ` (+${apart.join('%, +')}%)`, apart.every(a => a >= 15));
+    const differ = (a, b) => Object.keys({ ...a.falls, ...b.falls }).some(k => Math.abs((a.falls[k] || 0) - (b.falls[k] || 0)) >= 15);
+    add('Причины падения соседних по счёту', '≥ 15 п.п. по одной причине', by.map(x => x[0]).join(' / '), differ(by[0][1], by[1][1]) && differ(by[1][1], by[2][1]));
+  } else {
+    add('Медианы счёта соседних стратегий', '≥ 15% друг от друга', null, null);
+    add('Причины падения соседних по счёту', '≥ 15 п.п. по одной причине', null, null);
+  }
+  add('Медиана казны в конце на neutral', '≤ 2000', n ? n.treasury[1] : null, n ? n.treasury[1] <= 2000 : null);
+  add('Дезертирство у warmonger', '≥ 10% династий', w ? w.deserted + '%' : null, w ? w.deserted >= 10 : null);
+  const noHeir = n && w ? (w.falls.NoHeir || 0) - (n.falls.NoHeir || 0) : null;
+  add('NoHeir warmonger минус neutral', '≤ 5 п.п.', noHeir == null ? null : noHeir + ' п.п.', noHeir == null ? null : noHeir <= 5);
+  return out;
+}
+function strategiesList() {
+  const st = S.ast['strategies.ron'];
+  return ['neutral', ...(st?.k === 'map' ? st.entries.map(e => keyText(e.key)) : [])];
+}
+function lawsList() {
+  const list = resolve(S.ast['rules.ron'], ['f:laws', 'f:list']);
+  return (list?.items || []).map(l => [idOf(l), l.fields.find(f => f.key === 'name')?.val.v || idOf(l)]);
+}
+function axesList() {
+  const axes = resolve(S.ast['rules.ron'], ['f:axes']);
+  return (axes?.items || []).map(a => [idOf(a), a.fields.find(f => f.key === 'name')?.val.v]);
+}
+function renderRunForm() {
+  const box = $('#tab-run');
+  const strat = h('select', { id: 'run-strategy' }, h('option', { value: '*' }, 'все стратегии'), strategiesList().map(s => h('option', { value: s, selected: s === 'neutral' }, s)));
+  const runs = h('input', { id: 'run-runs', type: 'number', min: 100, max: 1000, step: 100, value: 100 });
+  const seed = h('input', { id: 'run-seed', type: 'number', min: 0, value: 0 });
+  const law = h('select', { id: 'run-law' }, h('option', { value: '' }, 'как в пресете'), lawsList().map(([id, name]) => h('option', { value: id }, `${name} · ${id}`)));
+  const compare = h('input', { id: 'run-compare', type: 'checkbox', checked: true });
+  const go = h('button', { type: 'button', class: 'primary', id: 'run-go', onclick: runBatch }, 'Прогнать');
+  const stop = h('button', { type: 'button', id: 'run-stop', disabled: true, onclick: () => stopWorker(new Error('cancelled')) }, 'Отменить');
+  const tSeed = h('input', { id: 'one-seed', type: 'number', min: 0, value: 42 });
+  const tNode = h('select', { id: 'one-node', 'aria-label': 'Что трассировать' }, h('option', { value: '' }, 'цепочки решений'), axesList().map(([id, name]) => h('option', { value: id }, `ось ${name || id}`)));
+  const outOne = h('pre', { class: 'out', id: 'one-out', hidden: true });
+  const one = async cmd => {
+    outOne.hidden = false; outOne.textContent = 'Играю…';
+    try {
+      const err = (await ensureLoaded('edit'))?.errors;
+      if (err?.length) { outOne.textContent = 'Данные с ошибками:\n' + err.join('\n'); return; }
+      const out = await call(cmd, { seed: +tSeed.value || 0, node: tNode.value });
+      outOne.textContent = out.error || out.text;
+    } catch (e) { outOne.textContent = e.message === 'cancelled' ? 'Отменено.' : e.message; }
+  };
+  box.replaceChildren(
+    h('h2', {}, 'Прогон партий'),
+    h('p', { class: 'note' }, 'Основатель правит по стратегии, затем симуляция играет династию до падения: то же, что cli batch, байт в байт. Ядро считает в фоновом потоке, страница не замирает.'),
+    h('div', { class: 'runform' },
+      h('label', {}, 'Стратегия', strat), h('label', {}, 'Партий, 100–1000', runs), h('label', {}, 'Seed с', seed),
+      h('label', {}, 'Закон с начала', law),
+      h('label', { class: 'check' }, compare, 'Сравнить с данными до правок'), go, stop),
+    h('div', { class: 'progress', id: 'run-progress', hidden: true }, h('div', { class: 'bar' }, h('i', { id: 'run-bar' })), h('span', { id: 'run-count', class: 'mono' })),
+    h('div', { id: 'run-out' }),
+    h('h3', {}, 'Одна партия на правленых данных'),
+    h('div', { class: 'runform' }, h('label', {}, 'Seed', tSeed),
+      h('button', { type: 'button', onclick: () => one('chronicle') }, 'Летопись'),
+      h('label', {}, 'Трассировка', tNode),
+      h('button', { type: 'button', onclick: () => one('trace') }, 'Трассировка')),
+    outOne);
+  renderResults();
+}
+async function runBatch() {
+  const strat = $('#run-strategy').value, runs = Math.max(100, Math.min(1000, Math.round(+$('#run-runs').value) || 100));
+  const seed = Math.max(0, Math.round(+$('#run-seed').value) || 0), law = $('#run-law').value, compare = $('#run-compare').checked;
+  $('#run-runs').value = runs;
+  const strategies = strat === '*' ? strategiesList() : [strat];
+  const plan = strategies.flatMap(s => compare ? [['orig', s], ['edit', s]] : [['edit', s]]);
+  const total = plan.length * runs;
+  let done = 0, frame = 0;
+  const bar = $('#run-bar'), count = $('#run-count'), go = $('#run-go'), stop = $('#run-stop');
+  const paint = () => { frame = 0; bar.style.width = (done * 100 / total) + '%'; count.textContent = `${done} / ${total} партий`; };
+  core.onProgress = () => { done++; if (!frame) frame = requestAnimationFrame(paint); };
+  $('#run-progress').hidden = false; go.disabled = true; stop.disabled = false;
+  S.results = { orig: {}, edit: {} };
+  S.lastRun = { strategies, runs, seed, law, compare };
+  renderResults();
+  paint();
+  const t0 = performance.now();
+  try {
+    for (const [which, s] of plan) {
+      const loaded = await ensureLoaded(which);
+      if (loaded?.errors?.length) throw new Error((which === 'orig' ? 'Исходные' : 'Правленые') + ' данные не загрузились, см. «Проверка»:\n' + loaded.errors.join('\n'));
+      const t = performance.now();
+      const out = await call('batch', { strategy: s, runs, seed, law });
+      if (out.error) throw new Error(out.error);
+      S.results[which][s] = { summary: parseSummary(out.text), events: out.events, ms: performance.now() - t, text: out.text };
+      renderResults();
+    }
+    paint();
+    count.textContent = `${total} партий за ${((performance.now() - t0) / 1000).toFixed(1)} с`;
+  } catch (e) {
+    paint();
+    count.textContent = e.message === 'cancelled' ? `Отменено на ${done} из ${total}` : 'Прогон остановлен ошибкой';
+    if (e.message !== 'cancelled') $('#run-out').prepend(h('pre', { class: 'issue' }, e.message));
+  }
+  core.onProgress = null;
+  go.disabled = false; stop.disabled = true;
+}
+function eventTitles() {
+  const out = {};
+  for (const f of S.files.filter(f => f.startsWith('events/'))) {
+    for (const e of S.ast[f]?.items || []) out[idOf(e)] = e.fields.find(x => x.key === 'title')?.val.v || '';
+  }
+  return out;
+}
+function renderResults() {
+  const box = $('#run-out');
+  if (!box) return;
+  const R = S.results, run = S.lastRun;
+  if (!run) { box.replaceChildren(h('p', { class: 'empty' }, 'Здесь появится сводка: квартили счёта и лет, причины падения, частоты событий, скрытые узлы и критерии калибровки 08b. С галочкой «Сравнить» каждая стратегия играется дважды: на опубликованных данных и на правленых.')); return; }
+  const cols = run.compare ? ['orig', 'edit'] : ['edit'];
+  const colName = { orig: 'До правок', edit: run.compare ? 'После' : 'Правленые данные' };
+  const blocks = [];
+  const q3 = v => v ? v.join(' / ') : '—';
+  const titles = eventTitles(), ids = Object.keys(titles).sort();
+  for (const s of run.strategies) {
+    const got = cols.map(c => R[c][s]);
+    if (!got.some(Boolean)) continue;
+    const sm = got.map(g => g?.summary);
+    const row = (name, f, num) => {
+      const vals = sm.map(x => x ? f(x) : null);
+      const cells = vals.map(v => h('td', { class: 'n' }, v ?? '—'));
+      if (run.compare) {
+        const d = num && vals[0] != null && vals[1] != null && vals[0] !== 0 ? Math.round((vals[1] / vals[0] - 1) * 100) : null;
+        cells.push(h('td', { class: 'n' + (d > 0 ? ' up' : d < 0 ? ' down' : '') }, d == null ? '' : (d > 0 ? '+' : '') + d + '%'));
+      }
+      return h('tr', {}, h('td', {}, name), cells);
+    };
+    const falls = [...new Set(sm.flatMap(x => x ? Object.keys(x.falls) : []))];
+    const nodes = [...new Set(sm.flatMap(x => x ? Object.keys(x.nodes) : []))];
+    const rows = [
+      row('Счёт, квартили 25 / 50 / 75', x => q3(x.score)), row('Счёт, медиана', x => x.score?.[1], true),
+      row('Счёт за 150 лет, медиана', x => x.score150?.[1], true),
+      row('Лет династии, квартили', x => q3(x.years)), row('Лет династии, медиана', x => x.years?.[1], true),
+      row('Лет правления основателя, квартили', x => q3(x.reign)),
+      row('Казна в конце, медиана', x => x.treasury?.[1], true), row('Армия в конце, медиана', x => x.army?.[1], true),
+      row('Ранняя смерть, %', x => x.early, true), row('Дезертирство, % династий', x => x.deserted, true),
+      row('Доля падений, %', x => x.fell, true),
+      ...falls.map(f => row('Падение ' + f + ', %', x => x.falls[f] || 0, true)),
+      ...nodes.map(nd => row('Скрытый узел ' + nd + ' при падении, медиана', x => x.nodes[nd]?.fall[1], true)),
+    ];
+    const ms = got.map(g => g ? (g.ms / 1000).toFixed(1) + ' с' : '…').join(' / ');
+    blocks.push(h('h3', {}, `${s} · ${run.runs} партий с seed ${run.seed}${run.law ? ' · ' + run.law : ''} · ${ms}`),
+      h('div', { class: 'tablewrap' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, ''), cols.map(c => h('th', {}, colName[c])), run.compare ? h('th', {}, 'Δ') : null)), h('tbody', {}, rows))));
+    const ev = got.map(g => g?.events || {});
+    const lastEv = ev[ev.length - 1];
+    const erows = ids.map(id => h('tr', { class: got[got.length - 1] && !lastEv[id] ? 'zero' : '' }, h('td', { class: 'mono' }, id), h('td', {}, titles[id]),
+      ev.map(e => h('td', { class: 'n' }, pct(e[id] || 0, run.runs) + '%'))));
+    const never = got[got.length - 1] ? ids.filter(id => !lastEv[id]).length : '…';
+    blocks.push(h('details', { class: 'more' }, h('summary', {}, `Частоты событий: доля партий, где событие случилось · ни разу: ${never}`),
+      h('div', { class: 'tablewrap' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'id'), h('th', {}, 'Заголовок'), cols.map(c => h('th', {}, colName[c])))), h('tbody', {}, erows)))));
+    blocks.push(h('details', { class: 'more' }, h('summary', {}, 'Сводка cli batch как есть'), cols.map(c => R[c][s] && h('pre', { class: 'out' }, colName[c] + '\n' + R[c][s].text.split('\n').filter(l => l.startsWith('#')).join('\n')))));
+  }
+  const crit = cols.map(c => criteria(R[c]));
+  const chip = ok => ok == null ? h('span', { class: 'chip' }, 'нет данных') : h('span', { class: 'chip ' + (ok ? 'ok' : 'bad') }, ok ? '✓ выполнен' : '✗ не выполнен');
+  const crows = crit[0].map((c, j) => h('tr', {}, h('td', {}, c.name), h('td', {}, c.need), crit.map(cr => h('td', {}, cr[j].val ?? '', ' ', chip(cr[j].ok)))));
+  box.replaceChildren(
+    h('h3', {}, 'Критерии калибровки 08b'),
+    h('p', { class: 'note' }, 'Полные критерии требуют neutral, crown_all, vassal_all и warmonger: выберите «все стратегии» и 1000 партий, как в docs/calibration.md.'),
+    h('div', { class: 'tablewrap' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Критерий'), h('th', {}, 'Требование'), cols.map(c => h('th', {}, colName[c])))), h('tbody', {}, crows))),
+    ...blocks);
+}
+
+// ---------------------------------------------------------------- edits
+function renderEditsCount() { $('#edits-n').textContent = S.edits.size; }
+function renderEdits() {
+  const box = $('#tab-edits');
+  const list = [...S.edits.entries()].sort((a, b) => (b[1].at || '').localeCompare(a[1].at || ''));
+  const OPS = { set: 'изменение', insert: 'новая запись', delete: 'удаление' };
+  const rows = list.map(([k, e]) => h('tr', {},
+    h('td', {}, e.label || pathLabels(e.file, e.path).join(' › '), h('div', { class: 'mono muted' }, [e.file, ...e.path].join(' / '))),
+    h('td', {}, OPS[e.op] || e.op), h('td', {}, authorName(e.author)),
+    h('td', { class: 'n' }, e.at ? new Date(e.at).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }) : ''),
+    h('td', {}, S.failed.has(k) ? h('span', { class: 'chip bad', title: 'Место правки не нашлось в данных или RON не читается' }, 'не применилась') : h('span', { class: 'chip ok' }, 'применена')),
+    h('td', {}, h('div', { class: 'inline' },
+      e.op !== 'delete' ? h('button', { type: 'button', class: 'quiet', onclick: () => select(e.file, e.path, true) }, 'Открыть') : null,
+      h('button', { type: 'button', class: 'quiet', onclick: () => revert(k) }, 'Откатить')))));
+  const changed = S.files.filter(f => S.text[f] !== S.orig[f]);
+  box.replaceChildren(
+    h('h2', {}, 'Правки'),
+    h('p', { class: 'note' }, S.store === 'db'
+      ? 'Каждая правка хранится в базе артефакта отдельной записью с автором и временем. Claude переносит их в data/*.ron по команде «примени правки из редактора», проверяет тестами и публикует редактор заново.'
+      : 'Правки живут только в памяти этой вкладки: после перезагрузки их не будет, и Claude их не увидит. Чтобы правки сохранялись, откройте опубликованный артефакт с базой.'),
+    h('p', { class: 'note' }, `Данные опубликованы из коммита ${S.base || '?'}. Изменено файлов: ${changed.length}${changed.length ? ' (' + changed.join(', ') + ')' : ''}.`),
+    list.length ? h('div', { class: 'tablewrap' }, h('table', {}, h('thead', {}, h('tr', {}, ['Запись', 'Что', 'Автор', 'Когда', 'Состояние', ''].map(t => h('th', {}, t)))), h('tbody', {}, rows)))
+      : h('p', { class: 'empty' }, 'Правок пока нет. Измените любое поле записи: правка появится здесь.'));
+}
+
+// ---------------------------------------------------------------- tabs and start
+function showTab(name) {
+  for (const b of document.querySelectorAll('.tabs button')) b.setAttribute('aria-selected', String(b.dataset.tab === name));
+  for (const t of ['record', 'map', 'run', 'edits', 'check']) $('#tab-' + t).hidden = t !== name;
+  if (name === 'map') renderMap();
+  if (name === 'run' && !$('#run-go')) renderRunForm();
+  if (name === 'edits') renderEdits();
+  if (name === 'check') renderCheck();
+}
+document.querySelector('.tabs').addEventListener('click', ev => { const b = ev.target.closest('button[data-tab]'); if (b) showTab(b.dataset.tab); });
+$('#btn-check').addEventListener('click', check);
+let searchTimer = 0;
+$('#search').addEventListener('input', ev => { clearTimeout(searchTimer); searchTimer = setTimeout(() => search(ev.target.value), 150); });
+
+async function start() {
+  try {
+    const index = await fetch('data/files.json').then(r => { if (!r.ok) throw new Error('data/files.json: ' + r.status); return r.json(); });
+    S.base = index.commit;
+    S.files = index.files;
+    $('#base').textContent = 'данные main @ ' + S.base;
+    const texts = await Promise.all(S.files.map(f => fetch('data/' + f).then(r => { if (!r.ok) throw new Error(f + ': ' + r.status); return r.text(); })));
+    S.files.forEach((f, j) => { S.orig[f] = texts[j]; try { S.origAst[f] = parseRon(texts[j]); } catch (e) { console.warn(f, e); } });
+  } catch (err) {
+    $('#tab-record').replaceChildren(h('p', { class: 'issue' }, 'Данные игры не загрузились: ' + err.message));
+    return;
+  }
+  rebuild();
+  S.open.add(treeKey('presets/default.ron', []));
+  renderTree();
+  renderEditsCount();
+  select('presets/default.ron', []);
+  connectDb();
+  check();
+}
+start();
+</script>

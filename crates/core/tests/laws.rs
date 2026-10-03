@@ -933,7 +933,11 @@ fn the_heir_of_a_testament_is_crowned_once_over_the_law() {
         (c.rulers[1].name.as_str(), c.rulers[1].designated),
         ("p1", true)
     );
-    let crowned = c.entries.iter().find(|e| e.title == "Новое правление").unwrap();
+    let crowned = c
+        .entries
+        .iter()
+        .find(|e| e.title == "Новое правление")
+        .unwrap();
     assert!(crowned.text.contains("завещани"), "{}", crowned.text);
     let w = &crowned.snapshot;
     assert_eq!(w.heirs[0].name, "p0");
@@ -943,7 +947,11 @@ fn the_heir_of_a_testament_is_crowned_once_over_the_law() {
     let mut plain = g.clone();
     plain.data.testament.as_mut().unwrap().heir = vec![];
     let legitimacy = |c: &sim::Chronicle| {
-        let e = c.entries.iter().find(|e| e.title == "Новое правление").unwrap();
+        let e = c
+            .entries
+            .iter()
+            .find(|e| e.title == "Новое правление")
+            .unwrap();
         e.snapshot.axes[&AxisId("legitimacy".into())]
     };
     assert!(legitimacy(&c) > legitimacy(&next_reign(&plain)));
@@ -968,7 +976,12 @@ fn a_testament_heir_is_contested_by_its_own_chance() {
         };
         g.write_testament(will).unwrap();
         let c = next_reign(&g);
-        contested(c.entries.iter().find(|e| e.title == "Новое правление").unwrap())
+        contested(
+            c.entries
+                .iter()
+                .find(|e| e.title == "Новое правление")
+                .unwrap(),
+        )
     };
     for (chance, designate, disputed) in [(100, 0, true), (0, 100, false)] {
         let mut data = data.clone();

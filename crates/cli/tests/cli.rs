@@ -600,16 +600,17 @@ fn batch_time(data: &str) -> std::time::Duration {
         .unwrap()
 }
 
-/// Stage 18, criterion 6: the graph alone costs at most 15%. Both arms on data/ without
+/// Stage 18, criterion 6: the graph and the events it drives (omens, schism, famine; stage 20)
+/// cost at most 30%. Both arms on data/ without
 /// `laws` (their cost is `laws_cost_is_bounded`), with and without the graph's edges.
 /// `cargo test --release -p cli -- --ignored graph_costs`.
 #[test]
 #[ignore = "release only, half a minute"]
-fn graph_costs_at_most_15_percent() {
+fn graph_costs_at_most_30_percent() {
     let old = batch_time(&data_without("no_graph", &["laws", "influences", "loops"]));
     let new = batch_time(&data_without("no_laws", &["laws"]));
     assert!(
-        new.as_millis() * 100 <= old.as_millis() * 115,
+        new.as_millis() * 100 <= old.as_millis() * 130,
         "{old:?} -> {new:?}"
     );
 }

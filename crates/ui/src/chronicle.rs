@@ -68,8 +68,8 @@ pub fn chronicle(
                 let text = match crowns {
                     true => RichText::new(format!(
                         "{date}  † {}. {}",
-                        c.rulers[r - 1].name,
-                        c.rulers[r].name
+                        c.rulers[r - 1].full_name(),
+                        c.rulers[r].full_name()
                     ))
                     .strong()
                     .color(FG),
@@ -88,7 +88,7 @@ pub fn chronicle(
         })
     });
     let Some(e) = c.entries.get(selected) else {
-        egui::CentralPanel::default().show(ui, |ui| ui.label(fall(c, d)));
+        egui::CentralPanel::default().show(ui, |ui| ui.label(&c.epilogue));
         return cmd;
     };
     egui::Panel::right("snapshot")
@@ -97,7 +97,9 @@ pub fn chronicle(
             ui.allocate_ui(vec2(ui.available_width(), 260.0), |ui| {
                 map.show(ui, &e.snapshot, d, &[]);
             });
-            snapshot_table(ui, e, d);
+            // The numbers of the year on hover (stage 22).
+            let more = ui.small(RichText::new(crate::NUMBERS).color(FG2));
+            more.on_hover_ui(|ui| snapshot_table(ui, e, d));
         });
     egui::CentralPanel::default().show(ui, |ui| {
         ui.set_max_width(680.0);
@@ -114,7 +116,7 @@ pub fn chronicle(
         ui.label(
             RichText::new(format!(
                 "{} · {reign}-й год правления · {dynasty}-й год династии",
-                ruler.name
+                ruler.full_name()
             ))
             .small()
             .color(FG2),
@@ -133,7 +135,7 @@ pub fn chronicle(
             ui.label(
                 RichText::new(format!(
                     "{}, {}–{}, конец правления: {cause}",
-                    prev.name,
+                    prev.full_name(),
                     years(prev.start),
                     years(prev.end)
                 ))
@@ -151,6 +153,11 @@ pub fn chronicle(
             let rect = resp.response.rect;
             ui.painter()
                 .vline(rect.left(), rect.y_range(), (2.0, RUBRIC));
+        }
+        // How the dynasty ended, after its last entry.
+        if selected + 1 == c.entries.len() {
+            ui.add_space(10.0);
+            ui.label(RichText::new(&c.epilogue).italics());
         }
     });
     cmd
@@ -209,6 +216,7 @@ pub fn summary(
                 ))
                 .color(FG2),
             );
+            ui.label(RichText::new(&c.epilogue).italics());
             ui.add_space(20.0);
             heading(ui, "Итоговый счёт");
             ui.label(RichText::new(thousands(s.total)).size(40.0).strong());
@@ -319,7 +327,7 @@ pub fn reign_over(
         let years = (founder.end.0 - founder.start.0) / w.time_unit.ticks_per_year;
         let cause = founder.cause.as_deref().map_or("", |c| reign_end(d, c));
         ui.label(RichText::new("Итог правления").small().color(RUBRIC));
-        ui.label(RichText::new(&founder.name).size(22.0).strong());
+        ui.label(RichText::new(founder.full_name()).size(22.0).strong());
         ui.label(format!(
             "{}–{}, {years} {} на троне. Конец правления: {cause}.",
             date(founder.start),
@@ -327,15 +335,20 @@ pub fn reign_over(
             plural(years, ["год", "года", "лет"]),
         ));
         heading(ui, "Наследник");
-        let heir = match c.rulers.get(1) {
-            Some(r) => format!("На престол взошёл {}.", r.name),
-            None => format!("Наследника не осталось: {}.", fall(c, d).to_lowercase()),
+        // The successor as the chronicle crowned him.
+        let crowned = (reigns(c, d).iter()).position(|&(r, crowns)| r == 1 && crowns);
+        let heir = match (crowned, c.rulers.get(1)) {
+            (Some(i), _) => c.entries[i].text.clone(),
+            (None, Some(r)) => format!("На престол взошёл {}.", r.name),
+            (None, None) => format!("Наследника не осталось: {}.", fall(c, d).to_lowercase()),
         };
         ui.label(heir);
-        let room = ctx.content_rect().height() - 320.0;
+        let room = ctx.content_rect().height() - 380.0;
         egui::ScrollArea::vertical()
             .max_height(room.max(200.0))
             .show(ui, |ui| {
+                heading(ui, "Жизнеописание");
+                ui.label(RichText::new(&founder.biography).italics());
                 heading(ui, "Ключевые решения");
                 if s.decisive.is_empty() {
                     ui.label(
@@ -389,7 +402,7 @@ pub fn reign_over(
 
 /// The family tree card: the founder, his children under him and so on down, the dead in
 /// grey, rulers with their reigns (`rulers`, in crowning order, once the dynasty is played).
-/// True when closed.
+/// A click on a ruler opens his life under him (kept in egui memory). True when closed.
 pub fn tree(
     ctx: &egui::Context,
     kin: &[Kin],
@@ -398,6 +411,8 @@ pub fn tree(
     unit: TimeUnit,
 ) -> bool {
     let mut close = false;
+    let open_id = egui::Id::new("tree-life");
+    let open = ctx.data(|d| d.get_temp::<Option<usize>>(open_id)).flatten();
     let modal = egui::Modal::new(egui::Id::new("tree")).show(ctx, |ui| {
         ui.set_width(520.0);
         ui.label(RichText::new("Родословная").size(20.0).strong());
@@ -420,7 +435,8 @@ pub fn tree(
                         (None, None) => format!("р. {}", k.born),
                     };
                     let bastard = if k.bastard { ", бастард" } else { "" };
-                    let mut text = format!("{} ({life}{bastard})", k.name);
+                    let name = (k.crowned.and(reign(i))).map_or(k.name.clone(), |r| r.full_name());
+                    let mut text = format!("{name} ({life}{bastard})");
                     if let Some(y) = k.crowned {
                         let till = reign(i)
                             .filter(|r| r.cause.is_some())
@@ -436,10 +452,34 @@ pub fn tree(
                         (false, true) => text.strong(),
                         _ => text,
                     };
+                    let life = k.crowned.and(reign(i)).map(|r| &r.biography);
+                    let life = life.filter(|b| !b.is_empty());
                     ui.horizontal(|ui| {
                         ui.add_space(depth as f32 * 20.0);
-                        ui.label(text);
+                        let label = egui::Label::new(text);
+                        match life {
+                            Some(_) => {
+                                let resp = ui.add(label.sense(egui::Sense::click()));
+                                if resp.on_hover_text("Жизнеописание").clicked() {
+                                    let next = (open != Some(i)).then_some(i);
+                                    ctx.data_mut(|d| d.insert_temp(open_id, next));
+                                }
+                            }
+                            None => {
+                                ui.add(label);
+                            }
+                        }
                     });
+                    if let Some(b) = life.filter(|_| open == Some(i)) {
+                        let left = (depth * 20 + 20).min(120) as i8;
+                        let margin = egui::Margin {
+                            left,
+                            ..Default::default()
+                        };
+                        egui::Frame::new().inner_margin(margin).show(ui, |ui| {
+                            ui.label(RichText::new(b).italics().color(FG));
+                        });
+                    }
                 }
             });
         ui.add_space(8.0);
@@ -466,7 +506,7 @@ pub fn family(kin: &[Kin]) -> Vec<(usize, usize)> {
 
 /// «Ульрих и потомки · 1187–1290».
 fn house(c: &Chronicle, start_year: u32) -> String {
-    let founder = c.rulers.first().map_or("", |r| &r.name);
+    let founder = c.rulers.first().map_or(String::new(), |r| r.full_name());
     format!(
         "{founder} и потомки · {start_year}–{}",
         start_year + c.years

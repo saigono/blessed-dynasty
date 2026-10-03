@@ -1111,7 +1111,6 @@ mod tests {
             designated: (seed == 1) as u32,
             bastards: 2 * (seed == 2) as u32,
             nodes: vec![],
-            epilogue: String::new(),
             bounds: vec![],
             shocks: (0, 0),
             score_at: score / 2,

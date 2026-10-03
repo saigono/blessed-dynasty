@@ -95,6 +95,9 @@ const OMEN: &str = "Знамение. ";
 /// The start of the treasury line every year of the journal has.
 const MONEY: &str = "Казна:";
 
+/// Over the numbers of a year of the journal or an entry of the chronicle, shown on hover.
+const NUMBERS: &str = "в цифрах…";
+
 struct App {
     game: Option<Game>,
     screen: Screen,
@@ -240,12 +243,14 @@ impl App {
                 if let Screen::Event(v) = &self.screen
                     && let Some(c) = v.choices.get(i)
                 {
-                    // A symptom of a loop of the graph (stage 20) is marked so.
+                    // A symptom of a loop of the graph (stage 20) is marked so. The choice
+                    // as the chronicle tells it (stage 22), before it is made.
                     let events = self.game.as_ref().map_or(&[][..], |g| &g.data.events);
                     let omen = events.iter().any(|e| e.id == v.event_id && e.omen);
                     let mark = if omen { OMEN } else { "" };
-                    self.chosen
-                        .push((format!("{mark}«{}»: {}", v.title, c.text), None));
+                    let told = (self.game.as_ref().and_then(|g| g.told(i)))
+                        .unwrap_or_else(|| format!("«{}»: {}", v.title, c.text));
+                    self.chosen.push((format!("{mark}{told}"), None));
                 }
             }
             _ => {}
@@ -904,11 +909,23 @@ fn journal(ui: &mut Ui, journal: &[(String, Vec<Line>)]) {
         } else {
             date.color(FG2)
         });
-        for (text, up) in lines {
+        // Told in words; the lines with numbers (the treasury, the axes) on hover.
+        let (numbers, words): (Vec<_>, Vec<_>) = lines
+            .iter()
+            .partition(|(t, _)| t.chars().any(|c| c.is_ascii_digit()));
+        for (text, up) in words.iter().copied() {
             ui.small(RichText::new(text).color(tone(*up)));
         }
-        if lines.iter().all(|(t, _)| t.starts_with(MONEY)) {
+        if words.is_empty() {
             ui.small(RichText::new("Тихий год").color(FG2));
+        }
+        if !numbers.is_empty() {
+            let more = ui.small(RichText::new(NUMBERS).color(FG2));
+            more.on_hover_ui(|ui| {
+                for (text, up) in numbers {
+                    ui.small(RichText::new(text).color(tone(*up)));
+                }
+            });
         }
         ui.add_space(4.0);
     }
@@ -1226,8 +1243,8 @@ fn side(ui: &mut Ui, g: &Game) {
 const TREND_YEARS: u32 = 5;
 const GENERATION: u32 = 30;
 const FAR: u32 = 60;
-/// A trend by the change over `TREND_YEARS`: down by 5 and more, by 1 and more, under 1 either
-/// way, up by 1, up by 5.
+/// A trend by the change over `TREND_YEARS`, in hundredths of the axis range (`max − min`):
+/// down by 5 and more, by 1 and more, under 1 either way, up by 1, up by 5.
 const ARROWS: [&str; 5] = ["⇊", "↘", "→", "↗", "⇈"];
 /// A node open in words, by fifths of its range.
 const LEVELS: [&str; 5] = ["ничтожно", "низко", "средне", "высоко", "предельно"];
@@ -1249,7 +1266,7 @@ fn axes_panel(ui: &mut Ui, g: &Game) {
     Grid::new("axes").show(ui, |ui| {
         for a in &d.axes {
             let (v, sight) = (w.axes[&a.id], graph::sight(d, w, a));
-            let arrow = arrow(soon.axes[&a.id] - v);
+            let arrow = arrow(a, soon.axes[&a.id] - v);
             let mut notes = vec![pressing(d, w, a, sight == Sight::Numbers)];
             let value = match sight {
                 Sight::Closed(Some(at)) => {
@@ -1314,10 +1331,11 @@ fn axes_panel(ui: &mut Ui, g: &Game) {
     }
 }
 
-/// The trend arrow of a change over `TREND_YEARS`.
-fn arrow(change: Fx) -> &'static str {
-    let one = Fx::SCALE;
-    ARROWS[match change.0 {
+/// The trend arrow of a change of `a` over `TREND_YEARS`, relative to its range: an axis of
+/// 0–100 and the treasury moving as fast for their size get the same arrow.
+fn arrow(a: &AxisDef, change: Fx) -> &'static str {
+    let one = (a.max - a.min).0.max(1);
+    ARROWS[match change.0 * 100 {
         c if c <= -5 * one => 0,
         c if c <= -one => 1,
         c if c < one => 2,
@@ -1332,28 +1350,29 @@ fn level(a: &AxisDef, v: Fx) -> &'static str {
     LEVELS[i.clamp(0, 4) as usize]
 }
 
-/// «давят Расслоение −7, Хлеб −2»: the two largest pushes on `a` (`graph::pressing`) of at
-/// least a half; without `numbers` their signs alone. Empty when nothing pushes so.
+/// «держит Знать +3 · давит Расслоение −7»: the two largest pushes on `a`
+/// (`graph::pressing`) of at least a half, those up «держат», those down «давят»; without
+/// `numbers` their signs alone. Empty when nothing pushes so.
 fn pressing(d: &Data, w: &World, a: &AxisDef, numbers: bool) -> String {
     let big = |c: &Fx| c.0.abs() >= Fx::SCALE / 2;
-    let list: Vec<String> = (graph::pressing(d, w, &a.id, 2).iter())
-        .filter(|(_, c)| big(c))
-        .map(|(p, c)| {
-            let sign = if *c > Fx(0) { "+" } else { "−" };
-            match numbers {
-                true => format!("{} {sign}{}", pusher(d, w, p), round(Fx(c.0.abs()))),
-                false => format!("{} ({sign})", pusher(d, w, p)),
-            }
-        })
-        .collect();
-    match list.len() {
-        0 => String::new(),
-        n => format!(
-            "{} {}",
-            plural(n as u32, ["давит", "давят", "давят"]),
-            list.join(", ")
-        ),
-    }
+    let pushes = graph::pressing(d, w, &a.id, 2);
+    let group = |up: bool, verb: [&str; 3]| {
+        let list: Vec<String> = (pushes.iter())
+            .filter(|(_, c)| big(c) && (*c > Fx(0)) == up)
+            .map(|(p, c)| {
+                let sign = if up { "+" } else { "−" };
+                match numbers {
+                    true => format!("{} {sign}{}", pusher(d, w, p), round(Fx(c.0.abs()))),
+                    false => format!("{} ({sign})", pusher(d, w, p)),
+                }
+            })
+            .collect();
+        let verb = plural(list.len() as u32, verb);
+        (!list.is_empty()).then(|| format!("{verb} {}", list.join(", ")))
+    };
+    let up = group(true, ["держит", "держат", "держат"]);
+    let down = group(false, ["давит", "давят", "давят"]);
+    up.into_iter().chain(down).collect::<Vec<_>>().join(" · ")
 }
 
 /// Who pushes: a law by its name, an edge by its source node, a node still closed as
@@ -1792,7 +1811,7 @@ mod tests {
         fn click_label(&mut self, label: &str) -> egui::FullOutput {
             self.ctx.enable_accesskit();
             // A card sizes itself in its first frames and settles in the middle after.
-            for _ in 0..4 {
+            for _ in 0..8 {
                 self.frame(vec![]);
             }
             let out = self.frame(vec![]);
@@ -1800,7 +1819,9 @@ mod tests {
                 .platform_output
                 .accesskit_update
                 .expect("accesskit is on");
-            let node = tree.nodes.iter().find(|(_, n)| n.label() == Some(label));
+            // A button has its text as label, a clickable label as value.
+            let node = (tree.nodes.iter())
+                .find(|(_, n)| n.label() == Some(label) || n.value() == Some(label));
             let b = node.and_then(|(_, n)| n.bounds());
             let b = b.unwrap_or_else(|| panic!("no «{label}» on screen"));
             let centre = Pos2::new((b.x0 + b.x1) as f32 / 2.0, (b.y0 + b.y1) as f32 / 2.0);
@@ -2053,6 +2074,27 @@ mod tests {
         }
         let founder = c.rulers[0].cause.as_deref().unwrap();
         assert_ne!(chronicle::reign_end(&h.app.data, founder), founder);
+        // Stage 22: the rulers by their epithets, the epilogue after the last entry and in
+        // the summary, the numbers of the entry on hover.
+        let crowning = reigns.iter().position(|(_, c)| *c).unwrap();
+        h.app.apply(Cmd::Entry(crowning));
+        let t = texts_of(&mut h);
+        let (prev, next) = (c.rulers[0].full_name(), c.rulers[1].full_name());
+        assert!(c.rulers.iter().all(|r| !r.epithet.is_empty()));
+        assert!(
+            t.iter().any(|x| x.ends_with(&format!("† {prev}. {next}"))),
+            "{t:?}"
+        );
+        assert!(
+            t.iter().any(|x| x.starts_with(&format!("{next} · "))),
+            "{t:?}"
+        );
+        assert!(!t.contains(&"Провинций".to_string()) && !t.contains(&c.epilogue));
+        assert!(hover(&mut h, NUMBERS).contains(&"Провинций".to_string()));
+        h.app.apply(Cmd::Entry(c.entries.len() - 1));
+        assert!(!c.epilogue.is_empty() && texts_of(&mut h).contains(&c.epilogue));
+        h.app.apply(Cmd::Summary);
+        assert!(texts_of(&mut h).contains(&c.epilogue));
     }
 
     /// Seed 1: a road to Берг, the first choice of every event, six years.
@@ -2070,7 +2112,8 @@ mod tests {
     }
 
     /// After a road and six years of seed 1 the journal holds, year by year, the choices
-    /// made and what changed, and shows the latest year on top.
+    /// made as the chronicle tells them (stage 22) and what changed, and shows the latest year
+    /// on top; the lines with numbers show on hover.
     #[test]
     fn the_year_summary_lists_what_happened() {
         let mut h = Harness::new();
@@ -2086,14 +2129,20 @@ mod tests {
                         "Казна: -23 (доход +32, содержание -5, траты -50)",
                         Some(false),
                     ),
-                    line("«Пожар в столице»: Отстроить посад из казны", None),
+                    line(
+                        "Ночной пожар выжег целый посад у реки, и Ульрих отстроил его на казённые деньги. Погорельцы долго благословляли его имя.",
+                        None,
+                    ),
                 ],
             ),
             (
                 "1189",
                 vec![
                     line("Казна: +27 (доход +32, содержание -5, траты 0)", Some(true)),
-                    line("«Знать требует»: Подтвердить вольности", None),
+                    line(
+                        "Бароны потребовали подтвердить их старые вольности, и Ульрих скрепил грамоту. Руки короны стали короче.",
+                        None,
+                    ),
                     line("Бюрократия -5", Some(false)),
                     line("Знать +11", Some(true)),
                     line("Завершено: Проложить дорогу (Берг)", None),
@@ -2106,7 +2155,10 @@ mod tests {
                         "Казна: +53 (доход +33, содержание -5, траты +25)",
                         Some(true),
                     ),
-                    line("«Чужие купцы»: Открыть ярмарки", None),
+                    line(
+                        "Купцы Веструма получили право торговать на ярмарках королевства.",
+                        None,
+                    ),
                     line("Рождение: Генрих", Some(true)),
                 ],
             ),
@@ -2114,7 +2166,10 @@ mod tests {
                 "1191",
                 vec![
                     money.clone(),
-                    line("«Собор знати»: Созвать собор и слушать", None),
+                    line(
+                        "Знать съехалась в столицу на собор, и Ульрих выслушал лучших людей королевства.",
+                        None,
+                    ),
                     line("Знать +7.84", Some(true)),
                 ],
             ),
@@ -2125,7 +2180,10 @@ mod tests {
                         "Казна: +43 (доход +33, содержание -5, траты +15)",
                         Some(true),
                     ),
-                    line("«Пограничная стычка»: Потребовать виру", None),
+                    line(
+                        "Дозор Веструма сжёг пограничную мельницу и убил людей, и корона потребовала виру за убитых.",
+                        None,
+                    ),
                     line("Рождение: Освальд", Some(true)),
                 ],
             ),
@@ -2142,6 +2200,13 @@ mod tests {
         let (latest, older) = (pos(&texts, "1193"), pos(&texts, "1192"));
         assert!(latest < older, "the latest year comes first");
         assert!(texts.iter().any(|t| t == "Смерть наследника: Генрих"));
+        assert!(
+            !texts
+                .iter()
+                .any(|t| t == "Знать +11" || t.starts_with(MONEY))
+        );
+        let numbers = hover(&mut h, NUMBERS);
+        assert!(numbers.iter().any(|t| t.starts_with(MONEY)), "{numbers:?}");
         // A quiet year says so; a reign over leaves the journal to the reign's card.
         let g = h.app.game.as_mut().unwrap();
         (g.data.quiet_weight, g.data.heirs.birth) = (1_000_000, vec![]);
@@ -2171,13 +2236,10 @@ mod tests {
         h.app.apply(Cmd::Wait);
         h.app.apply(Cmd::Choose(0));
         let lines = &h.app.journal.last().unwrap().1;
-        let omen = "Знамение. «Дороговизна хлеба»: Запретить вывоз хлеба";
+        let omen =
+            "Знамение. Хлеб на торгу подорожал втрое, и Ульрих запретил вывозить его за рубеж.";
         assert!(lines.iter().any(|(t, _)| t == omen), "{lines:?}");
-        assert!(
-            !lines
-                .iter()
-                .any(|(t, _)| t.starts_with("Знамение. «Неурожай»"))
-        );
+        assert_eq!(lines.iter().filter(|(t, _)| t.starts_with(OMEN)).count(), 1);
     }
 
     /// Stage 21: an axis shows its trend, target, the two largest pushes and the forecast; a
@@ -2227,6 +2289,22 @@ mod tests {
         assert!(!t.iter().any(|x| x.contains(" ? · откроет")));
     }
 
+    /// Stage 22: the arrow by the share of the axis range, so the treasury (−1000…10000) and
+    /// an axis of 0–100 moving as fast for their size get the same arrow.
+    #[test]
+    fn the_trend_arrow_is_relative_to_the_range() {
+        let d = load_data();
+        let axis = |id: &str| d.axes.iter().find(|a| a.id.0 == id).unwrap();
+        let (treasury, stability) = (axis("treasury"), axis("stability"));
+        // 3% of the range: 330 of the treasury, 3 of stability.
+        for (pct, want) in [(-6, "⇊"), (-3, "↘"), (0, "→"), (3, "↗"), (6, "⇈")] {
+            assert_eq!(arrow(treasury, Fx::from_int(110 * pct)), want, "{pct}");
+            assert_eq!(arrow(stability, Fx::from_int(pct)), want, "{pct}");
+        }
+        // +28 a year is no rush for a treasury of 11000.
+        assert_eq!(arrow(treasury, Fx::from_int(5 * 28)), "↗");
+    }
+
     /// Stage 21: a law in force says what it holds up and down and which edges it feeds,
     /// by the names in the data.
     #[test]
@@ -2258,9 +2336,10 @@ mod tests {
             .insert(AxisId("bureaucracy".into()), Fx::from_int(85));
         let t = texts_of(&mut h);
         assert_eq!(t[pos(&t, "Крепостное право (?)") + 1], law("law_serfdom"));
-        // And the anchor it shifts is a push on the node.
+        // And the anchor it shifts is a push on the node: up, so it «держит» (stage 22; down
+        // «давит», the_axes_tell_where_they_go_and_what_pushes_them).
         let line = &t[pos(&t, "Закрепощение") + 2];
-        assert!(line.starts_with("давит Крепостное право +30"), "{line}");
+        assert!(line.starts_with("держит Крепостное право +30"), "{line}");
     }
 
     /// Stage 15: land over the crown's limit shows its yearly penalty and what to do.
@@ -2628,8 +2707,12 @@ mod tests {
             shown.contains(&"Гарт отошла: вассал Вейр".to_string()),
             "{shown:?}"
         );
-        let heir = format!("На престол взошёл {}", c.rulers[1].name);
-        assert!(shown.iter().any(|t| t.starts_with(&heir)), "{heir}");
+        // The founder's life, and the successor as the chronicle crowned him.
+        assert!(shown.contains(&c.rulers[0].full_name()), "{shown:?}");
+        assert!(shown.contains(&c.rulers[0].biography), "{shown:?}");
+        let heir = &c.rulers[1].name;
+        let crowned = |t: &String| t.contains(heir.as_str()) && t.contains("престол");
+        assert!(shown.iter().any(crowned), "{heir}: {shown:?}");
         h.click_label("К хронике ▸");
         assert!(matches!(h.app.screen, Screen::Chronicle) && h.app.entry == 0);
     }
@@ -2661,10 +2744,19 @@ mod tests {
         let c = &h.app.dynasty.as_ref().unwrap().0;
         assert!(c.rulers.len() > 1);
         for r in &c.rulers[..2] {
-            let crowned = format!("♔ {} (", r.name);
+            let crowned = format!("♔ {} (", r.full_name());
             assert!(shown.iter().any(|t| t.starts_with(&crowned)), "{crowned}");
         }
         assert_eq!(chronicle::family(&c.kin).len(), c.kin.len());
+        // Stage 22: a click on a ruler tells his life under him, a second click hides it.
+        let (life, heir) = (c.rulers[1].biography.clone(), c.rulers[1].full_name());
+        assert!(!life.is_empty() && !shown.contains(&life));
+        let label = shown.iter().find(|t| t.starts_with(&format!("♔ {heir} (")));
+        let label = label.unwrap().clone();
+        h.click_label(&label);
+        assert!(texts_of(&mut h).contains(&life), "{life}");
+        h.click_label(&label);
+        assert!(!texts_of(&mut h).contains(&life));
     }
 
     /// Stage 17: bastards show beside the heirs and in the family tree, out of the line.
@@ -2739,9 +2831,15 @@ mod tests {
             .unwrap();
         h.app.apply(Cmd::Choose(confirm));
         (h.app.screen, h.app.tree) = (Screen::Chronicle, true);
+        settle(&mut h);
         let shown = texts_of(&mut h);
-        let founder = "♔ Ульрих (р. 1155, отрёкся в 1187)";
-        assert!(shown.iter().any(|t| t.starts_with(founder)), "{shown:?}");
+        let founder = "(р. 1155, отрёкся в 1187)";
+        assert!(
+            shown
+                .iter()
+                .any(|t| t.starts_with("♔ Ульрих") && t.contains(founder)),
+            "{shown:?}"
+        );
     }
 
     /// Line segments painted in the holder border colour, in map coordinates.

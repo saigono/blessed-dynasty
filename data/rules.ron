@@ -39,6 +39,10 @@
     // preset's stability is where it starts, the gap a shock.
     stability: (axis: "stability", shocks: "shocks"),
 
+    // What the crown knows of the hidden nodes (section 7): a node opens in words at the
+    // `axis` of its `reveal`, every node in numbers with the forecast of 60 years at `numbers`.
+    reveal: (axis: "bureaucracy", numbers: 85),
+
     // Each faction's loyalty is its axis. `loyalty_axis` = weighted mean, rounded toward zero.
     factions: [
         (id: "nobles", axis: "loyalty_nobles", weight: 2),

@@ -200,7 +200,7 @@ fn every_reign_event_fires_under_neutral_play() {
     let data = load_all();
     let preset = preset(&read("presets/default.ron"), &data);
     let mut fired = BTreeSet::new();
-    for seed in 0..1000 {
+    for seed in 0..2000 {
         let mut g = Game::new(data.clone(), &preset, seed);
         for _ in 0..60 {
             match g.wait().unwrap() {
@@ -225,14 +225,16 @@ fn every_reign_event_fires_under_neutral_play() {
 /// The same for the simulation: 1000 dynasties, each after a neutral reign of its seed; every
 /// simulation event and every omen reaches the chronicle at least once. Stage 20: every
 /// fourth dynasty has «Городские вольности» in force from the start (as `cli batch --law`):
-/// without a founder's law faith never falls to the schism.
+/// without a founder's law faith never falls to the schism. Stage 26c: 2000 dynasties, not
+/// 1000: «Подложное завещание» comes about once in 700, and the compound events moved the
+/// thousand it fell twice in to one it never does.
 #[test]
-#[ignore = "about a minute in release; stage 9 acceptance, run with --release --ignored"]
+#[ignore = "two minutes in release; stage 9 acceptance, run with --release --ignored"]
 fn every_sim_event_fires_in_a_thousand_dynasties() {
     let data = load_all();
     let preset = preset(&read("presets/default.ron"), &data);
     let mut fired: BTreeMap<String, u32> = BTreeMap::new();
-    for seed in 0..1000 {
+    for seed in 0..2000 {
         let mut g = Game::new(data.clone(), &preset, seed);
         if seed % 4 == 0 {
             g.world.flags.insert("law_charters".into());

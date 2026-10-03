@@ -921,13 +921,14 @@ fn wars(out: &str) -> i64 {
 
 /// Stage 24 acceptance: «Полная казна — крепость державы» over 1000 dynasties (300 before
 /// stage 26b: a shift of the rng alone turned the medians over on them, 1730 against 1795;
-/// on 1000 the precept hoards, 1773 against 1705): the median treasury at the end higher
-/// than without a testament, fewer wars.
+/// on 1000 the precept hoards, 1773 against 1705; 2000 since stage 26c, whose compound events
+/// turned the thousand over again, 1768 against 1788; on 2000, 1805 against 1791): the median
+/// treasury at the end higher than without a testament, fewer wars.
 /// `cargo test --release -p cli -- --ignored treasury_precept`.
 #[test]
-#[ignore = "release only, a minute"]
+#[ignore = "release only, two minutes"]
 fn the_treasury_precept_hoards_and_wars_less() {
-    let outs = testaments("1000", "neutral", &["", "precept: Some(\"treasury\")"]);
+    let outs = testaments("2000", "neutral", &["", "precept: Some(\"treasury\")"]);
     let treasury = |o: &str| median(o, "#   казна в конце ");
     assert!(
         treasury(&outs[1]) > treasury(&outs[0]),

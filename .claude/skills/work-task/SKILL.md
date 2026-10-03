@@ -44,8 +44,9 @@ description: Запуск и приёмка этапов Blessed Dynasty чер�
 2. В основном репозитории на `main` без незакоммиченных изменений: `git merge --no-ff stage/<id> -m "merge stage <id>"`. Конфликт: не решай молча, покажи файлы и остановись.
 3. `cargo test --workspace` на main. Упало: откати merge (`git reset --hard ORIG_HEAD`), статус blocked, скажи.
 4. `git worktree remove /home/danil/code/bd-stage-<id>`. Ветку не удаляй.
-5. Трекер: `status: done`, `updated`.
-6. Скажи, какие этапы теперь разблокированы (todo с полными deps).
+5. Если этап трогал `crates/ui`: собери игру `scripts/game-bundle.sh` и опубликуй `target/game-artifact/` по ссылке из `docs/game-bundle.md` (обновление того же артефакта, не новый). Подробности там же.
+6. Трекер: `status: done`, `updated`.
+7. Скажи, какие этапы теперь разблокированы (todo с полными deps).
 
 ## Ограничения
 

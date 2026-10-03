@@ -444,7 +444,8 @@
     // else the first heir in line of `age` or older not yet married. A court at war with the
     // crown, already wed to it or with a relation below refuse_below turns it away outright;
     // else it agrees with the chance in percent: percent + relation * relation_k
-    // + sum(axis * k) + (our strength / theirs - 1) * strength_k (war::strengths), 0..=100.
+    // + sum(axis * k) + (our strength / theirs - 1) * strength_k (war::strengths)
+    // - war_penalty while the crown is at war with anyone, 0..=100.
     marriage: (
         age: 14,
         refuse_below: -20,
@@ -452,6 +453,8 @@
         relation_k: 0.5,
         axes: [("prestige", 0.1)],
         strength_k: 20,
+        // A court weds its child into a house at war unwillingly (stage 25).
+        war_penalty: 20,
     ),
 
     // Every coronation in the simulation (sim::crown), in this order: each faction axis moves
@@ -476,7 +479,9 @@
         precepts: [
             (id: "treasury", name: "Полная казна — крепость державы",
                 description: "Копить золото и не начинать войн без крайней нужды.",
-                weights: {"treasury": 0.3, "income": 2, "province_income": 1, "army": 0.15, "war": -40}),
+                // `marriage` 6: a wedding outweighs its dowry for a ruler who counts gold
+                // twice too (stage 25, docs/calibration.md).
+                weights: {"treasury": 0.3, "income": 2, "province_income": 1, "army": 0.15, "war": -40, "marriage": 6}),
             (id: "sword", name: "Меч кормит род",
                 description: "Держать сильное войско и добывать земли оружием.",
                 weights: {"war": 10, "army": 0.1, "province": 10, "prestige": 0.3}),
@@ -660,7 +665,10 @@
                 "health": 0.5, "relation": 0.1, "crown_power": 0.5,
                 "build": 3, "grant": -20, "revoke": -3, "secede": -10, "war": -10, "hostage": -10,
                 "death": -500, "abdicate": -500, "province": 20, "heir": 60,
-                "heir_ability": 0.3, "heir_claim": 0.2, "army_upkeep": -0.1, "marriage": 20, "married": 30,
+                "heir_ability": 0.3, "heir_claim": 0.2, "army_upkeep": -0.1, "marriage": 7, "married": 30,
+                // `marriage` 7 (20 before stage 25): marry_heir is open in peace too, and at
+                // 7 its cost (20 * treasury 0.3) about cancels it, so the automaton weds by it
+                // now and then, mostly through heir_marriage (docs/calibration.md, stage 25).
                 // A bastard recognized: the church frowns; with no heir left `heir` adds up.
                 "recognize": -20,
                 // Beyond the limit a grant is weighed like any other (grant, province); with

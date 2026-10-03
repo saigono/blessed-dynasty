@@ -3814,7 +3814,8 @@ mod tests {
         };
         assert!(why(&mut h, "Построить крепость").contains(&"Нужно 120 золота, в казне 80".into()));
         assert!(why(&mut h, "Признать бастарда").contains(&"Нет бастардов".into()));
-        assert!(why(&mut h, "Женить наследника").contains(&"Только во время войны".into()));
+        let heir = "Нет неженатых наследников от 14 лет".to_string();
+        assert!(why(&mut h, "Женить наследника").contains(&heir));
         h.click_label("Построить крепость");
         assert!(h.app.picking.is_none() && h.game().world.active_actions.is_empty());
         // The slot taken: every action of peace grey, with what opens one more.

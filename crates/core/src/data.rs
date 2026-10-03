@@ -867,13 +867,16 @@ pub struct MarriageRules {
     pub age: u32,
     /// A court at war with the crown or with a relation below this turns any suit away.
     pub refuse_below: Fx,
-    /// The chance in percent: percent + relation * relation_k + sum(axis * k)
-    /// + (ours / theirs - 1) * strength_k (`war::strengths`), clamped to 0..=100.
+    /// The chance in percent: percent + relation * relation_k + sum(axis * k) +
+    /// (ours / theirs - 1) * strength_k (`war::strengths`), less war_penalty while the crown
+    /// is at war with anyone, clamped to 0..=100.
     pub percent: Fx,
     pub relation_k: Fx,
     #[serde(default)]
     pub axes: Vec<(AxisId, Fx)>,
     pub strength_k: Fx,
+    #[serde(default)]
+    pub war_penalty: Fx,
 }
 
 impl MarriageRules {
@@ -903,7 +906,12 @@ impl MarriageRules {
         let (ours, theirs) = crate::war::strengths(w, d, n);
         let one = Fx::from_int(1);
         let ratio = ours / theirs.max(one) - one;
-        let base = self.percent + nb.relation * self.relation_k + ratio * self.strength_k;
+        let at_war = if w.war.is_some() {
+            self.war_penalty
+        } else {
+            Fx(0)
+        };
+        let base = self.percent + nb.relation * self.relation_k + ratio * self.strength_k - at_war;
         let axes = self.axes.iter().map(|(a, k)| w.axes[a] * *k);
         axes.fold(base, |s, v| s + v)
             .clamp(Fx(0), Fx::from_int(100))

@@ -528,3 +528,33 @@ fn a_war_outcome_tells_its_battles() {
     }
     assert_eq!(seen.len(), 3, "{seen:?}");
 }
+
+/// Stage 25: a court agrees to a suit less readily while the crown is at war with anyone
+/// (`marriage.war_penalty`); the war is no ban.
+#[test]
+fn a_war_lowers_the_chance_of_a_suit() {
+    let data = content();
+    let preset = Preset::load_with_map(PRESET, MAP, &data).unwrap();
+    let mut g = Game::new(data, &preset, 1);
+    g.world.heirs[0].age = 20; // someone to wed
+    let vestrum = NeighbourId("vestrum".into());
+    let chance = |g: &Game| g.data.marriage.chance(&g.world, &g.data, &vestrum);
+    let peace = chance(&g);
+    g.world.war = Some(bd_core::war::War {
+        enemy: nordmark(),
+        stage: bd_core::war::WarStage::Fighting,
+        our_strength: Fx(0),
+        their_strength: Fx(0),
+        war_score: Fx(0),
+        started: bd_core::time::Tick(0),
+        target: None,
+        battles: vec![],
+    });
+    let war = chance(&g);
+    assert!(war > Fx(0), "{peace:?} {war:?}");
+    assert_eq!(
+        peace - war,
+        g.data.marriage.war_penalty,
+        "{peace:?} {war:?}"
+    );
+}

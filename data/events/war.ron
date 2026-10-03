@@ -9,7 +9,8 @@
 // (battle, talks, siege) can cut it short: talks spawn the outcome by the score at once.
 // Victory takes the province the war is fought for (War.target, ProvinceTarget WarTarget).
 // war_siege_won is the card of the siege action (actions.ron war_siege_target): the province
-// is taken already, its one choice signs the peace.
+// is taken already, its one choice signs the peace. A war breaks the enemy's treaty of
+// nb_embassy: war_declared clears its mark "treaty".
 [
     (
         id: "war_declared",
@@ -24,21 +25,21 @@
         choices: [
             (
                 text: "Нанять наёмников",
-                effects: [Axis("treasury", -60), Axis("army", 25), SetWarStage(Fighting), SpawnEvent("war_clash", 1)],
+                effects: [Axis("treasury", -60), Axis("army", 25), SetWarStage(Fighting), SpawnEvent("war_clash", 1), Unmark("treaty")],
                 cause_tag: "war_mercenaries",
                 hint: "Наёмник верен, пока ему платят.",
                 told: "Для войны с {neighbour.тв} корона набрала наёмников на казённое серебро.",
             ),
             (
                 text: "Созвать вассалов",
-                effects: [Axis("loyalty_nobles", -5), Axis("army", 15), SetWarStage(Fighting), SpawnEvent("war_clash", 1)],
+                effects: [Axis("loyalty_nobles", -5), Axis("army", 15), SetWarStage(Fighting), SpawnEvent("war_clash", 1), Unmark("treaty")],
                 cause_tag: "war_levy",
                 hint: "Бароны, пролившие кровь за корону, потребуют награды.",
                 told: "На войну с {neighbour.тв} {ruler} {ruler:созвал|созвала} вассалов с их дружинами.",
             ),
             (
                 text: "Выступить малым войском",
-                effects: [Axis("prestige", -2), SetWarStage(Fighting), SpawnEvent("war_clash", 1)],
+                effects: [Axis("prestige", -2), SetWarStage(Fighting), SpawnEvent("war_clash", 1), Unmark("treaty")],
                 cause_tag: "war_small_army",
                 hint: "Малое войско быстро выступает и быстро тает.",
                 told: "{ruler} {ruler:выступил|выступила} против {neighbour.род} с малым войском, не дожидаясь подкреплений.",

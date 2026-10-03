@@ -629,39 +629,96 @@ fn could_fire(g: &Game, id: &str, target: &Option<bd_core::rules::Target>) -> bo
         }
         _ => true,
     };
-    e.when.eval(w) && here
+    let marked =
+        (e.unmarked.as_ref()).is_some_and(|m| target.as_ref().is_some_and(|t| w.marked(t, m)));
+    e.when.eval(w) && here && !marked
 }
 
-/// Acceptance, bug of playtest 02 (stage 25): after «Строить заново только из камня» the
-/// capital fire is never picked again: its `when` says no, and years of play with the fire
-/// the likeliest event do not bring it.
-#[test]
-fn a_capital_rebuilt_in_stone_burns_no_more() {
-    let mut g = waiting(1, "cap_fire", None);
-    assert!(could_fire(&g, "cap_fire", &None));
-    let e = g.data.events.iter().find(|e| e.id == "cap_fire").unwrap();
-    let stone = e
-        .choices
-        .iter()
-        .position(|c| c.text == "Строить заново только из камня");
-    g.choose(stone.unwrap()).unwrap();
-    assert!(g.world.flags.contains("stone_city"));
-    assert!(!could_fire(&g, "cap_fire", &None));
+/// Plays `g` for `years`, event `id` the likeliest and off cooldown, its other events by
+/// their first choice and `id` by its last one. Returns the targets `id` fired at.
+fn fired_at(g: &mut Game, id: &str, years: u32) -> Vec<bd_core::rules::Target> {
     for e in &mut g.data.events {
-        if e.id == "cap_fire" {
-            e.weight = 1_000_000;
+        if e.id == id {
+            (e.weight, e.cooldown_years) = (1_000_000, bd_core::time::Years(0));
         }
     }
-    for _ in 0..40 {
+    let mut at = vec![];
+    for _ in 0..years {
         match g.wait() {
             Ok(Step::Event(v)) => {
-                assert_ne!(v.event_id, "cap_fire");
-                g.choose(0).unwrap();
+                let fire = v.event_id == id;
+                at.extend(v.target.clone().filter(|_| fire));
+                let last = v.choices.len() - 1;
+                assert!(
+                    g.choose(if fire { last } else { 0 }).is_ok(),
+                    "the reign ended"
+                );
             }
+            Ok(Step::ReignEnded { .. }) | Err(_) => break,
             Ok(_) => {}
-            Err(_) => break,
         }
     }
+    at
+}
+
+/// Chooses `choice` of the event waiting in `g` and checks its target is marked `mark`.
+fn decide(g: &mut Game, choice: &str, mark: &str) -> bd_core::rules::Target {
+    let p = g.pending_event.clone().unwrap();
+    let e = g.data.events.iter().find(|e| e.id == p.event_id).unwrap();
+    let i = e.choices.iter().position(|c| c.text == choice).unwrap();
+    g.choose(i).unwrap();
+    let t = p.target.unwrap();
+    assert!(g.world.marked(&t, mark), "{t:?}");
+    t
+}
+
+/// Acceptance, bug of playtest 02 (stage 25): a town rebuilt in stone does not burn again;
+/// the other crown provinces still do.
+#[test]
+fn a_town_rebuilt_in_stone_burns_no_more() {
+    use bd_core::rules::Target;
+    let capital = Target::Province(bd_core::state::ProvinceId("capital".into()));
+    let mut g = waiting(1, "cap_fire", Some(capital.clone()));
+    decide(&mut g, "Строить заново только из камня", "stone");
+    let at = fired_at(&mut g, "cap_fire", 30);
+    assert!(!at.contains(&capital), "{at:?}");
+    assert!(at.len() >= 5, "{at:?}");
+}
+
+/// Acceptance (stage 25): a neighbour with a treaty sends no other embassy, the others do;
+/// a war with it breaks the treaty.
+#[test]
+fn a_treaty_is_signed_once_until_a_war() {
+    use bd_core::rules::Target;
+    let nordmark = Target::Neighbour(bd_core::state::NeighbourId("nordmark".into()));
+    let mut g = waiting(5, "nb_embassy", Some(nordmark.clone()));
+    decide(&mut g, "Подписать договор", "treaty");
+    let at = fired_at(&mut g, "nb_embassy", 20);
+    assert!(!at.contains(&nordmark) && !at.is_empty(), "{at:?}");
+    g.pending_event = Some(bd_core::game::PendingEvent {
+        event_id: "war_declared".into(),
+        target: Some(nordmark.clone()),
+        neighbour: None,
+    });
+    g.choose(2).unwrap();
+    assert!(!g.world.marked(&nordmark, "treaty"));
+}
+
+/// Acceptance (stage 25): an heir with an appanage does not ask again, his brother does.
+#[test]
+fn an_heir_with_an_appanage_asks_no_more() {
+    use bd_core::rules::Target;
+    let mut g = waiting(1, "heir_appanage", None);
+    let brother = g.data.newborn(g.world.next_heir_id);
+    g.world.add_heir(brother);
+    for h in &mut g.world.heirs {
+        h.age = 18;
+    }
+    let first = Target::Heir(g.world.heirs[0].id);
+    g.pending_event.as_mut().unwrap().target = Some(first.clone());
+    decide(&mut g, "Дать удел в кормление", "appanage");
+    let at = fired_at(&mut g, "heir_appanage", 10);
+    assert!(!at.contains(&first) && !at.is_empty(), "{at:?}");
 }
 
 /// Bug of playtest 02 (stage 25): every other decision for good is remembered too, and

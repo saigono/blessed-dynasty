@@ -228,6 +228,11 @@ pub enum Effect {
     EnactLaw(String),
     /// The law is no longer in force.
     RepealLaw(String),
+    /// The target of the event or action (a province, a neighbour, an heir) bears this mark
+    /// from now on, see `Event::unmarked`.
+    Mark(String),
+    /// The target no longer bears this mark.
+    Unmark(String),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -373,6 +378,8 @@ impl Effect {
             Effect::SetFlag(f) => {
                 w.flags.insert(f.clone());
             }
+            Effect::Mark(m) => _ = w.marks_mut(ctx.target).map(|s| s.insert(m.clone())),
+            Effect::Unmark(m) => _ = w.marks_mut(ctx.target).map(|s| s.remove(m)),
             Effect::ClearFlag(f) => {
                 w.flags.remove(f);
             }
@@ -637,6 +644,7 @@ impl Effect {
                     stance: Stance::Defend,
                     per_province: vassal.strength,
                     ordinal: (w.neighbours.values().map(|n| n.ordinal + 1).max()).unwrap_or(0),
+                    marks: Default::default(),
                 };
                 w.neighbours.insert(id, n);
             }
@@ -771,6 +779,10 @@ pub struct Event {
     /// and the simulation tells it in the chronicle whatever its importance.
     #[serde(default)]
     pub omen: bool,
+    /// The event never picks a target bearing this mark (`Effect::Mark`): a decision for
+    /// good about that province, neighbour or heir.
+    #[serde(default)]
+    pub unmarked: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Default)]

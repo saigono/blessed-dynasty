@@ -851,6 +851,8 @@ fn moves_crown_power(effects: &[Effect]) -> bool {
         Effect::Axis(..)
         | Effect::SetFlag(_)
         | Effect::ClearFlag(_)
+        | Effect::Mark(_)
+        | Effect::Unmark(_)
         | Effect::SpawnEvent(..)
         | Effect::RulerHealth(_)
         | Effect::HeirOp(_)
@@ -880,7 +882,16 @@ fn find_event<'a>(data: &'a Data, id: &str) -> Option<&'a Event> {
 
 /// `None`: the event needs no target. `Some(empty)`: it cannot fire now. Lazy: the pick
 /// asks every event of the pool each tick whether it has a target at all.
-fn candidates<'a>(
+fn candidates<'a>(e: &'a Event, w: &'a World) -> Option<Box<dyn Iterator<Item = Target> + 'a>> {
+    let all = candidates_of(&e.target, w)?;
+    match &e.unmarked {
+        Some(m) => Some(Box::new(all.filter(move |t| !w.marked(t, m)))),
+        None => Some(all),
+    }
+}
+
+/// The targets of `target`, marks aside (`candidates`).
+fn candidates_of<'a>(
     target: &'a EventTarget,
     w: &'a World,
 ) -> Option<Box<dyn Iterator<Item = Target> + 'a>> {
@@ -927,10 +938,10 @@ fn pick_event(
     offers: Vec<PendingEvent>,
 ) -> Option<PendingEvent> {
     let ready = |e: &Event| e.when.eval(w) && !(e.once && w.last_fired.contains_key(&e.id));
-    let targets = |e: &Event| candidates(&e.target, w).is_none_or(|mut t| t.next().is_some());
+    let targets = |e: &Event| candidates(e, w).is_none_or(|mut t| t.next().is_some());
     let fire = |e: &Event, rng: &mut Rng| {
         let mut pick = |t: Vec<Target>| t[rng.range(0, t.len() as i64) as usize].clone();
-        let target = candidates(&e.target, w).map(|t| pick(t.collect()));
+        let target = candidates(e, w).map(|t| pick(t.collect()));
         Some(PendingEvent {
             event_id: e.id.clone(),
             target,
@@ -1035,6 +1046,7 @@ mod tests {
             sign: Sign::Bad,
             target: EventTarget::None,
             omen: false,
+            unmarked: None,
             choices: vec![Choice {
                 text: id.into(),
                 effects,

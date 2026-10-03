@@ -55,6 +55,7 @@ fn game(data: &Data, law: &str, people: &[Person]) -> Game {
         married: *age >= 16,
         married_in: None,
         bastard: false,
+        marks: Default::default(),
     };
     for (i, p) in people.iter().enumerate().filter(|(_, p)| !p.2) {
         w.add_heir(heir(i, p));

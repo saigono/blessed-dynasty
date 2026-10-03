@@ -141,37 +141,39 @@
     ),
     (
         id: "cap_fire",
-        title: "Пожар в столице",
-        text: "Ночью занялись склады у реки, и к утру выгорел целый посад.",
-        // A city rebuilt in stone does not burn again (stage 25).
-        when: NotFlag("stone_city"),
+        title: "Пожар: {province}",
+        text: "Ночью в земле {province} занялись склады у реки, и к утру выгорел целый посад.",
+        // In a crown province, the capital among them. A town rebuilt in stone (the mark
+        // "stone") does not burn again; the others still may (stage 25).
+        when: All([]),
         weight: 3,
         once: false,
         cooldown_years: 12,
         importance: 3,
         sign: Bad,
-        target: None,
+        target: RandomProvince((holder: Crown)),
+        unmarked: Some("stone"),
         choices: [
             (
                 text: "Отстроить посад из казны",
-                effects: [Axis("treasury", -50), Axis("loyalty_people", 4), Province(Capital, Population, -500)],
+                effects: [Axis("treasury", -50), Axis("loyalty_people", 4), Province(EventTarget, Population, -500)],
                 cause_tag: "fire_rebuilt",
                 hint: "Погорельцы помнят, кто дал им кров.",
-                told: "Ночной пожар выжег целый посад у реки, и {ruler} {ruler:отстроил|отстроила} его на казённые деньги. Погорельцы долго благословляли {ruler:его|её} имя.",
+                told: "Ночной пожар выжег целый посад в земле {province}, и {ruler} {ruler:отстроил|отстроила} его на казённые деньги. Погорельцы долго благословляли {ruler:его|её} имя.",
             ),
             (
                 text: "Пусть отстраиваются сами",
-                effects: [Province(Capital, Income, -2), Province(Capital, Population, -1500), Axis("loyalty_people", -4)],
+                effects: [Province(EventTarget, Income, -2), Province(EventTarget, Population, -1500), Axis("loyalty_people", -4)],
                 cause_tag: "fire_ignored",
                 hint: "Пепелище долго не зарастает.",
-                told: "Ночной пожар выжег посад у реки, и погорельцы отстраивались сами, как могли. Пепелище ещё долго чернело посреди города.",
+                told: "Ночной пожар выжег посад в земле {province}, и погорельцы отстраивались сами, как могли. Пепелище ещё долго чернело посреди города.",
             ),
             (
                 text: "Строить заново только из камня",
-                effects: [Axis("treasury", -80), Province(Capital, Population, -500), Axis("prestige", 8), Axis("loyalty_people", -2), SetFlag("stone_city")],
+                effects: [Axis("treasury", -80), Province(EventTarget, Population, -500), Axis("prestige", 8), Axis("loyalty_people", -2), Mark("stone")],
                 cause_tag: "fire_stone",
                 hint: "Каменный город не горит, но дорог.",
-                told: "Ночной пожар выжег посад у реки, и {ruler} {ruler:велел|велела} строить заново только из камня. Город стал краше, но казна опустела.",
+                told: "Ночной пожар выжег посад в земле {province}, и {ruler} {ruler:велел|велела} строить там заново только из камня. Город стал краше, но казна опустела.",
             ),
         ],
     ),
@@ -847,10 +849,12 @@
         importance: 2,
         sign: Good,
         target: Heir(18, 40),
+        // An heir with an appanage does not ask again (stage 25).
+        unmarked: Some("appanage"),
         choices: [
             (
                 text: "Дать удел в кормление",
-                effects: [HeirOp(TargetAbility(5)), HeirOp(TargetClaim(5)), Axis("income", -1), Axis("loyalty_nobles", -3)],
+                effects: [HeirOp(TargetAbility(5)), HeirOp(TargetClaim(5)), Axis("income", -1), Axis("loyalty_nobles", -3), Mark("appanage")],
                 cause_tag: "appanage_granted",
                 hint: "Наследник с уделом учится править, но обзаводится своим двором.",
                 told: "{heir} {heir:получил|получила} удел в кормление и свой двор, чтобы учиться править на деле.",
@@ -989,10 +993,13 @@
         importance: 2,
         sign: Good,
         target: Neighbour,
+        // A neighbour with a treaty does not send another, until a war breaks it (war_declared
+        // clears the mark, stage 25).
+        unmarked: Some("treaty"),
         choices: [
             (
                 text: "Подписать договор",
-                effects: [Relation(EventTarget, 15), Axis("income", 1), Axis("loyalty_nobles", -2)],
+                effects: [Relation(EventTarget, 15), Axis("income", 1), Axis("loyalty_nobles", -2), Mark("treaty")],
                 cause_tag: "embassy_treaty",
                 hint: "Договор с соседом кормит купцов и злит воинов.",
                 told: "{neighbour} {neighbour:прислал|прислала} послов, и корона подписала с {neighbour.тв} договор о вечном мире и торговле.",

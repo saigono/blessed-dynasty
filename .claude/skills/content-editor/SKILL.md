@@ -7,7 +7,7 @@ description: Редактор контента Blessed Dynasty (артефакт
 
 Описание страницы и формата правок: `docs/content-editor.md`.
 Артефакт: url записан в строке «Артефакт:» ниже. Если её нет, найди его через `Artifact` list по названию «Редактор Blessed Dynasty» и впиши сюда.
-Артефакт:
+Артефакт: https://claude.ai/artifact/WuYF3kGrgDQP3T5u7EpxMk
 Репозиторий: `/home/danil/code/blessed-dynasty`, ветка `main`.
 
 ## Режим «что правили»

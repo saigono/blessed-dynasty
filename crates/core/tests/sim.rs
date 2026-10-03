@@ -1490,6 +1490,20 @@ fn the_epithet_follows_the_deeds() {
     is(epithet(&["fort_built"], Sex::Male), "Тихий", false);
 }
 
+/// Stage 26c, a bug of the samples: the founder's life tells his heaviest decisions by their
+/// hints, but not the one that ended his reign: its end tells the abdication already.
+#[test]
+fn a_founders_life_does_not_tell_his_abdication_twice() {
+    let data = content();
+    let mut end = founder_of(&["fort_built", "abdication"], Sex::Male);
+    end.cause = "abdication".into();
+    let c = sim::run(end, &data, Rng::from_seed(1));
+    let life = &c.rulers[0].biography;
+    assert!(life.contains("репость, поставленная"), "{life}");
+    assert!(!life.contains("корону до срока"), "{life}");
+    assert!(life.contains("отрёкся от престола"), "{life}");
+}
+
 /// Stage 22: a life of 3-6 sentences for a ruler who abdicated, who died, and under whom
 /// the dynasty was usurped; it tells how he came to the throne and his epithet.
 #[test]

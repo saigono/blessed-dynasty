@@ -171,7 +171,7 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
         ..founder
     });
     let mut world = reign_end.world;
-    let (reign, told) = founder_reign(&world, &data, salt);
+    let (reign, told) = founder_reign(&world, &data, salt, c.rulers[0].cause.as_deref());
     finish(&mut c, reign, told, &world, &data, salt);
     let deserted = world.deserted;
     died(&mut world, &data, c.rulers[0].cause.as_deref());
@@ -629,8 +629,9 @@ fn variants(t: &crate::data::SimTexts, key: &str, own: &str) -> Vec<String> {
 
 /// The founder's reign as `finish` takes it, from the world at its end: his deeds by the
 /// cause tags of his decisions (the marks they left), his traits and the laws he left in
-/// force; the hints of his heaviest decisions as sentences.
-fn founder_reign(w: &World, d: &Data, salt: u64) -> (Reign, Vec<String>) {
+/// force; the hints of his heaviest decisions as sentences, but the one that ended his reign
+/// (`end`), which the end of the life tells.
+fn founder_reign(w: &World, d: &Data, salt: u64, end: Option<&str>) -> (Reign, Vec<String>) {
     let by = founder_decisions(w);
     let life = &d.sim.texts.life;
     let named = [("ruler", w.ruler.name.as_str(), Some(w.ruler.sex))];
@@ -645,7 +646,7 @@ fn founder_reign(w: &World, d: &Data, salt: u64) -> (Reign, Vec<String>) {
     let mut heaviest: Vec<_> = by.into_values().collect();
     heaviest.sort_by_key(|(weight, _)| Reverse(*weight));
     let mut told: Vec<String> = vec![];
-    for (_, tag) in heaviest {
+    for (_, tag) in heaviest.into_iter().filter(|(_, tag)| Some(*tag) != end) {
         let hint = d.hints.get(tag).map(|h| format!("{}.", text::capital(h)));
         if let Some(h) = hint.filter(|h| !told.contains(h)) {
             told.push(h);

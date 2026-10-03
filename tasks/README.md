@@ -39,7 +39,8 @@
 | 26b | 26b-playtest-03.md | 26 |
 | 26c | 26c-rich-texts.md | 26b |
 | 27 | 27-wars-and-breakups.md | 26b |
-| 28 | 28-big-map-empire.md | 26c, 27 |
+| 27b | 27b-parallel-batch.md | 26c, 27 |
+| 28 | 28-big-map-empire.md | 27b |
 
 После этапа 2 параллельно можно вести 3, 5, 8a, 9, 10a. На соло-разработке реально две-три ветки за раз.
 

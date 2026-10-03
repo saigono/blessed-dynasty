@@ -1,8 +1,10 @@
+pub mod batch;
 pub mod data;
 pub mod fx;
 pub mod game;
 pub mod graph;
 pub mod link;
+pub mod lint;
 pub mod neighbour;
 pub mod rng;
 pub mod rules;

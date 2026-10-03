@@ -659,6 +659,7 @@ dependencies = [
  "ron",
  "serde",
  "serde_json",
+ "web-sim",
 ]
 
 [[package]]
@@ -3213,6 +3214,15 @@ dependencies = [
  "log",
  "once_cell",
  "pkg-config",
+]
+
+[[package]]
+name = "web-sim"
+version = "0.1.0"
+dependencies = [
+ "core",
+ "serde_json",
+ "wasm-bindgen",
 ]
 
 [[package]]

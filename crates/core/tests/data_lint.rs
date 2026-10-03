@@ -2,6 +2,7 @@
 
 use bd_core::data::{self, Data, DataError};
 use bd_core::game::{Game, Step};
+use bd_core::lint;
 use bd_core::rules::Effect;
 use bd_core::sim;
 use bd_core::state::Preset;
@@ -49,6 +50,7 @@ fn load_all() -> Data {
     }
     data.add_actions(&read("actions.ron")).unwrap();
     data.add_names(&read("names.ron")).unwrap();
+    data.add_hints(&read("hints.ron")).unwrap();
     data
 }
 
@@ -93,66 +95,19 @@ fn ids_are_unique() {
 /// `chain_templates_cover_the_graph`.
 #[test]
 fn every_cause_tag_has_a_hint() {
-    let data = load_all();
-    let hints = hints();
-    let tags_only = |(k, _): (&String, &String)| !k.starts_with("chain:");
-    let events = data.events.iter().chain(&data.sim_events);
-    let tags = events.flat_map(|e| &e.choices).map(|c| &c.cause_tag);
-    let tags: BTreeSet<_> = tags
-        .chain(data.actions.iter().map(|a| &a.cause_tag))
-        .collect();
-    let missing: BTreeSet<_> = tags.iter().filter(|t| !hints.contains_key(**t)).collect();
-    assert!(missing.is_empty(), "no hint for {missing:?}");
-    let unused: Vec<_> = (hints.iter().filter(|h| tags_only(*h)))
-        .map(|(k, _)| k)
-        .filter(|k| !tags.contains(k))
-        .collect();
-    assert!(unused.is_empty(), "hints of no cause_tag: {unused:?}");
-    let bad: Vec<_> = (hints.values())
-        .filter(|h| {
-            let first = h.chars().next().is_some_and(char::is_lowercase);
-            !first || h.ends_with(['.', '!', '?', ',', ' ']) || has_digits(h)
-        })
-        .collect();
-    assert!(bad.is_empty(), "hints out of the chronicle format: {bad:?}");
+    assert_eq!(lint::hints(&load_all()), Vec::<String>::new());
 }
 
 #[test]
 fn every_spawned_event_exists() {
-    let data = load_all();
-    let all = || data.events.iter().chain(&data.sim_events);
-    let ids: BTreeSet<_> = all().map(|e| e.id.as_str()).collect();
-    let choices = all().flat_map(|e| &e.choices);
-    let effects = choices.flat_map(|c| &c.effects);
-    let effects = effects.chain(data.actions.iter().flat_map(|a| &a.on_complete));
-    let missing: Vec<_> = effects
-        .filter_map(|e| match e {
-            Effect::SpawnEvent(id, _) if !ids.contains(id.as_str()) => Some(id),
-            _ => None,
-        })
-        .collect();
-    assert!(missing.is_empty(), "spawned but undefined: {missing:?}");
+    assert_eq!(lint::spawned(&load_all()), Vec::<String>::new());
 }
 
 /// Events `rules.ron` names: the war start, neighbour AI events (simulation ones included),
 /// death and abdication.
 #[test]
 fn every_event_named_by_the_rules_exists() {
-    let data = load_all();
-    let ai = &data.neighbour_ai;
-    let stances = [&ai.expand, &ai.defend, &ai.trade, &ai.wait];
-    let named = (stances.iter().flat_map(|s| &s.events)).map(|(id, _)| id);
-    let death = data.death.risks.iter().map(|r| &r.event);
-    let fixed = [
-        &data.war.start_event,
-        &data.death.event,
-        &data.abdication.event,
-    ];
-    let all = data.events.iter().chain(&data.sim_events);
-    let missing: BTreeSet<_> = (named.chain(death).chain(fixed))
-        .filter(|id| !all.clone().any(|e| e.id == **id))
-        .collect();
-    assert!(missing.is_empty(), "named but undefined: {missing:?}");
+    assert_eq!(lint::named(&load_all()), Vec::<String>::new());
 }
 
 /// The brief of stage 9: 30 events in the pool, 2-3 choices each, every choice hinted
@@ -178,13 +133,7 @@ fn reign_events_follow_the_brief() {
 /// Every choice the player can see carries a hint without numbers (reign.ron style).
 #[test]
 fn every_reign_choice_is_hinted() {
-    let data = load_all();
-    for e in &data.events {
-        for c in &e.choices {
-            let hint = c.hint.as_deref();
-            assert!(hint.is_some_and(|h| !has_digits(h)), "{}: {hint:?}", e.id);
-        }
-    }
+    assert_eq!(lint::told(&load_all()), Vec::<String>::new());
 }
 
 /// The brief of stage 9: twelve simulation events, 2-3 choices each, every one important
@@ -498,54 +447,11 @@ fn chain_templates_cover_the_graph() {
 /// Stage 22: every choice tells the chronicle what was done, in words, without numbers.
 #[test]
 fn every_choice_is_told() {
-    let data = load_all();
-    let untold: Vec<_> = (data.events.iter().chain(&data.sim_events))
-        .flat_map(|e| e.choices.iter().map(move |c| (&e.id, c)))
-        .filter(|(_, c)| c.told.trim().is_empty() || has_digits(&c.told))
-        .map(|(id, c)| format!("{id}: {}", c.text))
-        .collect();
-    assert!(untold.is_empty(), "{untold:?}");
-}
-
-/// The `{…}` of a template that `text::fill` would leave as they are: an unknown key, an
-/// unknown case, a sex choice without two forms.
-fn bad_braces(s: &str) -> Vec<String> {
-    const KEYS: [&str; 14] = [
-        "ruler",
-        "prev",
-        "heir",
-        "province",
-        "neighbour",
-        "vassal",
-        "house",
-        "war_target",
-        "year",
-        "years",
-        "law",
-        "lands",
-        "deed",
-        "epithet",
-    ];
-    let mut bad = Vec::new();
-    for token in s
-        .split('{')
-        .skip(1)
-        .filter_map(|t| t.split_once('}'))
-        .map(|t| t.0)
-    {
-        let end = token.find(['.', ':']).unwrap_or(token.len());
-        let (key, how) = token.split_at(end);
-        let ok = KEYS.contains(&key)
-            && match how.chars().next() {
-                Some('.') => bd_core::text::CASES.contains(&&how[1..]),
-                Some(_) => how[1..].split('|').count() == 2,
-                None => true,
-            };
-        if !ok {
-            bad.push(format!("{{{token}}} in «{s}»"));
-        }
-    }
-    bad
+    let mut data = load_all();
+    data.events[0].choices[0].told = "в 1200 году".into();
+    data.sim_events[0].choices[0].told = String::new();
+    data.events[1].choices[0].hint = None;
+    assert_eq!(lint::told(&data).len(), 3, "{:?}", lint::told(&data));
 }
 
 /// Every template the game and the simulation fill: events, choices, `told`, the texts of
@@ -553,58 +459,19 @@ fn bad_braces(s: &str) -> Vec<String> {
 #[test]
 fn templates_use_known_names_cases_and_two_forms() {
     let data = load_all();
-    let t = &data.sim.texts;
-    let mut all: Vec<&String> = Vec::new();
-    for e in data.events.iter().chain(&data.sim_events) {
-        all.extend([&e.title, &e.text]);
-        all.extend(e.choices.iter().flat_map(|c| [&c.text, &c.told]));
-    }
-    for (a, b) in [
-        &t.crowned,
-        &t.province_lost,
-        &t.province_gained,
-        &t.heir_died,
-        &t.partition,
-        &t.law_changed,
-        &t.law_enacted,
-        &t.law_repealed,
-    ] {
-        all.extend([a, b]);
-    }
-    all.extend(t.reign_ends.values().chain(t.falls.iter().map(|f| &f.1)));
-    all.extend(t.variants.values().flatten());
-    all.extend(t.fall_told.iter().flat_map(|f| &f.1));
-    all.extend(
-        t.epithets
-            .iter()
-            .flat_map(|e| e.told.iter().chain([&e.name.0, &e.name.1])),
-    );
-    all.extend(data.sim.traits.iter().flat_map(|r| [&r.told.0, &r.told.1]));
-    let l = &t.life;
-    for v in [
-        &l.founder,
-        &l.regency,
-        &l.designated,
-        &l.contested,
-        &l.lawful,
-        &l.deed,
-        &l.same_year,
-    ] {
-        assert!(!v.is_empty());
-        all.extend(v);
-    }
-    all.extend(
-        l.ends
-            .values()
-            .flatten()
-            .chain(l.falls.iter().flat_map(|f| &f.1)),
-    );
+    let all = lint::template_texts(&data);
     assert!(all.len() > 500, "{}", all.len());
-    let bad: Vec<_> = all.into_iter().flat_map(|s| bad_braces(s)).collect();
-    assert!(bad.is_empty(), "{bad:#?}");
+    assert_eq!(lint::templates(&data), Vec::<String>::new());
     // The check itself.
-    assert_eq!(bad_braces("{ruler.род} {heir:он|она} {year}").len(), 0);
-    assert_eq!(bad_braces("{king} {ruler.зв} {heir:он}").len(), 3);
+    assert_eq!(
+        lint::bad_braces("{ruler.род} {heir:он|она} {year}").len(),
+        0
+    );
+    assert_eq!(lint::bad_braces("{king} {ruler.зв} {heir:он}").len(), 3);
+    let mut broken = data.clone();
+    broken.sim.texts.life.same_year.clear();
+    broken.events[0].title = "{king}".into();
+    assert_eq!(lint::templates(&broken).len(), 2);
 }
 
 /// Every name a text may decline has its six cases: the pools, the lands of the map, the
@@ -612,20 +479,10 @@ fn templates_use_known_names_cases_and_two_forms() {
 #[test]
 fn every_name_declines() {
     let data = load_all();
-    let n = &data.names;
     let world =
         bd_core::state::World::from_preset(&data, &preset(&read("presets/default.ron"), &data));
-    let mut all: Vec<&str> = [&n.rulers, &n.heirs, &n.daughters, &n.vassals]
-        .into_iter()
-        .flatten()
-        .map(|s| s.as_str())
-        .collect();
-    all.extend(world.provinces.values().map(|p| p.name.as_str()));
-    all.extend(world.vassals.values().map(|v| v.name.as_str()));
-    all.extend(world.neighbours.values().map(|v| v.name.as_str()));
-    let epithets = data.sim.texts.epithets.iter();
-    all.extend(epithets.flat_map(|e| [e.name.0.as_str(), e.name.1.as_str()]));
-    assert_eq!(n.undeclined(all), Vec::<&str>::new());
+    assert_eq!(lint::names(&data, &world), Vec::<String>::new());
+    assert_eq!(lint::lint(&data, &world), Vec::<String>::new());
 }
 
 /// A name written without its cases stays in the nominative, and the lint names it.
@@ -656,37 +513,41 @@ fn a_name_without_cases_falls_back_to_the_nominative_and_is_reported() {
 /// ends has its phrase in a life.
 #[test]
 fn epithets_count_known_deeds_and_lives_tell_every_end() {
-    let data = load_all();
-    let t = &data.sim.texts;
-    let mut known: BTreeSet<String> = ["law", "province_gained", "province_lost", "heir_died"]
-        .map(String::from)
-        .into();
-    let choices = data
-        .events
-        .iter()
-        .chain(&data.sim_events)
-        .flat_map(|e| &e.choices);
-    known.extend(choices.map(|c| c.cause_tag.clone()));
-    known.extend(data.actions.iter().map(|a| a.cause_tag.clone()));
-    known.extend(data.sim.traits.iter().map(|r| format!("trait:{}", r.id)));
-    let unknown: Vec<_> = (t.epithets.iter())
-        .flat_map(|e| &e.deeds)
-        .filter(|d| !known.contains(*d))
-        .collect();
-    assert!(unknown.is_empty(), "{unknown:?}");
-    assert!(
-        t.epithets.iter().any(|e| e.min == 0),
-        "an epithet that always holds"
+    let mut data = load_all();
+    assert_eq!(lint::epithets(&data), Vec::<String>::new());
+    data.sim.texts.epithets[0].deeds.push("nothing".into());
+    data.sim.texts.life.falls.clear();
+    // The deed, and the four falls a life tells.
+    assert_eq!(
+        lint::epithets(&data).len(),
+        5,
+        "{:?}",
+        lint::epithets(&data)
     );
-    let untold: Vec<_> = (t.reign_ends.keys())
-        .filter(|k| !t.life.ends.contains_key(*k))
-        .collect();
-    assert!(untold.is_empty(), "{untold:?}");
-    use sim::FallReason::*;
-    for f in [NoHeir, CapitalLost, Usurped, NoCrownLand, Alive] {
-        assert!(t.fall_told.iter().any(|(r, _)| *r == f), "{f:?}");
-        // A dynasty without an heir falls after a death, which `ends` tells.
-        let told = t.life.falls.iter().any(|(r, _)| *r == f);
-        assert!(told || f == NoHeir, "{f:?}");
-    }
+}
+
+/// Stage 23: each check of `lint` names what breaks it.
+#[test]
+fn lint_reports_broken_references_and_hints() {
+    let mut data = load_all();
+    data.events[0].choices[0].cause_tag = "no_such_tag".into();
+    data.hints
+        .insert("orphan".into(), "Заглавная и с точкой 1.".into());
+    let hints = lint::hints(&data);
+    // No hint for the tag; a hint of no tag, out of format; the old tag's hint unused unless
+    // another choice has it.
+    assert!(
+        hints.iter().any(|h| h.starts_with("no_such_tag: ")),
+        "{hints:?}"
+    );
+    assert_eq!(
+        hints.iter().filter(|h| h.starts_with("orphan: ")).count(),
+        2
+    );
+    data.events[0].choices[0]
+        .effects
+        .push(Effect::SpawnEvent("ghost".into(), bd_core::time::Years(1)));
+    assert_eq!(lint::spawned(&data).len(), 1);
+    data.war.start_event = "ghost_war".into();
+    assert_eq!(lint::named(&data), ["rules.ron: нет события ghost_war"]);
 }

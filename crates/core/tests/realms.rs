@@ -420,19 +420,25 @@ fn kingdom_dynasties_live_80_to_150_years() {
     let mut how: std::collections::BTreeMap<String, Vec<String>> = Default::default();
     let mut news: std::collections::BTreeMap<String, u32> = Default::default();
     let mut realms = vec![];
-    let world = |seed| world_of(&f, seed, 300).g.realms;
-    for r in batch::par_seeds(0..1000, batch::threads(), world, |_| {}) {
+    // Only what is counted: a kingdom in `list` is a whole game, 1000 worlds of them outgrow
+    // memory.
+    let world = |seed| {
+        let r = world_of(&f, seed, 300).g.realms;
+        let news: Vec<_> = r.news.into_iter().map(|n| n.title).collect();
+        (r.falls, news, r.list.len())
+    };
+    for (falls, titles, len) in batch::par_seeds(0..1000, batch::threads(), world, |_| {}) {
         for id in ["nordmark", "purpur", "vestrum"] {
-            let first = r.falls.iter().find(|(x, ..)| x.0 == id);
+            let first = falls.iter().find(|(x, ..)| x.0 == id);
             let years = first.map_or(300, |(_, t, _)| t.0);
             lives.entry(id.into()).or_default().push(years);
             let fall = first.map_or("Alive".into(), |(.., f)| format!("{f:?}"));
             how.entry(id.into()).or_default().push(fall);
         }
-        for n in &r.news {
-            *news.entry(n.title.clone()).or_default() += 1;
+        for t in titles {
+            *news.entry(t).or_default() += 1;
         }
-        realms.push(r.list.len());
+        realms.push(len);
     }
     for (id, mut v) in lives.clone() {
         v.sort();

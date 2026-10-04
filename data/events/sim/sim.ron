@@ -175,9 +175,10 @@
             (AxisBelow("stability", 30), 12),
             (AxisBelow("stability", 15), 20),
             (AxisBelow("army", 50), 8),
+            (ProvinceWhere((holder: Crown, loyalty_below: 5, capital: false)), 40),
         ],
         once: false,
-        cooldown_years: 6,
+        cooldown_years: 3,
         importance: 5,
         target: RandomProvince((holder: Crown, loyalty_below: 20, capital: false)),
         choices: [

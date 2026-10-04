@@ -233,4 +233,21 @@
         on_complete: [Axis("bureaucracy", 5), Axis("loyalty_nobles", -4)],
         cause_tag: "chancery_founded",
     ),
+    (
+        // Stage 28: gold for a neighbour's army, a buffer against the empire or a gift to the
+        // empire itself. Tribute turned round: the treasury pays, the neighbour's strength grows
+        // by rules.ron war.tribute_strength per coin, and a kingdom's army with it (realm.rs).
+        // The price is in the effect, so the cost is 0 and the treasury must hold it. Last, so
+        // the actions before keep their indices in links (link.rs).
+        id: "subsidize_neighbour",
+        description: "Отправить соседу серебро на войско: его армия растёт, отношения теплеют. Сильный сосед держит чужие армии на своих рубежах, а не на ваших. Серебро можно послать и врагу: откуп смягчает его, но и усиливает.",
+        name: "Субсидия соседу",
+        duration_years: 0,
+        cost: 0,
+        requires: AxisAbove("treasury", 100),
+        min_crown_power: 0,
+        target: Neighbour,
+        on_complete: [Tribute(-100), Relation(EventTarget, 15)],
+        cause_tag: "neighbour_subsidized",
+    ),
 ]

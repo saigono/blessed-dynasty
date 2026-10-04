@@ -80,7 +80,12 @@ pub fn start(data: &Data, preset: &Preset, seed: u64, w: &mut World) -> Realms {
     let mut list = BTreeMap::new();
     for r in &start.kingdoms {
         let own = World::from_preset(&kd, &preset.realm(r));
-        let mut d = Dynasty::new(kingdom(own, stream(seed, &r.id), &kd));
+        let mut data = kd.clone();
+        for (k, v) in &r.auto {
+            let w = data.sim.auto.base.entry(k.clone()).or_default();
+            *w = *w + *v;
+        }
+        let mut d = Dynasty::new(kingdom(own, stream(seed, &r.id), &data));
         d.house = r.house.clone();
         d.name = w
             .neighbours
@@ -456,6 +461,7 @@ fn found(
             ordinal,
             marks: Default::default(),
             realm: None,
+            color: None,
         });
     true
 }

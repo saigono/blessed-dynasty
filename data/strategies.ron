@@ -13,6 +13,9 @@
     "warmonger": {"war": 80, "province": 40, "army": 1, "prestige": 1, "law_fairs": 100, "law_tolerance": 100},
     // Builds forts, roads and markets.
     "builder": {"build": 30, "province_income": 5, "grant": -20, "war": -20},
+    // Stage 28: meets the empire's threat: silver and suits for the neighbours (relation),
+    // forts on the borders, an army kept up, no wars of its own.
+    "guardian": {"relation": 3, "marriage": 30, "build": 20, "army": 1, "war": -30},
     // Founder law sets (stage 19, docs/design/hidden-state.html, section 5): the laws only.
     "serf_lord": {"law_serfdom": 100, "law_one_faith": 100, "law_tithe": 100},
     "free_towns": {"law_charters": 100, "law_fairs": 100, "law_free_peasants": 100},

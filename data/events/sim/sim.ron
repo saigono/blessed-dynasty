@@ -156,6 +156,73 @@
             ),
         ],
     ),
+    (
+        // Stage 28: a crown land the crown cannot hold (beyond its room, rules.ron
+        // crown_capacity, it loses loyalty every year) rises against it. The same rule for every
+        // kingdom: the land is held by arms, given to a house of its own as a fief, or let go
+        // with a house of its own (Grant, then Secede, as the schism does).
+        id: "province_breakaway",
+        title: "Отпадение края",
+        text: "В {province.пр} не признают королевских наместников: подать не платят, гонцов из столицы гонят за ворота, а местная знать уже выбрала себе господина.",
+        texts: [
+            "Из {province.род} приходят дурные вести: тамошние бароны заперли замки, сборщиков подати держат в погребах, а на сходах кричат, что столица слишком далеко.",
+            "В {province.пр} отложились от короны без единого выстрела: наместник бежал, ключи от ворот отдали местному роду, и люди присягают ему.",
+        ],
+        recalled: "отпадение края",
+        when: ProvinceWhere((holder: Crown, loyalty_below: 20, capital: false)),
+        weight: 4,
+        weight_bonus: [
+            (AxisBelow("stability", 30), 12),
+            (AxisBelow("stability", 15), 20),
+            (AxisBelow("army", 50), 8),
+        ],
+        once: false,
+        cooldown_years: 6,
+        importance: 5,
+        target: RandomProvince((holder: Crown, loyalty_below: 20, capital: false)),
+        choices: [
+            (
+                text: "Послать войско на усмирение",
+                effects: [
+                    Chance((
+                        percent: 20,
+                        axes: [("army", 0.4)],
+                        then: [Axis("army", -15), Province(EventTarget, Loyalty, 25)],
+                        otherwise: [Axis("army", -20), Grant(EventTarget), Secede(EventTarget), SetFlag("vassal_seceded")],
+                    )),
+                ],
+                cause_tag: "breakaway_crushed",
+                told: "В {province.пр} отложились от короны, и {ruler} {ruler:послал|послала} туда войско.",
+                retold: [
+                    "На отпавший край двинулись королевские полки, и до осени в {province.пр} горели баронские усадьбы.",
+                    "В {province.вин} вошло королевское войско, и непокорных старост вешали на воротах их же сёл.",
+                    "Мятежный край усмиряли огнём и железом: {ruler} не {ruler:стал|стала} слушать тамошних послов.",
+                ],
+            ),
+            (
+                text: "Отдать край местному роду в удел",
+                effects: [Grant(EventTarget), Province(EventTarget, Loyalty, 30), Axis("prestige", -3)],
+                cause_tag: "breakaway_granted",
+                told: "В {province.пр} отложились от короны, и {ruler} {ruler:отдал|отдала} край местному роду в удел.",
+                retold: [
+                    "Отпавший край не стали брать мечом: местный род получил его в удел и присягнул короне, хотя и сквозь зубы.",
+                    "{ruler} {ruler:признал|признала} над {province.тв} власть местного рода, и край вернулся под корону уделом.",
+                    "Тамошним баронам выдали грамоту на удел, и в {province.пр} снова присягнули короне, но подать отныне собирали свои.",
+                ],
+            ),
+            (
+                text: "Отпустить край",
+                effects: [Grant(EventTarget), Secede(EventTarget), SetFlag("vassal_seceded"), Axis("prestige", -10), Axis("legitimacy", -3)],
+                cause_tag: "breakaway_released",
+                told: "В {province.пр} отложились от короны, и {ruler} {ruler:отпустил|отпустила} край без боя.",
+                retold: [
+                    "За отпавший край не стали воевать: межевые столбы перенесли, и в {province.пр} зажили под своим государем.",
+                    "{ruler} не {ruler:удержал|удержала} {province.вин} и не {ruler:стал|стала} пытаться, и при дворе об этом говорили шёпотом.",
+                    "Отпавший край отпустили с миром, и вскоре над тамошними замками подняли чужой герб.",
+                ],
+            ),
+        ],
+    ),
     // ---------------------------------------------------------------- invasion
     (
         // Offered by a neighbour in the Expand stance (rules.ron neighbour_ai), never drawn

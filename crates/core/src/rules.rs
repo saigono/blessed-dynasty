@@ -656,6 +656,7 @@ impl Effect {
                     ordinal: (w.neighbours.values().map(|n| n.ordinal + 1).max()).unwrap_or(0),
                     marks: Default::default(),
                     realm: None,
+                    color: None,
                 };
                 w.neighbours.insert(id, n);
             }

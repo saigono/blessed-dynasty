@@ -675,3 +675,103 @@ fn the_preset_of_the_kingdoms_is_checked() {
         assert!(e.contains(want), "{e}");
     }
 }
+
+/// Stage 28: the empire of the preset.
+const EMPIRE: &str = "kadar";
+
+/// Whether, in world `w`, land held as `a` (by `is_a`) borders land held as `b`.
+fn borders(w: &World, is_a: impl Fn(&Holder) -> bool, is_b: impl Fn(&Holder) -> bool) -> bool {
+    (w.provinces.values().filter(|p| is_a(&p.holder))).any(|p| {
+        (p.neighbours.iter().filter_map(|n| w.provinces.get(n))).any(|q| is_b(&q.holder))
+    })
+}
+
+/// What the empire did in a dynasty of ours, read from the chronicles: (it bordered our land
+/// at some point; it is no more or lost a third of its land from its peak; its least and
+/// greatest land).
+fn empire_story(c: &Chronicle) -> (bool, bool, usize, usize) {
+    let (us, empire) = (id("kingdom"), id(EMPIRE));
+    let ours = |h: &Holder| !matches!(h, Holder::Foreign(_));
+    let theirs = |h: &Holder| *h == Holder::Foreign(empire.clone());
+    let mut met = (c.entries.iter()).any(|e| borders(&e.snapshot, ours, theirs));
+    let Some(e) = c.realms.get(&empire) else {
+        return (met, true, 0, 0);
+    };
+    let (mut peak, mut least, mut fell) = (0, usize::MAX, false);
+    for x in &e.entries {
+        let w = &x.snapshot;
+        met |= borders(w, ours, |h| *h == Holder::Foreign(us.clone()));
+        let land = w.provinces.values().filter(|p| ours(&p.holder)).count();
+        peak = peak.max(land);
+        least = least.min(land);
+        fell |= land * 3 <= peak * 2;
+    }
+    (met, fell, least, peak)
+}
+
+/// `strategy` over seeds 0..1000: per game the fall and `empire_story`.
+fn empire_games(f: &Files, strategy: &str) -> Vec<(FallReason, (bool, bool, usize, usize))> {
+    let start = batch::load(f, PRESET, MAP, 0).unwrap();
+    let rules = batch::score_rules(f, &start).unwrap();
+    let auto = batch::chooser(f, &start, strategy).unwrap();
+    let game = |seed| {
+        let mut g = start.reseeded(seed);
+        batch::play(&mut g, auto.as_ref(), &mut vec![]).unwrap();
+        let c = batch::dynasty(&g, &rules).0.unwrap();
+        (c.fall.clone(), empire_story(&c))
+    };
+    batch::par_seeds(0..1000, batch::threads(), game, |_| {})
+}
+
+/// Percent of `part` of `all`.
+fn pct(part: usize, all: usize) -> usize {
+    (part * 100).checked_div(all).unwrap_or(0)
+}
+
+/// Stage 28 acceptance of the calibration (docs/calibration.md), 1000 dynasties of 300 years:
+/// the empire becomes our neighbour in 40..70% of them, falls apart or loses a third of its
+/// land in 30..60%; «Завоёваны» is 10..20% of the falls of `neutral`, not the first reason;
+/// a strategy that meets the threat (`guardian`: subsidies, marriages, forts, an army) ends
+/// conquered clearly less often.
+/// `cargo test --release -p core --test realms -- --ignored empire`.
+#[test]
+#[ignore = "release only, about a minute"]
+fn the_empire_threatens_but_not_surely() {
+    let f = files();
+    let mut report = String::new();
+    let mut conquered = BTreeMap::new();
+    for strategy in ["neutral", "guardian"] {
+        let games = empire_games(&f, strategy);
+        let n = games.len();
+        let mut falls: BTreeMap<String, usize> = BTreeMap::new();
+        for (fall, _) in &games {
+            *falls.entry(format!("{fall:?}")).or_default() += 1;
+        }
+        let met = games.iter().filter(|(_, s)| s.0).count();
+        let fell = games.iter().filter(|(_, s)| s.1).count();
+        let fallen = n - falls.get("Alive").copied().unwrap_or(0);
+        let lost = falls.get("Conquered").copied().unwrap_or(0);
+        let mut peaks: Vec<usize> = games.iter().map(|(_, s)| s.3).collect();
+        peaks.sort();
+        report += &format!(
+            "{strategy}: met {}%, fell apart {}%, conquered {lost} of {fallen} falls ({}%), \
+             peak land {} / {} / {}, falls {falls:?}\n",
+            pct(met, n),
+            pct(fell, n),
+            pct(lost, fallen),
+            peaks[n / 4],
+            peaks[n / 2],
+            peaks[n * 3 / 4],
+        );
+        conquered.insert(strategy, (lost, fallen, met, fell, falls));
+    }
+    println!("{report}");
+    let (lost, fallen, met, fell, falls) = &conquered["neutral"];
+    assert!((40..=70).contains(&pct(*met, 1000)), "{report}");
+    assert!((30..=60).contains(&pct(*fell, 1000)), "{report}");
+    assert!((10..=20).contains(&pct(*lost, *fallen)), "{report}");
+    let first = falls.iter().filter(|(k, _)| *k != "Alive").max_by_key(|(_, v)| **v);
+    assert_ne!(first.map(|(k, _)| k.as_str()), Some("Conquered"), "{report}");
+    let guarded = &conquered["guardian"];
+    assert!(guarded.0 * 3 <= lost * 2, "{report}");
+}

@@ -153,6 +153,10 @@ pub struct Neighbour {
     /// The state as a kingdom of its own (`realm.rs`), seen from here; None: numbers only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub realm: Option<RealmView>,
+    /// Stage 28: its colour on the map (RGB) from the preset; None: one of the palette by
+    /// `ordinal`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<(u8, u8, u8)>,
 }
 
 /// What the crown sees of a foreign kingdom, set every year from its own world

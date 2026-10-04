@@ -45,6 +45,8 @@ pub struct Realms {
     pub news: Vec<News>,
     /// Every dynasty of a kingdom that fell, when and how: for `cli` and calibration.
     pub falls: Vec<(NeighbourId, Tick, FallReason)>,
+    /// Stage 28: the importance a news gains when it names this kingdom (`RealmStart.news`).
+    pub stress: BTreeMap<NeighbourId, u32>,
 }
 
 /// What a kingdom founded later starts from (`RealmsStart.founded`).
@@ -80,7 +82,12 @@ pub fn start(data: &Data, preset: &Preset, seed: u64, w: &mut World) -> Realms {
     let mut list = BTreeMap::new();
     for r in &start.kingdoms {
         let own = World::from_preset(&kd, &preset.realm(r));
-        let mut d = Dynasty::new(kingdom(own, stream(seed, &r.id), &kd));
+        let mut data = kd.clone();
+        for (k, v) in &r.auto {
+            let w = data.sim.auto.base.entry(k.clone()).or_default();
+            *w = *w + *v;
+        }
+        let mut d = Dynasty::new(kingdom(own, stream(seed, &r.id), &data));
         d.house = r.house.clone();
         d.name = w
             .neighbours
@@ -111,6 +118,10 @@ pub fn start(data: &Data, preset: &Preset, seed: u64, w: &mut World) -> Realms {
         founding,
         news: Vec::new(),
         falls: Vec::new(),
+        stress: (start.kingdoms.iter())
+            .filter(|r| r.news > 0)
+            .map(|r| (r.id.clone(), r.news))
+            .collect(),
     };
     meet(&mut realms, w, &rules.strength);
     for r in &start.kingdoms {
@@ -190,9 +201,16 @@ pub(crate) fn year(g: &mut Game) {
         }
     }
     let mut news = vec![];
-    let mut tell = |k: &NewsKind, named: &[(&str, &str)]| {
-        if k.importance >= rules.news.threshold {
-            news.push(told(k, named, data, tick));
+    let stress = realms.stress.clone();
+    // A news of the kingdoms `about` weighs as the most stressed of them adds (stage 28).
+    let mut tell = |k: &NewsKind, about: &[&NeighbourId], named: &[(&str, &str)]| {
+        let extra = (about.iter()).filter_map(|id| stress.get(*id)).max();
+        let importance = k.importance + extra.copied().unwrap_or(0);
+        if importance >= rules.news.threshold {
+            news.push(News {
+                importance,
+                ..told(k, named, data, tick)
+            });
         }
     };
 
@@ -217,7 +235,11 @@ pub(crate) fn year(g: &mut Game) {
         let war = (d.g.world.war.as_ref()).filter(begun);
         if let Some(x) = war.filter(|x| realms.list.contains_key(&x.enemy)) {
             let (a, b) = (name(ours, id), name(ours, &x.enemy));
-            tell(&rules.news.war, &[("realm", &a), ("enemy", &b)]);
+            tell(
+                &rules.news.war,
+                &[id, &x.enemy],
+                &[("realm", &a), ("enemy", &b)],
+            );
         }
     }
     for p in by.keys() {
@@ -229,7 +251,7 @@ pub(crate) fn year(g: &mut Game) {
                 ("enemy", &b),
                 ("province", &ours.provinces[p].name),
             ];
-            tell(&rules.news.capture, &named);
+            tell(&rules.news.capture, &[from, to], &named);
         }
     }
     // The new states, each in the world it broke away from.
@@ -256,7 +278,7 @@ pub(crate) fn year(g: &mut Game) {
                 ("enemy", &lord),
                 ("province", &province),
             ];
-            tell(&rules.news.breakaway, &named);
+            tell(&rules.news.breakaway, &[&id, &from], &named);
         }
     }
     // Fallen dynasties: a new house where the crown keeps land, else the kingdom is no more.
@@ -278,11 +300,12 @@ pub(crate) fn year(g: &mut Game) {
             ours.unions.remove(&id);
             tell(
                 &rules.news.house,
+                &[&id],
                 &[("realm", &realm), ("house", &house), ("old", &old)],
             );
             continue;
         }
-        tell(&rules.news.fallen, &[("realm", &realm)]);
+        tell(&rules.news.fallen, &[&id], &[("realm", &realm)]);
         let d = realms.list.remove(&id).expect("listed");
         let w = d.g.world;
         let capital = &owners[&w.capital.province];
@@ -320,7 +343,7 @@ pub(crate) fn year(g: &mut Game) {
                     ("enemy", &realm),
                     ("province", &province),
                 ];
-                tell(&rules.news.breakaway, &named);
+                tell(&rules.news.breakaway, &[&n, &id], &named);
             }
         }
     }
@@ -456,6 +479,7 @@ fn found(
             ordinal,
             marks: Default::default(),
             realm: None,
+            color: None,
         });
     true
 }

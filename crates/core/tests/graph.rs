@@ -89,11 +89,12 @@ fn runs_hash(dir: &str, data: &Data, n: u64) -> u64 {
 /// 27: only the name of one fall, `CapitalLost` now written `Conquered`. Stage 26c: the world
 /// keeps the turn of every event's texts (`World.retold`), hints are not told twice within six
 /// entries, the records have more variants: with every text and that field blanked the dumps
-/// match, the play is the same.
+/// match, the play is the same. Stage 28: a hostile state that lost its border with us sends
+/// no ultimatum any more (`neighbour_tick`); without that rule the hash is the one before.
 #[test]
 fn data_without_edges_plays_as_main() {
     let data = content(MAIN, &read(&format!("{MAIN}/rules.ron")));
-    assert_eq!(runs_hash(MAIN, &data, 50), 10024154452261188760);
+    assert_eq!(runs_hash(MAIN, &data, 50), 3592856328197093802);
 }
 
 /// data/ with `extra` axes and edges added to rules.ron, nothing else.

@@ -285,15 +285,15 @@ mod tests {
         Game::new(data, &preset, seed)
     }
 
-    /// Up to `n` decisions: an action with some target every third tick, the choices in
-    /// turn. Stops early if the ruler dies.
+    /// Up to `n` decisions: an action with some target every third tick, every seventh of
+    /// the list (stage 28: in turn the laws took the 80 decisions), the choices in turn. Stops early if the ruler dies.
     fn play(seed: u64, n: usize) -> Game {
         let mut g = game(seed);
         let mut i = 0;
         while g.decisions.len() < n && g.ended.is_none() {
             let actions = g.available_actions();
             if i % 3 == 0 && !actions.is_empty() {
-                let (id, targets) = &actions[i / 3 % actions.len()];
+                let (id, targets) = &actions[i / 3 * 7 % actions.len()];
                 let _ = g.start_action(id, targets.get(i % targets.len().max(1)).cloned());
             }
             if let Step::Event(v) = g.wait().unwrap() {
@@ -408,7 +408,8 @@ mod tests {
 
     #[test]
     fn broken_links_are_refused() {
-        let g = play(2, 5);
+        // Ten decisions (five before stage 28): the first five fit every other seed now.
+        let g = play(2, 10);
         let mut bytes = B64.decode(encode("default", 2, &g)).unwrap();
         assert!(decode(&B64.encode(&bytes[..5])).is_err());
         assert!(decode("не base64").unwrap_err().starts_with("base64"));

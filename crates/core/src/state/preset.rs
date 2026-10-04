@@ -79,6 +79,14 @@ pub struct RealmStart {
     /// Stage 27: its relation with the other kingdoms at the start; 0 for those not listed.
     #[serde(default)]
     pub relations: BTreeMap<NeighbourId, crate::fx::Fx>,
+    /// Stage 28: the custom of the kingdom, weights its every ruler adds to the automaton's
+    /// (`sim.auto` keys), e.g. `{"war": 40}` for a realm that lives by conquest.
+    #[serde(default)]
+    pub auto: BTreeMap<String, crate::fx::Fx>,
+    /// Stage 28: added to the importance of every news that names this kingdom (rules.ron
+    /// `realm.news`): news of a great power weigh more, and the screen stresses them.
+    #[serde(default)]
+    pub news: u32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -235,7 +243,7 @@ mod tests {
         for id in ids {
             let poly = &map.polygons[id];
             assert!(poly.len() >= 3, "{}", id.0);
-            let inside = |&(x, y): &(i32, i32)| (0..=400).contains(&x) && (0..=300).contains(&y);
+            let inside = |&(x, y): &(i32, i32)| (0..=640).contains(&x) && (0..=480).contains(&y);
             assert!(poly.iter().all(inside), "{}", id.0);
         }
     }

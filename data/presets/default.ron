@@ -36,6 +36,12 @@
         (id: "nordmark", name: "Нордмарк", relation: -40, strength: 60, stance: Defend),
         (id: "purpur", name: "Пурпуляндия", relation: 0, strength: 70, stance: Wait),
         (id: "vestrum", name: "Веструм", relation: 40, strength: 45, stance: Trade),
+        // Stage 28: the buffers to the south, the edge of the world in the north-east and the
+        // empire beyond them, hostile and bent on conquest (its colour on the map is its own).
+        (id: "zudmark", name: "Зюдмарк", relation: 20, strength: 40, stance: Trade),
+        (id: "olkhovia", name: "Ольховия", relation: 10, strength: 40, stance: Wait),
+        (id: "tavrika", name: "Таврика", relation: 0, strength: 40, stance: Wait),
+        (id: "kadar", name: "Кадарская империя", relation: -30, strength: 150, stance: Expand, color: Some((150, 46, 52))),
     ],
     // The succession law and the ruler's marriage.
     flags: ["law_primogeniture", "married"],
@@ -101,8 +107,77 @@
                 ],
                 flags: ["law_elective", "married"],
                 axes: {"treasury": 350, "bureaucracy": 45, "army": 60, "stability": 65, "loyalty_nobles": 60, "loyalty_people": 60, "legitimacy": 80, "prestige": 70},
+                relations: {},
+            ),
+            // Stage 28. The western buffer: a march of knights on the old southern road.
+            (
+                id: "zudmark",
+                house: "Ротбарты",
+                capital: "zudgard",
+                ruler: (name: "Бертольд", age: 41, health: 75, traits: ["cautious"], reign_start: 0, sex: Male),
+                heirs: [
+                    (name: "Генрих", age: 17, ability: 55, claim: 70, status: Home, sex: Male),
+                    (name: "Агнесса", age: 13, ability: 50, claim: 40, status: Home, sex: Female),
+                ],
+                flags: ["law_male", "married"],
+                relations: {"vestrum": 20},
+                axes: {"army": 55, "legitimacy": 75, "stability": 65, "loyalty_nobles": 60, "loyalty_people": 55, "bureaucracy": 30, "treasury": 200, "prestige": 40},
+            ),
+            // The eastern buffer: forest princes between the river and the hills.
+            (
+                id: "olkhovia",
+                house: "Ольговичи",
+                capital: "olkhov",
+                ruler: (name: "Ростислав", age: 36, health: 80, traits: ["pious"], reign_start: 0, sex: Male),
+                heirs: [
+                    (name: "Мстислав", age: 12, ability: 50, claim: 70, status: Home, sex: Male),
+                    (name: "Людмила", age: 9, ability: 55, claim: 40, status: Home, sex: Female),
+                ],
+                flags: ["law_primogeniture", "married"],
+                relations: {},
+                axes: {"army": 55, "legitimacy": 75, "stability": 65, "loyalty_nobles": 60, "loyalty_church": 65, "bureaucracy": 30, "treasury": 200, "prestige": 40},
+            ),
+            // The edge of the world: merchant towns on the north-eastern coast.
+            (
+                id: "tavrika",
+                house: "Гаврасы",
+                capital: "surozh",
+                ruler: (name: "Евстафий", age: 44, health: 75, traits: ["greedy"], reign_start: 0, sex: Male),
+                heirs: [
+                    (name: "Елена", age: 22, ability: 60, claim: 70, status: Home, sex: Female),
+                    (name: "Бальдуин", age: 18, ability: 50, claim: 40, status: Home, sex: Male),
+                ],
+                flags: ["law_primogeniture", "married"],
+                relations: {},
+                axes: {"army": 55, "legitimacy": 75, "stability": 65, "loyalty_nobles": 55, "loyalty_people": 60, "bureaucracy": 35, "treasury": 300, "prestige": 50},
+            ),
+            // The empire: vast and warlike, its land beyond the crown's reach, its marches held
+            // by strong governors on the brink of breaking away, an old emperor whose brother
+            // and sons will dispute the throne by the law of seniority. `auto`: the weights its
+            // every ruler adds to the automaton's (rules.ron sim.auto): war is its custom.
+            (
+                id: "kadar",
+                house: "Аскариды",
+                capital: "kadar_city",
+                ruler: (name: "Тигран", age: 54, health: 65, traits: ["warlike"], reign_start: 0, sex: Male),
+                heirs: [
+                    (name: "Ашот", age: 47, ability: 55, claim: 65, status: Home, sex: Male),
+                    (name: "Смбат", age: 26, ability: 50, claim: 60, status: Home, sex: Male),
+                    (name: "Гагик", age: 19, ability: 60, claim: 45, status: Home, sex: Male),
+                ],
+                flags: ["law_seniority", "married"],
+                axes: {"army": 150, "treasury": 250, "legitimacy": 50, "stability": 35, "loyalty_nobles": 35, "loyalty_people": 40, "bureaucracy": 0, "prestige": 120},
+                vassals: [
+                    (id: "sklir", name: "Склир", loyalty: 30, strength: 25),
+                    (id: "bardan", name: "Бардан", loyalty: 35, strength: 20),
+                ],
+                fiefs: {"merv": "bardan"},
+                relations: {"zudmark": -40, "olkhovia": -40, "tavrika": -40, "purpur": -30, "vestrum": -20},
+                auto: {"war": 3},
+                // Stage 28: its news weigh one more; the screen stresses them.
+                news: 1,
             ),
         ],
     )),
-    intro: "1187 год. Старый королевский дом угас, и корона по праву крови перешла к Ульриху, дальнему родичу последнего короля. Право на его стороне, поддержки почти нет: знать держится настороже, а бароны Вейр и Арден правят своими землями сами. С севера грозит враждебный Нордмарк, на востоке выжидает сильная Пурпуляндия, на западе дружбы ищет Веструм. У Ульриха пока один наследник, шестилетний сын Конрад.",
+    intro: "1187 год. Старый королевский дом угас, и корона по праву крови перешла к Ульриху, дальнему родичу последнего короля: право на его стороне, но знать держится настороже, а бароны Вейр и Арден правят своими землями сами. С севера грозит враждебный Нордмарк, на востоке выжидает сильная Пурпуляндия, на западе дружбы ищет Веструм, а на юге, за малыми Зюдмарком и Ольховией, за горами лежит Кадарская империя. Земель у неё больше, чем способны удержать её наместники, войско её огромно, старый император Тигран снова точит меч, а братья и сыновья уже делят его престол. У Ульриха пока один наследник, шестилетний сын Конрад.",
 )

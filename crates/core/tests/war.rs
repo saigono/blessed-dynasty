@@ -151,12 +151,21 @@ fn the_target_is_an_enemy_border_province() {
         .find(|(id, _)| id == "declare_war")
         .unwrap()
         .1;
-    let foreign = (g.world.provinces.values()).filter(|p| matches!(p.holder, Holder::Foreign(_)));
+    // Stage 28: the foreign land on our border, not the empire beyond the buffers.
+    let w = &g.world;
+    let own = |id: &ProvinceId| !matches!(w.provinces[id].holder, Holder::Foreign(_));
+    let border: std::collections::BTreeSet<_> = (w.provinces.values())
+        .filter(|p| matches!(p.holder, Holder::Foreign(_)) && p.neighbours.iter().any(own))
+        .map(|p| Target::Province(p.id.clone()))
+        .collect();
     assert_eq!(
-        targets.len(),
-        foreign.count(),
-        "every foreign province borders the realm"
+        targets
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>(),
+        border
     );
+    assert_eq!(border.len(), 12);
     for t in &targets {
         let Target::Province(id) = t else {
             panic!("{t:?}")
@@ -323,9 +332,11 @@ fn war_on_a_friend_costs_prestige_and_trust() {
     // Vestrum is friendly (40), Purpur neutral (0).
     let (prestige, others) = treachery("vestrum", "vestburg");
     assert_eq!(prestige, Fx::from_int(-15));
-    // Nordmark (hostile) and Purpur both lose 10; Purpur, from 0, then drifts 1 back.
-    assert_eq!(others, [Fx::from_int(-10), Fx::from_int(-9)]);
-    assert_eq!(treachery("purpur", "porfir"), (Fx(0), vec![Fx(0); 2]));
+    // Every other loses 10; those at 0 after it (Purpur, Таврика from 0, Ольховия from 10)
+    // drift 1 back less. By id: kadar, nordmark, olkhovia, purpur, tavrika, zudmark.
+    let i = Fx::from_int;
+    assert_eq!(others, [i(-10), i(-10), i(-9), i(-9), i(-9), i(-10)]);
+    assert_eq!(treachery("purpur", "porfir"), (Fx(0), vec![Fx(0); 6]));
 }
 
 /// Stage 14: while at war the crown provinces bring `income_penalty` of their income less.

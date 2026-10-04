@@ -120,6 +120,7 @@ fn every_strategy_plays_and_an_unknown_one_fails() {
             "builder",
             "crown_all",
             "free_towns",
+            "guardian",
             "scholar",
             "serf_lord",
             "vassal_all",
@@ -204,11 +205,12 @@ fn scenario(name: &str, seed: &str, event: &str) -> (usize, String, String) {
 /// more action for the automaton move the rng (the first schism in the year 161). Stage 27:
 /// 19, the kingdoms at war with each other move our neighbours' strength and so the rng
 /// (the first schism in the year 162). Stage 26c: 292 again, the compound events move the rng
-/// (the first schism in the year 155).
+/// (the first schism in the year 155). Stage 28: 360, the big map and its kingdoms move the
+/// rng (the first schism in the year 155, two by the horizon).
 #[test]
 fn scenario_avalanche_ends_in_schism() {
-    let (n, first, end) = scenario("avalanche", "292", "schism");
-    assert_eq!(n, 4);
+    let (n, first, end) = scenario("avalanche", "360", "schism");
+    assert_eq!(n, 2);
     assert_eq!(
         first,
         "1342 Раскол [schism]\n  цепочка #4 law_charters → literacy → faith: Вера раскололась: \
@@ -220,11 +222,12 @@ fn scenario_avalanche_ends_in_schism() {
 
 /// Golden: long stability. Granaries and schools; no peasant war, schism or great famine in
 /// 300 years. Seed 12 since stage 24 (2 before), as rare as it was; 0 since stage 25; 5
-/// since stage 26b; 11 since stage 27 (the kingdoms move the rng).
+/// since stage 26b; 11 since stage 27 (the kingdoms move the rng); 13 since stage 28 (the
+/// big map).
 #[test]
 fn scenario_stability_has_no_catastrophe() {
     for event in ["peasant_war", "schism", "great_famine"] {
-        let (n, _, end) = scenario("stability", "11", event);
+        let (n, _, end) = scenario("stability", "13", event);
         assert_eq!(
             (n, end.as_str()),
             (0, "конец Alive на 300-м году"),
@@ -233,7 +236,8 @@ fn scenario_stability_has_no_catastrophe() {
     }
 }
 
-/// Golden: the golden age of the corvée (seed 10 since stage 26c, the compound events move the
+/// Golden: the golden age of the corvée (seed 1 since stage 28, the big map moves the rng: the
+/// first peasant war in the year 80, seven by the horizon; seed 10 since stage 26c, the compound events move the
 /// rng; 16 since stage 27, the kingdoms' wars; 42 since stage 26b; 2 since stage 25; 53 since
 /// stage 24, 3 before). The first peasant war comes in the year 52, five by the horizon; its
 /// chain of three nodes leads back to the founder's serfdom decree, decision #3 of tick 3.
@@ -241,17 +245,17 @@ fn scenario_stability_has_no_catastrophe() {
 /// weakened.
 #[test]
 fn scenario_trap_ends_in_peasant_war() {
-    let (n, first, end) = scenario("trap", "10", "peasant_war");
-    assert_eq!(n, 5);
+    let (n, first, end) = scenario("trap", "1", "peasant_war");
+    assert_eq!(n, 7);
     assert_eq!(
         first,
-        "1239 Мужицкая война [peasant_war]\n  цепочка #3 law_serfdom → serfdom → strata → \
+        "1267 Мужицкая война [peasant_war]\n  цепочка #3 law_serfdom → serfdom → strata → \
          loyalty_people: Мужики поднялись: крепла барщина (с 1193 года, когда основатель \
          прикрепил крестьян к земле господ), от этого росло расслоение, от этого озлоблялся \
          народ."
     );
     let script = "data/scripts/trap.ron";
-    let out = stdout(cli(&["trace", "--seed", "10", "--script", script]));
+    let out = stdout(cli(&["trace", "--seed", "1", "--script", script]));
     assert!(
         out.contains("  решение #3 (тик 3, law_serfdom) → метка"),
         "{out}"

@@ -285,7 +285,8 @@
     // `friendly_above` Trade; else Wait. Then relation moves by the stance's `relation` and
     // `drift` toward 0 (old grudges and friendships fade unless kept up), and one roll in
     // 0..100 picks at most one of its `events` (id, chance in percent per year; chances sum
-    // to <= 100).
+    // to <= 100). Stage 28: a Defend state with no common border sends none (it has no
+    // border to threaten).
     // Events targeting a province hit the weakest border province and name the neighbour
     // as its second target; others target the neighbour.
     neighbour_ai: (
@@ -296,8 +297,8 @@
         recover: 1,
         // `invasion` is a simulation event (events/sim/): the reign drops it as unknown.
         expand: (relation: -2, events: [
-            ("neighbour_raid", 25), ("neighbour_ultimatum", 10), ("neighbour_war_declared", 5),
-            ("invasion", 10),
+            ("neighbour_raid", 20), ("neighbour_ultimatum", 10), ("neighbour_war_declared", 10),
+            ("invasion", 15),
         ]),
         defend: (relation: -1, events: [("neighbour_ultimatum", 10)]),
         trade: (relation: 1, events: [("neighbour_trade", 20)]),

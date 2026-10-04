@@ -3,7 +3,7 @@
 use bd_core::data::{BuildingDef, Data};
 use bd_core::rules::{ActionTarget, Effect, Target};
 use bd_core::state::{Holder, ProvinceId, World};
-use eframe::egui::{Color32, Mesh, Pos2, Rect, Sense, Shape, Stroke, Ui, pos2, vec2};
+use eframe::egui::{Color32, Mesh, Pos2, Rect, Sense, Shape, Stroke, Ui, Vec2, pos2, vec2};
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -49,7 +49,14 @@ pub struct MapView {
     edges: Vec<(Pos2, Pos2, ProvinceId, Option<ProvinceId>)>,
     /// Where the last frame painted the map; clicks and tests read it.
     rect: Cell<Rect>,
+    /// Stage 28: the wheel zooms in (1 is the whole map) round the pointer, a drag moves the
+    /// view: the centre of the view in map coordinates, off the map's centre.
+    zoom: Cell<f32>,
+    pan: Cell<Vec2>,
 }
+
+/// The closest zoom of the big map.
+const MAX_ZOOM: f32 = 4.0;
 
 impl MapView {
     pub fn new(polygons: &BTreeMap<ProvinceId, Vec<(i32, i32)>>) -> MapView {
@@ -81,20 +88,43 @@ impl MapView {
             bounds: Rect::from_points(&all),
             edges,
             rect: Cell::new(Rect::NOTHING),
+            zoom: Cell::new(1.0),
+            pan: Cell::new(Vec2::ZERO),
         }
     }
 
     fn scale(&self) -> f32 {
         let (r, b) = (self.rect.get(), self.bounds);
-        (r.width() / b.width()).min(r.height() / b.height())
+        (r.width() / b.width()).min(r.height() / b.height()) * self.zoom.get()
+    }
+
+    fn view_centre(&self) -> Pos2 {
+        self.bounds.center() + self.pan.get()
     }
 
     pub fn to_screen(&self, p: Pos2) -> Pos2 {
-        self.rect.get().center() + (p - self.bounds.center()) * self.scale()
+        self.rect.get().center() + (p - self.view_centre()) * self.scale()
     }
 
     pub fn to_map(&self, screen: Pos2) -> Pos2 {
-        self.bounds.center() + (screen - self.rect.get().center()) / self.scale()
+        self.view_centre() + (screen - self.rect.get().center()) / self.scale()
+    }
+
+    /// Zooms by `factor` keeping the map point under `screen` in place; the view stays on the
+    /// map, and at zoom 1 it is the whole map again.
+    pub fn zoom_at(&self, screen: Pos2, factor: f32) {
+        let at = self.to_map(screen);
+        self.zoom
+            .set((self.zoom.get() * factor).clamp(1.0, MAX_ZOOM));
+        self.move_by(at - self.to_map(screen));
+    }
+
+    /// Moves the view by `d` in map coordinates.
+    pub fn move_by(&self, d: Vec2) {
+        let room = self.bounds.size() * (1.0 - 1.0 / self.zoom.get()) / 2.0;
+        let p = self.pan.get() + d;
+        self.pan
+            .set(vec2(p.x.clamp(-room.x, room.x), p.y.clamp(-room.y, room.y)));
     }
 
     pub fn province_at(&self, screen: Pos2) -> Option<&ProvinceId> {
@@ -122,8 +152,16 @@ impl MapView {
         data: &Data,
         marked: &[ProvinceId],
     ) -> Option<ProvinceId> {
-        let (resp, painter) = ui.allocate_painter(ui.available_size(), Sense::click());
+        let (resp, painter) = ui.allocate_painter(ui.available_size(), Sense::click_and_drag());
         self.rect.set(resp.rect);
+        if resp.dragged() {
+            self.move_by(-resp.drag_delta() / self.scale());
+        }
+        let wheel = ui.input(|i| i.smooth_scroll_delta.y);
+        if let Some(at) = resp.hover_pos().filter(|_| wheel != 0.0) {
+            self.zoom_at(at, (wheel / 200.0).exp());
+        }
+        let painter = painter.with_clip_rect(resp.rect);
         painter.rect_filled(resp.rect, 0.0, BG2);
         // Weak: the crown reaches too little for any province action.
         let province_actions = data
@@ -196,7 +234,8 @@ impl MapView {
                 let at = self.to_screen(c) - vec2(0.0, size * 1.2);
                 let font = eframe::egui::FontId::proportional(size * 0.9);
                 let name = n.name.to_uppercase();
-                painter.text(at, eframe::egui::Align2::CENTER_CENTER, name, font, BORDER);
+                let ink = on(holder_color(w, &Holder::Foreign(n.id.clone())), BORDER);
+                painter.text(at, eframe::egui::Align2::CENTER_CENTER, name, font, ink);
             }
         }
         for (id, p) in &w.provinces {
@@ -216,7 +255,7 @@ impl MapView {
                 painter.text(at, center, icon, font.clone(), color);
             }
             let color = if matches!(p.holder, Holder::Foreign(_)) {
-                FG2
+                on(holder_color(w, &p.holder), FG2)
             } else {
                 FG
             };
@@ -301,11 +340,21 @@ pub(crate) fn holder_color(w: &World, h: &Holder) -> Color32 {
         Holder::Vassal(v) => {
             VASSALS[w.vassals.keys().position(|x| x == v).unwrap_or(0) % VASSALS.len()]
         }
-        Holder::Foreign(n) => {
-            let at = w.neighbours.get(n).map_or(0, |n| n.ordinal as usize);
-            FOREIGN[at % FOREIGN.len()]
-        }
+        // Stage 28: a state with a colour of its own in the preset (the empire) keeps it.
+        Holder::Foreign(n) => match w.neighbours.get(n) {
+            Some(n) if n.color.is_some() => {
+                let (r, g, b) = n.color.unwrap_or_default();
+                Color32::from_rgb(r, g, b)
+            }
+            n => FOREIGN[n.map_or(0, |n| n.ordinal as usize) % FOREIGN.len()],
+        },
     }
+}
+
+/// Text `ink` on `fill`, or light on a dark fill (stage 28: the empire's deep red).
+fn on(fill: Color32, ink: Color32) -> Color32 {
+    let luma = 299 * fill.r() as u32 + 587 * fill.g() as u32 + 114 * fill.b() as u32;
+    if luma < 110_000 { BG } else { ink }
 }
 
 /// Swatches with captions under the map: the crown, every vassal house, every state.
@@ -416,5 +465,34 @@ mod tests {
         assert_eq!(tri_area, area(&p));
         assert!(contains(&p, pos2(1.0, 1.0)));
         assert!(!contains(&p, pos2(3.5, 1.5)));
+    }
+
+    /// Stage 28: the wheel zooms round the pointer, a drag moves the view, and the view
+    /// never leaves the map: at zoom 1 it is the whole map.
+    #[test]
+    fn zoom_keeps_the_point_under_the_pointer() {
+        let square = [(0, 0), (100, 0), (100, 100), (0, 100)].to_vec();
+        let map = MapView::new(&[(ProvinceId("p".into()), square)].into());
+        map.rect
+            .set(Rect::from_min_size(pos2(0.0, 0.0), vec2(200.0, 200.0)));
+        let pointer = pos2(150.0, 50.0);
+        let under = map.to_map(pointer);
+        map.zoom_at(pointer, 2.0);
+        assert!((map.to_map(pointer) - under).length() < 1e-3);
+        assert_eq!(map.to_screen(pos2(50.0, 50.0)), pos2(50.0, 150.0));
+        map.move_by(vec2(1000.0, 0.0));
+        assert_eq!(map.pan.get(), vec2(25.0, -12.5), "no further than the edge");
+        map.zoom_at(pointer, 0.1);
+        assert_eq!((map.zoom.get(), map.pan.get()), (1.0, Vec2::ZERO));
+        map.zoom_at(pointer, 100.0);
+        assert_eq!(map.zoom.get(), MAX_ZOOM);
+    }
+
+    /// Stage 28: names stay readable on the empire's dark red, dark ink on light fills.
+    #[test]
+    fn names_are_light_on_a_dark_land() {
+        assert_eq!(on(Color32::from_rgb(150, 46, 52), FG2), BG);
+        assert_eq!(on(FOREIGN[0], FG2), FG2);
+        assert_eq!(on(CROWN, FG), FG);
     }
 }

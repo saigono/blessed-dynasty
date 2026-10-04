@@ -151,9 +151,12 @@ fn golden_seed_42_script_a() {
     // Stage 26c on top of 27: the compound events join the pool («Баронская лига» fires in
     // the founder's reign): the dynasty is conquered in the year 172. Without them the outcome
     // is that of stage 27, only the texts differ.
+    // Stage 28: the big map, four more neighbours and the empire draw on the rng in the
+    // founder's reign: another road; the dynasty lives to the horizon, the news of the
+    // empire's wars fill the chronicle (264 entries).
     assert_eq!(
         (c.years, &c.fall, c.entries.len()),
-        (172, &FallReason::Conquered, 66)
+        (300, &FallReason::Alive, 264)
     );
     let hint = |h: &'static str| Some(h);
     assert_eq!(
@@ -161,21 +164,20 @@ fn golden_seed_42_script_a() {
         [
             (
                 "Новое правление",
-                "После Ульриха Благочестивого на престол взошёл Конрад. Советники скоро поняли, что новый король не терпит спешки, и в королевстве стало тише.",
+                "В соборе пели многая лета, и Конрад принял скипетр, ещё помнивший руку Ульриха Набожного.",
                 hint("Наследник основателя учился власти в королевском совете."),
             ),
             (
-                "Мятеж дома Арден",
-                "Корона отпустила мятежный дом Арден вместе с его землёй, не обнажив меча, и при дворе это называли то мудростью, то позором.",
+                "Заговор",
+                "Ночью по городу прошла стража с факелами, и к утру в темнице сидели двенадцать господ с их слугами, виновные и невиновные вперемешку.",
+                hint("По воле основателя наследника наказали при всём дворе."),
+            ),
+            (
+                "Мятеж дома Вейр",
+                "Мятеж дома Вейр решали мечом: Конрад сам повёл рать в Хольм, и по дороге горели баронские усадьбы.",
                 hint(
                     "С того набега, отбитого в первое царствование, сосед ходил к границе с оглядкой."
                 ),
-            ),
-            (
-                "Потеря земли",
-                "Конрад не удержал Арден, и тамошние люди стали подданными Ардена.",
-                // Told in the entry before: not again (stage 26c).
-                None,
             ),
         ]
     );
@@ -244,16 +246,17 @@ fn golden_seed_42_script_a_with_a_testament() {
     // Stage 26b (see golden_seed_42_script_a): usurped in the year 104.
     // Stage 27 (see golden_seed_42_script_a): usurped in the year 103.
     // Stage 26c on top of 27 (the compound events): alive at the horizon.
+    // Stage 28 (the big map, see golden_seed_42_script_a): conquered in the year 177.
     assert_eq!(
         (c.years, &c.fall, c.entries.len()),
-        (300, &FallReason::Alive, 93)
+        (177, &FallReason::Conquered, 109)
     );
     assert_eq!(
         texts(&c)[0],
         (
             "Завещание основателя",
-            "Над гробом Ульриха канцлер сломал печать на его завещании. Потомкам Ульрих \
-             оставил заповедь: «Полная казна — крепость державы». Ещё он велел никогда не \
+            "Когда Ульриха похоронили, при дворе вскрыли его завещание. Первым он завещал \
+             держаться правила: «Полная казна — крепость державы». Ещё он велел никогда не \
              воевать с Нордмарком.",
             None
         )
@@ -434,6 +437,10 @@ fn quiet(data: &mut Data) {
     let ai = &mut data.neighbour_ai;
     for s in [&mut ai.expand, &mut ai.defend, &mut ai.trade, &mut ai.wait] {
         s.events.clear();
+    }
+    // Stage 28: the empire's wars from the first years; no news of the kingdoms.
+    if let Some(r) = &mut data.realm {
+        r.news.threshold = u32::MAX;
     }
 }
 
@@ -1227,28 +1234,31 @@ fn year_changes_of_seed_42_script_a() {
     // Stage 25: other events (a fire in stone remembered, heirs' hunts from 14 on).
     let foreign = |n: &str| Holder::Foreign(bd_core::state::NeighbourId(n.into()));
     let born = |n: &str| Change::Born(n.into());
+    // Stage 28: the big map and its kingdoms draw on the rng: other births and events, and
+    // the world's land moves in the founder's years (the empire loses Мерв to its governor
+    // Бардан in the first year and takes it back; Остенбрук, its other governor, breaks away
+    // with Эдесса).
+    let moved = |p: &str, from: &str, to: &str| Change::Holder(pid(p), foreign(from), foreign(to));
     let want = vec![
-        (1188, vec![axis("army", 20), nobles(9), g1, g2]),
-        (1189, vec![nobles(14), born("Генрих"), l1, l2]),
+        (
+            1188,
+            vec![nobles(9), g1, moved("merv", "kadar", "bardan"), g2],
+        ),
+        (1189, vec![nobles(9), l1, l2]),
         (1190, vec![nobles(7), b1, b2]),
-        (1192, vec![born("Освальд")]),
-        (1193, vec![born("Рейнхольд")]),
-        (
-            1194,
-            vec![born("Аделина"), Change::HeirGone("Освальд".into())],
-        ),
-        // Stage 27: the founder's reign as it was; Нордмарк takes Порфир from Пурпуляндия.
-        (
-            1198,
-            vec![Change::Holder(
-                pid("porfir"),
-                foreign("purpur"),
-                foreign("nordmark"),
-            )],
-        ),
-        (1203, vec![axis("loyalty_church", 5)]),
-        (1205, vec![axis("legitimacy", 6), axis("prestige", 15)]),
-        (1215, vec![axis("loyalty_church", 5)]),
+        (1191, vec![born("Матильда")]),
+        (1193, vec![born("Ирмгард")]),
+        (1194, vec![moved("merv", "bardan", "kadar")]),
+        (1197, vec![axis("loyalty_people", -5)]),
+        (1198, vec![born("Гизела")]),
+        (1199, vec![nobles(-6), moved("solkhat", "tavrika", "kadar")]),
+        (1206, vec![moved("porfir", "purpur", "nordmark")]),
+        (1207, vec![moved("olm", "zudmark", "kadar")]),
+        (1210, vec![axis("loyalty_church", 5)]),
+        (1214, vec![moved("amaran", "purpur", "nordmark")]),
+        (1215, vec![moved("edessa", "kadar", "Остенбрук")]),
+        (1219, vec![axis("loyalty_church", 5)]),
+        (1221, vec![moved("viren", "zudmark", "kadar")]),
     ];
     assert_eq!(log, want);
 }
@@ -1266,24 +1276,24 @@ fn kin_of_seed_42_script_a() {
     );
     assert_eq!((k[0].crowned, k[0].parent), (Some(1187), None));
     assert_eq!(k[0].died, Some(1187 + c.rulers[0].end.0));
-    // Конрад, 6 at the start, reigned 1223..1235 (stage 26b; 1258 in stage 25); his
-    // siblings died uncrowned, Освальд a child.
+    // Конрад, 6 at the start, reigned 1225..1243 (stage 28; 1223..1235 in stage 26b, 1258 in
+    // stage 25); his sisters died uncrowned, his son Леопольд followed him.
     assert_eq!(
         (k[1].name.as_str(), k[1].born, k[1].crowned, k[1].died),
-        ("Конрад", 1181, Some(1223), Some(1235))
+        ("Конрад", 1181, Some(1225), Some(1243))
     );
     assert_eq!(
         (k[2].name.as_str(), k[2].born, k[2].parent, k[2].crowned),
-        ("Генрих", 1189, Some(0), None)
+        ("Матильда", 1191, Some(0), None)
     );
-    assert_eq!(k[2].died, Some(1243)); // 1232 before stage 27, 1244 before stage 26c
+    assert_eq!(k[2].died, Some(1233));
     assert_eq!(
         (k[3].name.as_str(), k[3].born, k[3].parent, k[3].died),
-        ("Освальд", 1192, Some(0), Some(1194))
+        ("Ирмгард", 1193, Some(0), Some(1272))
     );
     assert_eq!(
-        (k[4].name.as_str(), k[4].born, k[4].parent, k[4].died),
-        ("Рейнхольд", 1193, Some(0), Some(1224))
+        (k[5].name.as_str(), k[5].born, k[5].parent, k[5].crowned),
+        ("Леопольд", 1212, Some(1), Some(1243))
     );
     // Every ruler in the chronicle is a crowned kin, in order; children point at a ruler.
     let crowned: Vec<(&str, u32)> = (k.iter())

@@ -150,8 +150,8 @@ fn every_reign_choice_is_hinted() {
 #[test]
 fn sim_events_follow_the_brief() {
     let data = load_all();
-    // Stage 24: royal_will, forged_will.
-    assert_eq!(data.sim_events.len(), 17);
+    // Stage 24: royal_will, forged_will. Stage 28: province_breakaway.
+    assert_eq!(data.sim_events.len(), 18);
     for e in &data.sim_events {
         assert!((2..=3).contains(&e.choices.len()), "{}", e.id);
         assert!(e.importance >= data.sim.threshold, "{}", e.id);
@@ -252,14 +252,19 @@ fn every_sim_event_fires_in_a_thousand_dynasties() {
                 Step::ReignEnded(end) => break end,
             }
         };
-        sim::run(end, &data, g.rng.clone()).entries
+        // Ids only: an entry carries a world snapshot, 2000 chronicles of them outgrow memory.
+        let entries = sim::run(end, &data, g.rng.clone()).entries;
+        entries
+            .into_iter()
+            .map(|e| e.event.unwrap_or_default())
+            .collect::<Vec<_>>()
     };
     let mut fired: BTreeMap<String, u32> = BTreeMap::new();
     for e in par_seeds(0..2000, threads(), chronicle, |_| {})
         .into_iter()
         .flatten()
     {
-        *fired.entry(e.event.unwrap_or_default()).or_default() += 1;
+        *fired.entry(e).or_default() += 1;
     }
     let omens = data.events.iter().filter(|e| e.omen);
     let silent: Vec<_> = (data.sim_events.iter().chain(omens))
@@ -706,7 +711,8 @@ fn a_town_rebuilt_in_stone_burns_no_more() {
     let capital = Target::Province(bd_core::state::ProvinceId("capital".into()));
     let mut g = waiting(1, "cap_fire", Some(capital.clone()));
     decide(&mut g, "Строить заново только из камня", "stone");
-    let at = fired_at(&mut g, "cap_fire", 30);
+    // 50 years (30 before stage 28: more neighbours, and their events take more years).
+    let at = fired_at(&mut g, "cap_fire", 50);
     assert!(!at.contains(&capital), "{at:?}");
     assert!(at.len() >= 5, "{at:?}");
 }
@@ -835,4 +841,109 @@ fn compound_events_recall_their_causes_in_every_told() {
             assert!(t.contains("{prev_"), "{}: {t}", e.id);
         }
     }
+}
+
+/// Stage 28 acceptance: the big map is one piece, its neighbours are mutual and are exactly
+/// the outlines that share a side, no two outlines overlap (no crossing sides, no corner on
+/// another's side or inside it), and the empire starts beyond the buffers, bordering none of
+/// our land.
+#[test]
+fn the_big_map_is_whole_and_the_empire_starts_far() {
+    use bd_core::state::{Holder, NeighbourId};
+    let data = load_all();
+    let map = preset(&read("presets/default.ron"), &data).map;
+    let by: BTreeMap<_, _> = (map.provinces.iter())
+        .map(|p| (p.id.0.as_str(), p))
+        .collect();
+    assert!(by.len() >= 40, "{}", by.len());
+    let listed: BTreeSet<(&str, &str)> = (map.provinces.iter())
+        .flat_map(|p| p.neighbours.iter().map(|n| (p.id.0.as_str(), n.0.as_str())))
+        .collect();
+    for (a, b) in &listed {
+        assert!(listed.contains(&(*b, *a)), "{a} -> {b} only");
+    }
+    let mut seen = BTreeSet::from(["capital"]);
+    let mut todo = vec!["capital"];
+    while let Some(p) = todo.pop() {
+        for n in &by[p].neighbours {
+            if seen.insert(n.0.as_str()) {
+                todo.push(n.0.as_str());
+            }
+        }
+    }
+    assert_eq!(seen.len(), by.len(), "not connected");
+    // Sides of the outlines; a side of two outlines makes them neighbours.
+    type Pt = (i32, i32);
+    let mut sides: BTreeMap<(Pt, Pt), Vec<&str>> = BTreeMap::new();
+    for (id, poly) in &map.polygons {
+        for (i, a) in poly.iter().enumerate() {
+            let b = poly[(i + 1) % poly.len()];
+            sides
+                .entry((*a.min(&b), *a.max(&b)))
+                .or_default()
+                .push(&id.0);
+        }
+    }
+    let mut shared = BTreeSet::new();
+    for ids in sides.values() {
+        assert!(ids.len() <= 2, "{ids:?}");
+        if let [a, b] = ids[..] {
+            shared.extend([(a, b), (b, a)]);
+        }
+    }
+    assert_eq!(shared, listed);
+    let orient = |a: Pt, b: Pt, c: Pt| {
+        let (a, b, c) = (
+            (a.0 as i64, a.1 as i64),
+            (b.0 as i64, b.1 as i64),
+            (c.0 as i64, c.1 as i64),
+        );
+        ((b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)).signum()
+    };
+    let keys: Vec<_> = sides.keys().collect();
+    for (i, &&(a, b)) in keys.iter().enumerate() {
+        for &&(c, d) in &keys[i + 1..] {
+            let apart = [a, b].contains(&c) || [a, b].contains(&d);
+            let cross =
+                orient(a, b, c) * orient(a, b, d) < 0 && orient(c, d, a) * orient(c, d, b) < 0;
+            assert!(apart || !cross, "{a:?}-{b:?} crosses {c:?}-{d:?}");
+        }
+    }
+    let corners: BTreeSet<Pt> = map.polygons.values().flatten().copied().collect();
+    for &(a, b) in sides.keys() {
+        for &p in &corners {
+            let within = p.0 >= a.0.min(b.0)
+                && p.0 <= a.0.max(b.0)
+                && p.1 >= a.1.min(b.1)
+                && p.1 <= a.1.max(b.1);
+            let on = p != a && p != b && orient(a, b, p) == 0 && within;
+            assert!(!on, "{p:?} on {a:?}-{b:?}");
+        }
+    }
+    for (id, poly) in &map.polygons {
+        for &p in corners.iter().filter(|p| !poly.contains(p)) {
+            let crossings = (0..poly.len()).filter(|&i| {
+                let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
+                let d = (b.1 - a.1) as i64;
+                (a.1 > p.1) != (b.1 > p.1)
+                    && (((b.0 - a.0) as i64 * (p.1 - a.1) as i64 - (p.0 - a.0) as i64 * d)
+                        * d.signum())
+                        > 0
+            });
+            assert!(crossings.count() % 2 == 0, "{p:?} inside {}", id.0);
+        }
+    }
+    let empire = Holder::Foreign(NeighbourId("kadar".into()));
+    let ours = |h: &Holder| !matches!(h, Holder::Foreign(_));
+    for p in map.provinces.iter().filter(|p| p.holder == empire) {
+        for n in &p.neighbours {
+            assert!(
+                !ours(&by[n.0.as_str()].holder),
+                "{} borders our {}",
+                p.id.0,
+                n.0
+            );
+        }
+    }
+    assert!((10..=12).contains(&map.provinces.iter().filter(|p| p.holder == empire).count()));
 }

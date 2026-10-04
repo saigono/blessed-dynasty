@@ -1165,6 +1165,29 @@ mod tests {
         }
     }
 
+    /// Stage 28: a `texts_when` that comes true between two turns takes a variant's place, so
+    /// the next turn still reads anew (it joined the list before, and its new length could
+    /// land the turn on the same text).
+    #[test]
+    fn a_text_coming_true_keeps_the_next_turn_new() {
+        let mut e = event("x", vec![]);
+        (e.text, e.texts) = ("a".into(), vec!["b".into(), "c".into()]);
+        e.texts_when = vec![(Predicate::Flag("old".into()), "d".into())];
+        let w = game(bare(), 1).world;
+        let mut old = w.clone();
+        old.flags.insert("old".into());
+        let at = |w: &World, turn: u32| {
+            let mut w = w.clone();
+            w.retold.insert("x".into(), turn);
+            e.text_now(&w).to_string()
+        };
+        for t in 0..12 {
+            assert_ne!(at(&w, t), at(&old, t + 1), "{t}");
+        }
+        assert!((0..3).any(|t| at(&old, t) == "d"));
+        assert!((0..3).all(|t| at(&w, t) != "d"));
+    }
+
     fn action(id: &str, target: ActionTarget, on_complete: Vec<Effect>) -> Action {
         Action {
             id: id.into(),
@@ -1492,7 +1515,7 @@ mod tests {
         let neighbours: Vec<_> = (g.world.neighbours.keys())
             .map(|n| Target::Neighbour(n.clone()))
             .collect();
-        assert_eq!(neighbours.len(), 3);
+        assert_eq!(neighbours.len(), 7); // stage 28: three more and the empire
         assert_eq!(
             g.available_actions(),
             [

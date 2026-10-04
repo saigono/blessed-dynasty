@@ -1566,10 +1566,10 @@ mod tests {
             );
         }
         assert!(matches!(
-            broken(r#"("neighbour_raid", 25)"#, r#"("neighbour_raid", 76)"#),
+            broken(r#"("neighbour_raid", 20)"#, r#"("neighbour_raid", 66)"#),
             Err(DataError::Invalid(_))
         ));
-        assert!(broken(r#"("neighbour_raid", 25)"#, r#"("neighbour_raid", 75)"#).is_ok());
+        assert!(broken(r#"("neighbour_raid", 20)"#, r#"("neighbour_raid", 65)"#).is_ok());
         let no_weight = RULES
             .replace("weight: 2", "weight: 0")
             .replace("weight: 1", "weight: 0");
@@ -1587,8 +1587,9 @@ mod tests {
         data.add_events(NEIGHBOUR_EVENTS).unwrap();
         data.add_actions(ACTIONS).unwrap();
         assert_eq!(data.events.len(), 38);
-        // 16 of actions.ron; to enact 16 laws, to repeal the 10 not of the succession.
-        assert_eq!(data.actions.len(), 16 + 16 + 10);
+        // 17 of actions.ron (stage 28: the subsidy); to enact 16 laws, to repeal the 10 not
+        // of the succession.
+        assert_eq!(data.actions.len(), 17 + 16 + 10);
         // Ids must be unique across files.
         assert!(matches!(
             data.add_events(EVENTS),

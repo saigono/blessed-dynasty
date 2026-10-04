@@ -9,12 +9,15 @@ items is flooded from the border; the rest falls into connected pieces, and each
 goes to the grid cell its centre is in, so a spire that reaches into the row above stays
 with its church.
 
+assets/raw/events/<theme>.jpg, the pictures of events, lose the plain paper around the
+drawing and become 3:2 jpegs in sprites/events/.
+
 assets/raw/tiles/ holds textures: sea-1 and paper-1 become seamless squares in
 sprites/tiles/; the bands of strips-1 become strips in sprites/strips/ that repeat left to
 right, to be laid along a border, a road or a river.
 """
 import os
-from PIL import Image, ImageChops, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', 'assets')
 SHEETS = {
@@ -52,6 +55,7 @@ STEP = 4  # components are found on a grid this coarse
 # The dirt road's ruts run aslant and break where it repeats.
 STRIPS = [None, None, 'border-band', None, 'road-cobble', 'river', 'coast']
 TILE = 512
+EVENT = (600, 400)
 
 
 def background(img):
@@ -248,5 +252,27 @@ def tiles():
                 mask.save(os.path.join(out, name + '-mask.png'))
 
 
+def events():
+    raw = os.path.join(ROOT, 'raw', 'events')
+    out = os.path.join(ROOT, 'sprites', 'events')
+    os.makedirs(out, exist_ok=True)
+    for f in sorted(os.listdir(raw)):
+        if not f.endswith('.jpg'):
+            continue
+        img = Image.open(os.path.join(raw, f)).convert('RGB')
+        # The drawing is where the ink is: rows and columns with a few dark pixels.
+        ink = img.convert('L').point(lambda v: 255 if v < 90 else 0)
+        w, h = img.size
+        cols = [ink.crop((x, 0, x + 1, h)).histogram()[255] for x in range(w)]
+        rows = [ink.crop((0, y, w, y + 1)).histogram()[255] for y in range(h)]
+        xs = [x for x, n in enumerate(cols) if n > h * 0.02]
+        ys = [y for y, n in enumerate(rows) if n > w * 0.02]
+        # In by a few pixels: past the ruled frame some pictures have.
+        box = (xs[0] + 8, ys[0] + 8, xs[-1] - 8, ys[-1] - 8)
+        img = ImageOps.fit(img.crop(box), EVENT, Image.Resampling.LANCZOS)
+        img.save(os.path.join(out, f), quality=78, optimize=True)
+
+
 main()
 tiles()
+events()

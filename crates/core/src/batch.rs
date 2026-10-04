@@ -912,7 +912,7 @@ fn batch_on(
     Ok((batch_report(&rows, &hidden, &catastrophes), rows))
 }
 
-/// The threads of `batch` and the calibrations: `BD_THREADS`, else every core; one on wasm.
+/// The threads of `batch` and the calibrations: `BD_THREADS`, else up to four cores; one on wasm.
 pub fn threads() -> usize {
     if cfg!(target_arch = "wasm32") {
         return 1;
@@ -920,7 +920,9 @@ pub fn threads() -> usize {
     let env = std::env::var("BD_THREADS")
         .ok()
         .and_then(|n| n.parse().ok());
-    env.unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
+    // Four by default: the tests run several batches at once, and all the cores of each
+    // would starve the machine of memory.
+    env.unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get().min(4)))
 }
 
 /// `f` of every seed of `seeds`, in seed order, on `threads` threads (1: a plain loop in this

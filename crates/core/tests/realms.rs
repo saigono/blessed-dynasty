@@ -400,9 +400,8 @@ fn kingdom_dynasties_live_80_to_150_years() {
     let mut how: std::collections::BTreeMap<String, Vec<String>> = Default::default();
     let mut news: std::collections::BTreeMap<String, u32> = Default::default();
     let mut realms = vec![];
-    for seed in 0..1000 {
-        let d = world_of(&f, seed, 300);
-        let r = &d.g.realms;
+    let world = |seed| world_of(&f, seed, 300).g.realms;
+    for r in batch::par_seeds(0..1000, batch::threads(), world, |_| {}) {
         for id in ["nordmark", "purpur", "vestrum"] {
             let first = r.falls.iter().find(|(x, ..)| x.0 == id);
             let years = first.map_or(300, |(_, t, _)| t.0);

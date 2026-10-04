@@ -24,7 +24,7 @@ use crate::state::{
 use crate::time::Tick;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// The foreign kingdoms of a game.
 #[derive(Clone, Debug, PartialEq, Default)]
@@ -38,8 +38,9 @@ pub struct Realms {
     pub owners: BTreeMap<ProvinceId, NeighbourId>,
     /// Each kingdom's strength as the worlds last saw it.
     pub strength: BTreeMap<NeighbourId, Fx>,
-    /// How a kingdom founded later starts; None: none is, a fallen one stands still.
-    pub founding: Option<Rc<Founding>>,
+    /// How a kingdom founded later starts; None: none is, a fallen one stands still. An
+    /// `Arc` since stage 27b: `batch` shares the starting game between threads.
+    pub founding: Option<Arc<Founding>>,
     /// What the crown heard of the world, oldest first.
     pub news: Vec<News>,
     /// Every dynasty of a kingdom that fell, when and how: for `cli` and calibration.
@@ -90,7 +91,7 @@ pub fn start(data: &Data, preset: &Preset, seed: u64, w: &mut World) -> Realms {
     let founding = start.founded.as_ref().map(|f| {
         let mut axes = preset.axes.clone();
         axes.extend(f.axes.clone());
-        Rc::new(Founding {
+        Arc::new(Founding {
             data: kd,
             profile: f.clone(),
             axes,

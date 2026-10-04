@@ -879,26 +879,94 @@ pub fn set_law(g: &mut Game, law: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// `cli batch`: the games of `seeds` from `start` (`progress` after each one), the CSV and
-/// summary of `batch_report`, and the rows.
+/// `cli batch`: the games of `seeds` from `start` on `threads()` threads (`progress` after
+/// each one), the CSV and summary of `batch_report`, and the rows.
 pub fn batch(
     start: &Game,
     seeds: std::ops::Range<u64>,
     script: &[ScriptStep],
     auto: Option<&AutoChooser>,
     rules: &ScoreRules,
-    mut progress: impl FnMut(u64),
+    progress: impl FnMut(u64),
 ) -> Result<(String, Vec<Row>), String> {
-    let mut rows = vec![];
-    for seed in seeds {
-        rows.push(batch_row(start, seed, script, auto, rules)?);
-        progress(seed);
-    }
+    batch_on(threads(), start, seeds, script, auto, rules, progress)
+}
+
+/// `batch` on `threads` threads: the same output whatever their number.
+fn batch_on(
+    threads: usize,
+    start: &Game,
+    seeds: std::ops::Range<u64>,
+    script: &[ScriptStep],
+    auto: Option<&AutoChooser>,
+    rules: &ScoreRules,
+    progress: impl FnMut(u64),
+) -> Result<(String, Vec<Row>), String> {
+    let row = |seed| batch_row(start, seed, script, auto, rules);
+    let rows = par_seeds(seeds, threads, row, progress);
+    let rows = rows.into_iter().collect::<Result<Vec<_>, _>>()?;
     let hidden = hidden_nodes(&start.data).map(|(_, a)| a.id.0.as_str());
     let hidden: Vec<&str> = hidden.collect();
     let catastrophes = start.data.symptoms.iter().map(|(c, _)| c.as_str());
     let catastrophes: Vec<&str> = catastrophes.collect();
     Ok((batch_report(&rows, &hidden, &catastrophes), rows))
+}
+
+/// The threads of `batch` and the calibrations: `BD_THREADS`, else up to four cores; one on wasm.
+pub fn threads() -> usize {
+    if cfg!(target_arch = "wasm32") {
+        return 1;
+    }
+    let env = std::env::var("BD_THREADS")
+        .ok()
+        .and_then(|n| n.parse().ok());
+    // Four by default: the tests run several batches at once, and all the cores of each
+    // would starve the machine of memory.
+    env.unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get().min(4)))
+}
+
+/// `f` of every seed of `seeds`, in seed order, on `threads` threads (1: a plain loop in this
+/// one); `progress` in this thread after each seed, in the order they are done. Every game
+/// is its own seed's, so the results are the same whatever the number of threads.
+pub fn par_seeds<T: Send>(
+    seeds: std::ops::Range<u64>,
+    threads: usize,
+    f: impl Fn(u64) -> T + Sync,
+    mut progress: impl FnMut(u64),
+) -> Vec<T> {
+    let each = |seed| {
+        let r = f(seed);
+        progress(seed);
+        r
+    };
+    if threads <= 1 {
+        return seeds.map(each).collect();
+    }
+    let (first, end) = (seeds.start, seeds.end);
+    let next = std::sync::atomic::AtomicU64::new(first);
+    let mut out: Vec<Option<T>> = seeds.map(|_| None).collect();
+    std::thread::scope(|s| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        for _ in 0..threads {
+            let (tx, next, f) = (tx.clone(), &next, &f);
+            s.spawn(move || {
+                loop {
+                    let seed = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if seed >= end || tx.send((seed, f(seed))).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        drop(tx);
+        for (seed, r) in rx {
+            progress(seed);
+            out[(seed - first) as usize] = Some(r);
+        }
+    });
+    out.into_iter()
+        .map(|r| r.expect("every seed is done"))
+        .collect()
 }
 
 /// The chronicle as `cli run` tells it: every entry with its hint, the epilogue, the rulers
@@ -1271,6 +1339,34 @@ mod tests {
             }
         }
         files
+    }
+
+    /// Stage 27b acceptance: 50 games on one thread and on four give the same CSV and summary,
+    /// the rows in seed order, `progress` once per seed.
+    #[test]
+    fn batch_on_four_threads_is_batch_on_one() {
+        let files = files();
+        let g = load(&files, "presets/default.ron", "maps/default.ron", 0).unwrap();
+        let rules = score_rules(&files, &g).unwrap();
+        let run = |threads| {
+            let mut told = vec![];
+            let (out, rows) =
+                batch_on(threads, &g, 0..50, &[], None, &rules, |s| told.push(s)).unwrap();
+            told.sort();
+            assert_eq!(told, (0..50).collect::<Vec<_>>());
+            assert!(rows.iter().map(|r| r.seed).eq(0..50));
+            out
+        };
+        assert_eq!(run(1), run(4));
+        // The first failed seed is the error, as on one thread.
+        let fail = |s: u64| if s % 7 == 3 { Err(s) } else { Ok(s) };
+        let first = |threads| -> Result<Vec<u64>, u64> {
+            par_seeds(0..50, threads, fail, |_| {})
+                .into_iter()
+                .collect()
+        };
+        assert_eq!(first(4), Err(3));
+        assert_eq!(first(4), first(1));
     }
 
     #[test]

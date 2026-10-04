@@ -254,7 +254,10 @@ fn every_sim_event_fires_in_a_thousand_dynasties() {
         };
         // Ids only: an entry carries a world snapshot, 2000 chronicles of them outgrow memory.
         let entries = sim::run(end, &data, g.rng.clone()).entries;
-        entries.into_iter().map(|e| e.event.unwrap_or_default()).collect::<Vec<_>>()
+        entries
+            .into_iter()
+            .map(|e| e.event.unwrap_or_default())
+            .collect::<Vec<_>>()
     };
     let mut fired: BTreeMap<String, u32> = BTreeMap::new();
     for e in par_seeds(0..2000, threads(), chronicle, |_| {})

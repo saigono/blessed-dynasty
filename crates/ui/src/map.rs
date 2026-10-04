@@ -664,7 +664,7 @@ impl MapView {
     /// Every state's name on a ribbon over its land, along it (upright for a tall land), with
     /// its coat at the start standing on the ribbon's foot and turned with it. A ribbon that
     /// would cover a settlement, another ribbon or the cartouche moves across itself to where
-    /// it covers least.
+    /// it covers least, on its land and in the view.
     fn ribbons(&self, painter: &Painter, w: &World, d: &Data, art: &Art) {
         let px = (STATE_PX * self.zoom.get().sqrt()).min(24.0);
         let Some(tex) = art.sprite("ribbon", "") else {
@@ -716,11 +716,18 @@ impl MapView {
                 Rect::from_points(&pts)
             };
             let across = rotate(vec2(0.0, r.plate.height() * 1.15), angle);
-            let covers = |c: &Pos2| taken.iter().filter(|t| t.shrink(2.0).intersects(bounds(*c))).count();
+            // What a place costs: whatever it covers, off its own land much more, out of
+            // the view most.
+            let view = self.rect.get();
+            let cost = |c: &Pos2| {
+                let covers = taken.iter().filter(|t| t.shrink(2.0).intersects(bounds(*c))).count();
+                let own = self.province_at(*c).is_some_and(|id| mine.contains(&id));
+                covers + 10 * !own as usize + 100 * !view.contains_rect(bounds(*c)) as usize
+            };
             let centre = self.to_screen(at);
             let tries = [0.0, -1.0, 1.0, -2.0, 2.0, -3.0, 3.0, -4.0, 4.0].map(|k| centre + across * k);
-            // The nearest that covers least.
-            let centre = tries.into_iter().min_by_key(covers).unwrap_or(centre);
+            // The nearest that costs least.
+            let centre = tries.into_iter().min_by_key(cost).unwrap_or(centre);
             let place = |p: Pos2| centre + rotate(p - r.plate.center(), angle);
             let mut mesh = Mesh::with_texture(tex.id);
             for (local, uv) in slices(&RIBBON, r.scale, r.stretch) {

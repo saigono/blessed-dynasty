@@ -3497,8 +3497,10 @@ mod tests {
             assert!(subsidy.contains(&t.to_string()), "{t}: {subsidy:?}");
         }
 
-        let law = hover(&mut h, "Закон: Абсолютное первородство ℹ");
-        let text = h.game().data.heirs.laws[0].text();
+        // Stage 28b: the preset starts on partition.
+        let law = hover(&mut h, "Закон: Разделение ℹ");
+        let d = &h.game().data;
+        let text = (d.heirs.laws.iter()).find(|l| l.flag == "law_partition").unwrap().text();
         assert!(law.contains(&text) && text.contains("ниже 70"), "{law:?}");
         assert!(texts_of(&mut h).contains(&"Первый в очереди: Конрад".to_string()));
 
@@ -3630,10 +3632,14 @@ mod tests {
             "the law in force says so"
         );
         for t in [
-            "Стоимость 45 · 2 года · сила короны от 40",
-            "пока вводят, к цели: Церковь -10 · по введении: Знать +3, Церковь -2",
+            "Стоимость 90 · 3 года · сила короны от 40",
+            "пока вводят, к цели: Церковь -10, Знать -5 · по введении: Знать +3, Церковь -2",
         ] {
             assert!(list.iter().any(|x| x.starts_with(t)), "{t}: {list:?}");
+        }
+        // Stage 28b: the primogenitures need loyal nobles (the preset's are at 40), and say so.
+        for t in ["Нужно: Знать от 60", "Нужно: Знать от 55"] {
+            assert!(list.contains(&t.to_string()), "{t}: {list:?}");
         }
         // Each group opens: its laws, what they hold and feed, their price and resistance.
         for g in ["Наследование", "Крестьяне"] {
@@ -3649,10 +3655,10 @@ mod tests {
             h.click_label(g);
             settle(&mut h);
         }
-        h.click_label("Салический закон");
+        h.click_label("Лествичное право");
         assert!(!h.app.laws);
         let running = &h.game().world.active_actions;
-        assert_eq!(running[0].id, "enact_law_salic");
+        assert_eq!(running[0].id, "enact_law_seniority");
         let wait = |h: &mut Harness, n: u32| {
             for _ in 0..n {
                 h.app.apply(Cmd::Wait);
@@ -3662,7 +3668,7 @@ mod tests {
             }
         };
         wait(&mut h, 2);
-        assert!(texts_of(&mut h).contains(&"Закон: Салический закон ℹ".to_string()));
+        assert!(texts_of(&mut h).contains(&"Закон: Лествичное право ℹ".to_string()));
         // Another law, in force on the reign screen, and its repeal for half the price.
         h.app
             .game

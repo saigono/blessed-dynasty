@@ -480,6 +480,7 @@ fn founder_laws_make_different_equilibria() {
         (0..3).any(|k| (metrics[i][k] - metrics[0][k]).abs() * 100 >= metrics[0][k] * 15)
     };
     assert!((1..sets.len()).any(off), "{metrics:?}");
+    println!("{metrics:?} {s:?}");
     let dominant = |i: usize| s[i].3.iter().max_by_key(|(_, n)| **n).unwrap().0.clone();
     let reasons: BTreeSet<String> = (1..sets.len()).map(dominant).collect();
     assert!(reasons.len() >= 2, "{s:?}");
@@ -877,11 +878,18 @@ fn law_profiles_differ() {
     assert_eq!(laws[worst(3)], "law_seniority", "{rows:?}");
     // Stage 27: an appanage that broke away and took the capital conquers (was NoCrownLand
     // when no crown land was left): partition breaks up twice as often, by the rows.
+    // Stage 28b: half the dynasties that start on partition leave it for a primogeniture by
+    // their 100th year (sim.auto, the nobles' loyalty), so it breaks up a fifth more often
+    // (95 against 76), no longer half (docs/calibration.md, stage 28b).
     let broken = |o: &str| {
         let fell = |l: &&str| matches!(l.split(',').nth(4), Some("NoCrownLand" | "Conquered"));
         o.lines().filter(fell).count()
     };
-    assert!(broken(&outs[5]) > broken(&outs[0]) * 3 / 2, "{rows:?}");
+    let (partition, primogeniture) = (broken(&outs[5]), broken(&outs[0]));
+    assert!(
+        partition * 5 > primogeniture * 6,
+        "{partition} {primogeniture} {rows:?}"
+    );
     // Stage 17: the rightful heir's claim cuts the disputes of absolute primogeniture below
     // the 32% of stage 16 without letting NoHeir soar; male primogeniture has its own risk.
     // Stage 17b: at most 12% under absolute primogeniture, only a child or a weak heir.

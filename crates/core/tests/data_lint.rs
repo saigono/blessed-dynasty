@@ -947,3 +947,66 @@ fn the_big_map_is_whole_and_the_empire_starts_far() {
     }
     assert!((10..=12).contains(&map.provinces.iter().filter(|p| p.holder == empire).count()));
 }
+
+/// Stage 28b acceptance: our kingdom and every kingdom founded later start on partition, the
+/// custom of the land.
+#[test]
+fn the_preset_starts_on_partition() {
+    let data = load_all();
+    let p = preset(&read("presets/default.ron"), &data);
+    let law = |flags: &BTreeSet<String>| {
+        let laws = data.heirs.laws.iter().filter(|l| flags.contains(&l.flag));
+        laws.map(|l| l.flag.clone()).collect::<Vec<_>>()
+    };
+    assert_eq!(law(&p.flags), ["law_partition"]);
+    let founded = p.realms.unwrap().founded.unwrap();
+    assert_eq!(law(&founded.flags), ["law_partition"]);
+}
+
+/// Stage 28b acceptance: the firmer a succession law holds the crown together, the dearer
+/// it is and the more loyal the nobles it needs to start: partition, then seniority and
+/// election, then male primogeniture and the Salic law, then absolute primogeniture, the
+/// longest to bring in and the most resisted by the nobles, needing their loyalty above 60.
+#[test]
+fn succession_laws_are_priced_by_the_ladder() {
+    use bd_core::fx::Fx;
+    use bd_core::rules::Predicate;
+    let data = rules();
+    let law = |id: &str| data.law(id).unwrap();
+    let nobles = |a: &bd_core::state::AxisId| a.0 == "loyalty_nobles";
+    // The loyalty of the nobles a law needs to start, if any.
+    let need = |id: &str| match &law(id).requires {
+        Predicate::All(ps) => ps.iter().find_map(|p| match p {
+            Predicate::AxisAbove(a, v) if nobles(a) => Some(*v),
+            _ => None,
+        }),
+        _ => None,
+    };
+    let resisted = |id: &str| {
+        let r = law(id).resistance.iter().filter(|(a, _)| nobles(a));
+        r.fold(Fx(0), |s, (_, v)| s + *v)
+    };
+    let ladder: [&[&str]; 4] = [
+        &["law_partition"],
+        &["law_seniority", "law_elective"],
+        &["law_male", "law_salic"],
+        &["law_primogeniture"],
+    ];
+    for w in ladder.windows(2) {
+        for (a, b) in w[0].iter().flat_map(|a| w[1].iter().map(move |b| (*a, *b))) {
+            assert!(law(a).cost < law(b).cost, "{a} {b}");
+            assert!(law(a).years <= law(b).years, "{a} {b}");
+            assert!(need(a) <= need(b), "{a} {b}");
+        }
+    }
+    for id in ["law_partition", "law_seniority", "law_elective"] {
+        assert_eq!(need(id), None, "{id}");
+    }
+    let top = "law_primogeniture";
+    assert!(need(top) >= Some(Fx::from_int(59)), "{:?}", need(top));
+    for l in (data.laws.list.iter()).filter(|l| l.group == law(top).group && l.id != top) {
+        assert!(law(top).years > l.years, "{}", l.id);
+        assert!(resisted(top) < resisted(&l.id), "{}", l.id);
+        assert!(need(top) > need(&l.id), "{}", l.id);
+    }
+}

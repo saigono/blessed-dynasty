@@ -550,7 +550,8 @@
                 description: "Копить золото и не начинать войн без крайней нужды.",
                 // `marriage` 6: a wedding outweighs its dowry for a ruler who counts gold
                 // twice too (stage 25, docs/calibration.md).
-                weights: {"treasury": 0.3, "income": 2, "province_income": 1, "army": 0.15, "war": -40, "marriage": 6}),
+                weights: {"treasury": 0.3, "income": 2, "province_income": 1, "army": 0.6, "war": -40, "marriage": 6,
+                    "law_primogeniture": 36, "law_male": 27, "law_salic": 27}),
             (id: "sword", name: "Меч кормит род",
                 description: "Держать сильное войско и добывать земли оружием.",
                 weights: {"war": 10, "army": 0.1, "province": 10, "prestige": 0.3}),
@@ -562,7 +563,7 @@
                 weights: {"grant": -30, "secede": -20, "province": 30}),
             (id: "peace", name: "Мир с соседями",
                 description: "Жить с соседями в дружбе, родниться с ними и избегать войн.",
-                weights: {"relation": 0.4, "war": -25, "marriage": 10}),
+                weights: {"relation": 0.4, "war": -25, "marriage": 10, "army": 0.3}),
             (id: "law", name: "Закон превыше короля",
                 description: "Крепить приказы и законы, а не волю одного государя.",
                 weights: {"bureaucracy": 0.5, "law": 3, "pressure": 1, "stability": 0.5}),
@@ -778,6 +779,8 @@
             crowned: ("Новое правление", "После {prev.род} на престол {ruler:взошёл|взошла} {ruler}."),
             province_lost: ("Потеря земли", "Корона потеряла {province.вин}: край отошёл под руку {neighbour.род}."),
             province_gained: ("Земля возвращена", "При {ruler.пр} корона вернула себе {province.вин}, отняв край у {neighbour.род}."),
+            // Stage 28b: land that was never ours (`province_gained`: land given back).
+            province_taken: ("Земля присоединена", "При {ruler.пр} корона взяла {province.вин}, отняв край у {neighbour.род}."),
             // The heir first in line died of age risk (heirs.death); see heir_death_age.
             heir_died: ("Смерть наследника", "{heir:Умер|Умерла} {heir}, {heir:первый|первая} в очереди на престол."),
             // The law in force changed (an action done or a choice); {law} is its name.
@@ -808,6 +811,13 @@
                     "Ключи от ворот {province.род} привезли к трону на бархатной подушке, и {neighbour.дат} пришлось уступить край.",
                     "Над стенами {province.род} снова подняли королевское знамя, и мытари короны вернулись в свои старые конторы.",
                     "В {province.пр} снова поминали в молитвах {ruler.вин}, и край вернулся под руку короны.",
+                ],
+                "province_taken": [
+                    "Над замками {province.род} впервые подняли королевское знамя, и {neighbour} {neighbour:смирился|смирилась} с потерей.",
+                    "Наместники {neighbour.род} покинули {province.вин}, и край впервые признал над собой руку короны.",
+                    "В церквях {province.род} теперь молились за {ruler.вин}, а не за {neighbour.вин}.",
+                    "Ключи от ворот {province.род} привезли к трону на бархатной подушке, и {neighbour.дат} пришлось уступить чужой прежде край.",
+                    "Мытари короны впервые въехали в {province.вин}, а межевые столбы перенесли на новый рубеж.",
                 ],
                 "heir_died": [
                     "Двор облачился в траур: {heir:скончался|скончалась} {heir}, {heir:наследник|наследница} престола.",

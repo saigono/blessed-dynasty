@@ -1245,10 +1245,19 @@ fn province_entries(g: &Game, holders: &[Holder], c: &mut Chronicle, r: &mut Rei
     let t = &g.data.sim.texts;
     let w = &g.world;
     for (p, was) in w.provinces.values().zip(holders) {
+        // Stage 28b: land is given back only if it was ours at some entry (the first is the
+        // world of the founder's death); else it is taken.
+        let ours = |e: &ChronicleEntry| {
+            let q = e.snapshot.provinces.get(&p.id);
+            q.is_some_and(|q| !matches!(q.holder, Holder::Foreign(_)))
+        };
         let ((title, text), foreign, key) = match (was, &p.holder) {
             (Holder::Foreign(_), Holder::Foreign(_)) => continue,
             (_, Holder::Foreign(n)) => (&t.province_lost, n, "province_lost"),
-            (Holder::Foreign(n), _) => (&t.province_gained, n, "province_gained"),
+            (Holder::Foreign(n), _) if c.entries.iter().any(ours) => {
+                (&t.province_gained, n, "province_gained")
+            }
+            (Holder::Foreign(n), _) => (&t.province_taken, n, "province_taken"),
             _ => continue,
         };
         let neighbour = w.neighbours.get(foreign).map_or("", |n| &n.name);
@@ -1266,7 +1275,8 @@ fn province_entries(g: &Game, holders: &[Holder], c: &mut Chronicle, r: &mut Rei
         let text = text::pick(&all, salt, c.entries.len() as u64);
         let told = (fill(title), fill(text));
         c.entries.push(entry(g, told, g.data.sim.notable, causes));
-        r.count(key);
+        // Land taken is land gained for the epithets.
+        r.count(key.replace("taken", "gained").as_str());
     }
 }
 

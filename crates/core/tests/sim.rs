@@ -954,6 +954,7 @@ fn an_unfinished_war_starts_over_under_the_heir() {
 /// Stage 26c, a bug of the samples: a neighbour that lost its last land has left the world
 /// (`drop_landless`, in the same step as the crown took that land), and the land is told
 /// without its name, not «отняв край у .». Here Берг is held by a neighbour already gone.
+/// Stage 28b: Берг was never ours in the chronicle, so it is joined, not given back.
 #[test]
 fn land_taken_from_a_vanished_neighbour_is_told_without_its_name() {
     let mut data = content();
@@ -973,8 +974,9 @@ fn land_taken_from_a_vanished_neighbour_is_told_without_its_name() {
     let mut told = BTreeSet::new();
     for seed in 0..20 {
         let c = sim::run(end_now(&g), &data, Rng::from_seed(seed));
-        let t = c.entries.iter().find(|e| e.title == "Земля возвращена");
-        told.insert(t.expect("Берг comes back").text.clone());
+        assert!(c.entries.iter().all(|e| e.title != "Земля возвращена"));
+        let t = c.entries.iter().find(|e| e.title == "Земля присоединена");
+        told.insert(t.expect("Берг is taken").text.clone());
     }
     assert!(told.len() > 1, "{told:?}");
     for t in told {

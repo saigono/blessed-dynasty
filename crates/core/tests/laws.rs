@@ -294,7 +294,8 @@ fn laws(g: &Game) -> Vec<&String> {
 
 /// Acceptance: a change of law costs its price at the start, takes its years with the
 /// resistance (stage 19: the church's anchor 10 lower), sets the new flag only at the end and
-/// is closed during a dispute.
+/// is closed during a dispute. Stage 28b: seniority in place of the Salic law, which now
+/// needs loyal nobles.
 #[test]
 fn changing_the_law_costs_money_and_years() {
     let data = data();
@@ -306,21 +307,21 @@ fn changing_the_law_costs_money_and_years() {
         g
     };
     let mut g = new();
-    let id = "enact_law_salic";
+    let id = "enact_law_seniority";
     let a = data.actions.iter().find(|a| a.id == id).unwrap();
-    assert_eq!((a.cost, a.duration_years.0), (Fx::from_int(45), 2));
+    assert_eq!((a.cost, a.duration_years.0), (Fx::from_int(60), 2));
     let church = |g: &Game| {
         let def = g.data.axes.iter().find(|a| a.id.0 == "loyalty_church");
         bd_core::graph::anchor(&g.data, &g.world, def.unwrap())
     };
     assert_eq!(church(&g), Fx::from_int(50));
     g.start_action(id, None).unwrap();
-    assert_eq!(axis(&g, "treasury"), Fx::from_int(500 - 45));
+    assert_eq!(axis(&g, "treasury"), Fx::from_int(500 - 60));
     assert_eq!(church(&g), Fx::from_int(40));
     g.wait().unwrap();
     assert_eq!(laws(&g), ["law_primogeniture"]);
     g.wait().unwrap();
-    assert_eq!(laws(&g), ["law_salic"]);
+    assert_eq!(laws(&g), ["law_seniority"]);
     assert_eq!(church(&g), Fx::from_int(50));
     // Under a contested succession no change is offered.
     let mut g = new();
@@ -335,7 +336,8 @@ fn changing_the_law_costs_money_and_years() {
 }
 
 /// The automaton changes the law by its weights (`law_*` keys: the new law's weight less the
-/// old one's), and the chronicle tells the new law.
+/// old one's), and the chronicle tells the new law. Loyal nobles: the Salic law needs them
+/// (stage 28b).
 #[test]
 fn the_automaton_changes_the_law_by_its_weights() {
     let mut data = data();
@@ -343,6 +345,9 @@ fn the_automaton_changes_the_law_by_its_weights() {
     g.world
         .axes
         .insert(AxisId("treasury".into()), Fx::from_int(500));
+    g.world
+        .axes
+        .insert(AxisId("loyalty_nobles".into()), Fx::from_int(70));
     let mut auto = AutoChooser {
         weights: [("law_salic".to_string(), Fx::from_int(100))].into(),
         noise: Fx(0),
@@ -369,6 +374,25 @@ fn the_automaton_changes_the_law_by_its_weights() {
     let e = e.expect("the change is told");
     assert!(e.text.contains("закон «Салический закон»"), "{}", e.text);
     assert!(e.snapshot.flags.contains("law_salic"));
+}
+
+/// Stage 28b acceptance: absolute primogeniture cannot be started with the nobles' loyalty
+/// below its threshold (`AxisAbove("loyalty_nobles", 59.999)`), it can at the threshold and
+/// above it.
+#[test]
+fn absolute_primogeniture_needs_loyal_nobles() {
+    let data = data();
+    let offered = |nobles: i64| {
+        let mut g = game(&data, "law_partition", &FAMILY);
+        let w = &mut g.world;
+        w.axes.insert(AxisId("treasury".into()), Fx::from_int(500));
+        w.axes
+            .insert(AxisId("loyalty_nobles".into()), Fx::from_int(nobles));
+        (g.available_actions().into_iter()).any(|(id, _)| id == "enact_law_primogeniture")
+    };
+    assert!(!offered(59));
+    assert!(offered(60));
+    assert!(offered(61));
 }
 
 /// The coronation entry for an heir of `sex` and `claim` under absolute primogeniture with

@@ -332,11 +332,15 @@ fn trace_tells_the_edges_into_a_node() {
     assert!(target >= 60, "{out}");
 }
 
-/// Stage 8b acceptance: 1000 games in under 60 s; 120 s since stage 26 (the kingdoms play too, a soft limit). Only meaningful in release:
-/// `cargo test --release -p cli -- --ignored batch_of_a_thousand`.
+/// Stage 8b acceptance: 1000 games in under 60 s; 120 s since stage 26 (the kingdoms play too, a soft limit). Only meaningful in release
+/// and alone: beside the other calibrations it measures their load, so it runs only with
+/// `BD_PERF=1 cargo test --release -p cli -- --ignored --exact batch_of_a_thousand_is_fast`.
 #[test]
-#[ignore = "release only, about a minute"]
+#[ignore = "release only, alone, with BD_PERF=1"]
 fn batch_of_a_thousand_is_fast() {
+    if std::env::var_os("BD_PERF").is_none() {
+        return;
+    }
     let t = std::time::Instant::now();
     let out = batch(&["--runs", "1000"]);
     let took = t.elapsed();

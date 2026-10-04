@@ -4,6 +4,7 @@
 [
     (
         id: "neighbour_ultimatum",
+        image: "envoy",
         title: "Ультиматум: {neighbour}",
         text: "Послы {neighbour.род} входят в тронный зал не кланяясь. Они требуют дани серебром и скотом и обещают, что за отказ заплатят порубежные сёла.",
         texts: [
@@ -43,6 +44,7 @@
     ),
     (
         id: "neighbour_trade",
+        image: "trade",
         title: "Чужие купцы",
         text: "Купцы {neighbour.род} просят места на наших ярмарках. Везут сукно, соль и стекло и обещают платить пошлину звонкой монетой.",
         texts: [
@@ -83,6 +85,7 @@
     ),
     (
         id: "neighbour_raid",
+        image: "raid",
         title: "Набег: {province}",
         text: "Конные отряды {neighbour.род} перешли границу. В {province.пр} горят сёла, по дорогам гонят угнанный скот, и беженцы стучатся в ворота замков.",
         texts: [
@@ -124,6 +127,7 @@
     (
         // Leads into the war chain (events/war.ron) through StartWar.
         id: "neighbour_war_declared",
+        image: "war-declared",
         title: "{neighbour} объявляет войну",
         text: "Глашатаи {neighbour.род} трубят у ворот столицы и бросают к трону латную перчатку. За рекой уже белеют вражьи шатры.",
         texts: [

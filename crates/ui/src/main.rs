@@ -628,7 +628,10 @@ impl App {
             Screen::Reign => self.reign(ui),
             Screen::Event(v) => {
                 self.reign(ui);
-                event(&ctx, self.game.as_ref().expect("in a game"), v)
+                let g = self.game.as_ref().expect("in a game");
+                let e = (g.data.events.iter()).find(|e| e.id == v.event_id);
+                let picture = e.and_then(|e| self.art.picture(&ctx, &e.image));
+                event(&ctx, g, v, picture)
             }
             Screen::ReignOver => {
                 self.reign(ui);
@@ -1395,12 +1398,17 @@ fn more_slots(d: &Data, w: &World) -> Option<String> {
     Some(format!("ещё одно откроет {by} {}", round(*at)))
 }
 
-/// The modal card over the dimmed reign screen.
-fn event(ctx: &egui::Context, g: &Game, v: &EventView) -> Option<Cmd> {
+/// The modal card over the dimmed reign screen, its picture on top (stage 29b).
+fn event(ctx: &egui::Context, g: &Game, v: &EventView, picture: Option<art::Sprite>) -> Option<Cmd> {
     let w = &g.world;
     let mut cmd = None;
     egui::Modal::new(egui::Id::new("event")).show(ctx, |ui| {
         ui.set_width(540.0);
+        if let Some(p) = picture {
+            let size = egui::vec2(540.0, 540.0 * p.size.y / p.size.x);
+            let r = ui.add(egui::Image::new((p.id, size)));
+            ui.painter().rect_stroke(r.rect, 0.0, (1.0, FG), egui::StrokeKind::Inside);
+        }
         let mut eyebrow = vec!["Событие".to_string()];
         eyebrow.extend(v.target.as_ref().map(|t| target_name(w, t)));
         eyebrow.push(w.tick.date(w.time_unit, w.start_year));
@@ -4009,6 +4017,32 @@ mod tests {
         let mut all = Vec::new();
         out.shapes.iter().for_each(|c| walk(&c.shape, &mut all));
         all
+    }
+
+    /// Acceptance (stage 29b): the event window shows the picture of its theme over the
+    /// title, the full width of the window; the picture is loaded when first shown, not at
+    /// the start. Every theme the events name is embedded.
+    #[test]
+    fn the_event_window_shows_its_picture() {
+        let mut h = Harness::new();
+        begun(&mut h);
+        assert!(h.app.art.pictures.is_empty());
+        force_event(&mut h, "cap_fire", None);
+        let loaded: Vec<&String> = h.app.art.pictures.keys().collect();
+        assert_eq!(loaded, ["city-fire"]);
+        let id = h.app.art.pictures["city-fire"].id;
+        let Screen::Event(v) = &h.app.screen else { panic!("no event") };
+        let title = v.title.clone();
+        let out = h.frame(vec![]);
+        let shown = (out.shapes.iter()).find(|c| c.shape.texture_id() == id);
+        let r = shown.expect("the picture on screen").shape.visual_bounding_rect();
+        assert!((r.width() - 540.0).abs() < 2.0, "{r:?}");
+        let at = texts_at(&out).into_iter().find(|(t, _)| *t == title);
+        let (_, at) = at.unwrap_or_else(|| panic!("no «{title}»"));
+        assert!(r.max.y <= at.y, "{r:?} {at:?}");
+        for e in &h.game().data.events {
+            assert!(art::PICTURES.iter().any(|(n, _)| *n == e.image), "{}", e.id);
+        }
     }
 
     /// Acceptance (stage 25): the effects of an event stand under their own choice, the

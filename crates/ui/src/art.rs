@@ -42,6 +42,21 @@ pub const TILES: &[(&str, &[u8])] = png![
     "strips/coast", "strips/river", "strips/road-cobble",
 ];
 
+macro_rules! jpg {
+    ($($p:literal),* $(,)?) => {
+        &[$(($p, include_bytes!(concat!("../../../assets/sprites/events/", $p, ".jpg")) as &[u8])),*]
+    };
+}
+
+/// The event pictures by theme (stage 29b, `Event.image`), decoded when first shown.
+pub const PICTURES: &[(&str, &[u8])] = jpg![
+    "abdication", "appanage", "arrest", "assassin", "battle", "bishop", "border", "brigands",
+    "campaign", "cathedral", "city-fire", "coronation", "council", "defeat", "envoy", "famine",
+    "festival", "flood", "heaven-wrath", "heresy", "intrigue", "mine", "mourning", "petition",
+    "pilgrimage", "plague", "quarrel", "raid", "refugees", "refused", "revolt", "runaways",
+    "sickbed", "siege", "talks", "trade", "tutor", "victory", "war-declared", "wedding",
+];
+
 const STYLE: &str = include_str!("../../../data/sprites.ron");
 
 /// data/sprites.ron.
@@ -95,8 +110,10 @@ pub struct Art {
     /// White where the field of `style.shield` is: tinted, under the shield.
     pub shield_field: Sprite,
     pub style: Style,
+    /// The event pictures shown so far, by theme.
+    pub pictures: BTreeMap<String, Sprite>,
     /// The textures live while these do.
-    _handles: Vec<TextureHandle>,
+    handles: Vec<TextureHandle>,
 }
 
 impl Art {
@@ -138,8 +155,23 @@ impl Art {
             tiles,
             shield_field: field.expect("the shield is among the sprites"),
             style,
-            _handles: handles,
+            pictures: BTreeMap::new(),
+            handles,
         }
+    }
+
+    /// The picture of theme `name`: decoded and uploaded the first time an event shows it,
+    /// not at the start. None for a theme not in `PICTURES`.
+    pub fn picture(&mut self, ctx: &Context, name: &str) -> Option<Sprite> {
+        if let Some(s) = self.pictures.get(name) {
+            return Some(*s);
+        }
+        let (_, bytes) = PICTURES.iter().find(|(n, _)| *n == name)?;
+        let h = ctx.load_texture(name, jpeg(bytes), TextureOptions::LINEAR);
+        let s = Sprite { id: h.id(), size: h.size_vec2() };
+        self.handles.push(h);
+        self.pictures.insert(name.to_string(), s);
+        Some(s)
     }
 
     /// A variant of sprite `name` by `salt` (a province id): the same every time.
@@ -173,6 +205,14 @@ fn decode(bytes: &[u8]) -> ColorImage {
         png::ColorType::Rgba => ColorImage::from_rgba_unmultiplied(size, buf),
         _ => ColorImage::from_rgb(size, buf),
     }
+}
+
+fn jpeg(bytes: &[u8]) -> ColorImage {
+    let cursor = zune_jpeg::zune_core::bytestream::ZCursor::new(bytes);
+    let mut dec = zune_jpeg::JpegDecoder::new(cursor);
+    let rgb = dec.decode().expect("a jpeg of assets/sprites/events");
+    let info = dec.info().expect("decoded");
+    ColorImage::from_rgb([info.width as usize, info.height as usize], &rgb)
 }
 
 /// The field of a shield: the light pixels reached from its middle without crossing ink,

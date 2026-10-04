@@ -5,6 +5,7 @@
 [
     (
         id: "heir_tutor",
+        image: "tutor",
         title: "Воспитатель наследника",
         text: "{heir} подрастает: уже читает по складам и рубит деревянным мечом крапиву за конюшней. При дворе спорят, кому доверить воспитание.",
         texts: [
@@ -56,6 +57,7 @@
     ),
     (
         id: "heir_marriage",
+        image: "wedding",
         title: "Брак наследника",
         text: "{heir} {heir:вошёл|вошла} в года, и сваты уже в пути. Соседние дворы шлют портреты и росписи приданого, а бароны напоминают о своих детях на выданье.",
         texts: [
@@ -109,6 +111,7 @@
         // An unmarried ruler (no heirs.married_flag): mostly a ruler crowned before his
         // heir_marriage came. Without it births are rare (heirs.unmarried).
         id: "ruler_marriage",
+        image: "wedding",
         title: "Брак на троне",
         text: "Престол пустует наполовину: у {ruler.род} нет супруга, и колыбели во дворце стоят без дела. {neighbour} присылает сватов, а бароны наперебой предлагают своих.",
         texts: [
@@ -165,6 +168,7 @@
         // After a suit turned down (marry_neighbour, Effect::Marry); its costs are the
         // suit's `otherwise`.
         id: "marriage_refused",
+        image: "refused",
         title: "{neighbour} отверг сватовство",
         text: "Сваты вернулись ни с чем: {neighbour} не отдаёт руки за наш дом. Подарки отосланы назад нераспечатанными, и при соседних дворах уже судачат.",
         texts: [
@@ -197,6 +201,7 @@
         // (the rightful heir's claim 90, the rest 35: after a quarrel won by the younger),
         // frequent without a law.
         id: "heir_dispute",
+        image: "quarrel",
         title: "Спор наследников",
         text: "Двое королевских детей не уступают друг другу. У каждого своя свита, свои бароны и свой духовник, и на пирах их сажают в разные концы стола.",
         texts: [
@@ -253,6 +258,7 @@
     ),
     (
         id: "heir_death",
+        image: "sickbed",
         title: "Беда с наследником",
         text: "На охоте под {heir.тв} споткнулся конь, и {heir} {heir:упал|упала} на камни. Третий день горячка, лекари не ручаются за жизнь.",
         texts: [
@@ -320,6 +326,7 @@
     (
         // After a contested abdication (rules.ron `abdication`); fires in the simulation.
         id: "succession_dispute",
+        image: "quarrel",
         title: "Спор о короне",
         text: "Корона сложена до срока, и бароны не спешат присягать. В замках называют своих претендентов, а на дорогах к столице видят вооружённых людей.",
         texts: [

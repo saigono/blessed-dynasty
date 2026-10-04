@@ -809,6 +809,10 @@ pub struct Event {
     /// good about that province, neighbour or heir.
     #[serde(default)]
     pub unmarked: Option<String>,
+    /// The theme of its picture, `assets/sprites/events/<image>.jpg` (stage 29b): the event
+    /// window shows it. Empty: none.
+    #[serde(default)]
+    pub image: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Default)]

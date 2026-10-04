@@ -2933,6 +2933,7 @@ dependencies = [
  "ron",
  "serde",
  "wasm-bindgen-futures",
+ "zune-jpeg",
 ]
 
 [[package]]

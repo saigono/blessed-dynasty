@@ -112,6 +112,24 @@ fn every_spawned_event_exists() {
     assert_eq!(lint::spawned(&load_all()), Vec::<String>::new());
 }
 
+/// Acceptance (stage 29b): every event the ruler sees, asked or a message, has a picture, and
+/// every picture named, the simulation's too, is a file of assets/sprites/events.
+#[test]
+fn every_event_has_an_existing_picture() {
+    let data = load_all();
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/sprites/events");
+    let no_picture: Vec<&str> = (data.events.iter())
+        .filter(|e| e.image.is_empty())
+        .map(|e| e.id.as_str())
+        .collect();
+    assert_eq!(no_picture, Vec::<&str>::new());
+    let missing: Vec<String> = (data.events.iter().chain(&data.sim_events))
+        .filter(|e| !e.image.is_empty() && !dir.join(format!("{}.jpg", e.image)).is_file())
+        .map(|e| format!("{}: {}", e.id, e.image))
+        .collect();
+    assert_eq!(missing, Vec::<String>::new());
+}
+
 /// Events `rules.ron` names: the war start, neighbour AI events (simulation ones included),
 /// death and abdication.
 #[test]

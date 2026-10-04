@@ -28,6 +28,9 @@
   --m4: #b5523c;
   --m5: #7a8a3a;
   --m6: #5d7f96;
+  --m7: #9a6b4f;
+  --m8: #4f8a9a;
+  --m9: #a0577a;
   --font-display: "Cormorant SC", "Palatino Linotype", Georgia, serif;
   --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
@@ -38,7 +41,7 @@
     --bg: #12161b; --panel: #191e25; --sunk: #222831; --ink: #e2e6eb; --muted: #95a0ac;
     --line: #2d343d; --accent: #7eaee0; --accent-ink: #0d1520; --or: #e0b44c; --or-soft: #3a3020;
     --bad: #f07d73; --bad-soft: #3d2222; --ok: #6cc58f; --ok-soft: #1e3427; --m-crown: #5f93cc;
-    --m1: #c9a052; --m2: #a77fc0; --m3: #5fae8c; --m4: #cf7a63; --m5: #9caf5a; --m6: #7ea0b8;
+    --m1: #c9a052; --m2: #a77fc0; --m3: #5fae8c; --m4: #cf7a63; --m5: #9caf5a; --m6: #7ea0b8; --m7: #bf8f72; --m8: #72aebf; --m9: #c27a9c;
     color-scheme: dark;
   }
 }
@@ -46,7 +49,7 @@
   --bg: #12161b; --panel: #191e25; --sunk: #222831; --ink: #e2e6eb; --muted: #95a0ac;
   --line: #2d343d; --accent: #7eaee0; --accent-ink: #0d1520; --or: #e0b44c; --or-soft: #3a3020;
   --bad: #f07d73; --bad-soft: #3d2222; --ok: #6cc58f; --ok-soft: #1e3427; --m-crown: #5f93cc;
-  --m1: #c9a052; --m2: #a77fc0; --m3: #5fae8c; --m4: #cf7a63; --m5: #9caf5a; --m6: #7ea0b8;
+  --m1: #c9a052; --m2: #a77fc0; --m3: #5fae8c; --m4: #cf7a63; --m5: #9caf5a; --m6: #7ea0b8; --m7: #bf8f72; --m8: #72aebf; --m9: #c27a9c;
   color-scheme: dark;
 }
 html, body { height: 100%; }
@@ -992,7 +995,13 @@ function renderMap() {
   const polys = resolve(map, ['f:polygons'])?.entries || [];
   const people = {};
   for (const v of resolve(pre, ['f:vassals'])?.items || []) people['Vassal:' + str(v, 'id')] = str(v, 'name');
-  for (const v of resolve(pre, ['f:neighbours'])?.items || []) people['Foreign:' + str(v, 'id')] = str(v, 'name');
+  // A state with a colour of its own in the preset (stage 28: the empire) keeps it.
+  const tint = {};
+  for (const v of resolve(pre, ['f:neighbours'])?.items || []) {
+    people['Foreign:' + str(v, 'id')] = str(v, 'name');
+    const c = v.fields.find(f => f.key === 'color')?.val;
+    if (c?.name === 'Some') tint['Foreign:' + str(v, 'id')] = `rgb(${c.items[0].items.map(x => x.v).join(',')})`;
+  }
   const capital = str(resolve(pre, ['f:capital']), 'province');
   const owners = ['Crown'];
   const ownerOf = p => {
@@ -1001,7 +1010,7 @@ function renderMap() {
     if (!owners.includes(o)) owners.push(o);
     return o;
   };
-  const color = o => o === 'Crown' ? 'var(--m-crown)' : `var(--m${((owners.indexOf(o) - 1) % 6) + 1})`;
+  const color = o => o === 'Crown' ? 'var(--m-crown)' : tint[o] || `var(--m${((owners.indexOf(o) - 1) % 9) + 1})`;
   const byId = Object.fromEntries(provinces.map(p => [str(p, 'id'), p]));
   const pointsOf = e => e.val.items.map(t => t.items.map(x => Number(x.v)));
   const pts = polys.flatMap(pointsOf);

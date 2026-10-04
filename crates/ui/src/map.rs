@@ -234,7 +234,8 @@ impl MapView {
                 let at = self.to_screen(c) - vec2(0.0, size * 1.2);
                 let font = eframe::egui::FontId::proportional(size * 0.9);
                 let name = n.name.to_uppercase();
-                painter.text(at, eframe::egui::Align2::CENTER_CENTER, name, font, BORDER);
+                let ink = on(holder_color(w, &Holder::Foreign(n.id.clone())), BORDER);
+                painter.text(at, eframe::egui::Align2::CENTER_CENTER, name, font, ink);
             }
         }
         for (id, p) in &w.provinces {
@@ -254,7 +255,7 @@ impl MapView {
                 painter.text(at, center, icon, font.clone(), color);
             }
             let color = if matches!(p.holder, Holder::Foreign(_)) {
-                FG2
+                on(holder_color(w, &p.holder), FG2)
             } else {
                 FG
             };
@@ -348,6 +349,12 @@ pub(crate) fn holder_color(w: &World, h: &Holder) -> Color32 {
             n => FOREIGN[n.map_or(0, |n| n.ordinal as usize) % FOREIGN.len()],
         },
     }
+}
+
+/// Text `ink` on `fill`, or light on a dark fill (stage 28: the empire's deep red).
+fn on(fill: Color32, ink: Color32) -> Color32 {
+    let luma = 299 * fill.r() as u32 + 587 * fill.g() as u32 + 114 * fill.b() as u32;
+    if luma < 110_000 { BG } else { ink }
 }
 
 /// Swatches with captions under the map: the crown, every vassal house, every state.
@@ -479,5 +486,13 @@ mod tests {
         assert_eq!((map.zoom.get(), map.pan.get()), (1.0, Vec2::ZERO));
         map.zoom_at(pointer, 100.0);
         assert_eq!(map.zoom.get(), MAX_ZOOM);
+    }
+
+    /// Stage 28: names stay readable on the empire's dark red, dark ink on light fills.
+    #[test]
+    fn names_are_light_on_a_dark_land() {
+        assert_eq!(on(Color32::from_rgb(150, 46, 52), FG2), BG);
+        assert_eq!(on(FOREIGN[0], FG2), FG2);
+        assert_eq!(on(CROWN, FG), FG);
     }
 }

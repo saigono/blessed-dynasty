@@ -1,5 +1,6 @@
 //! Stage 6: the dynasty simulation and its chronicle.
 
+use bd_core::batch::{par_seeds, threads};
 use bd_core::data::Data;
 use bd_core::fx::Fx;
 use bd_core::game::{DecisionKind, Game, PendingEvent, ReignEnd, Step};
@@ -274,25 +275,30 @@ fn thirty_dynasties_end() {
 fn dynasties(n: u64) {
     let data = content();
     let start = game(&data, 0);
-    for seed in 0..n {
-        let mut g = start.clone();
-        g.rng = Rng::from_seed(seed);
-        let (g, end) = reign(g, |_| {});
-        let c = sim::run(end, &data, g.rng.clone());
-        assert!(c.years <= data.sim.max_years, "seed {seed}: {}", c.years);
-        assert!(
-            c.rulers.len() >= 2 || c.fall == FallReason::NoHeir,
-            "seed {seed}"
-        );
-        // Stage 26c: a link of a life or a join of two entries never puts a second colon in
-        // a sentence.
-        let lives = c.rulers.iter().map(|r| r.biography.as_str());
-        for text in lives.chain(c.entries.iter().map(|e| e.text.as_str())) {
-            for s in text.split(". ") {
-                assert!(s.matches(':').count() <= 1, "seed {seed}: {s}");
+    par_seeds(
+        0..n,
+        threads(),
+        |seed| {
+            let mut g = start.clone();
+            g.rng = Rng::from_seed(seed);
+            let (g, end) = reign(g, |_| {});
+            let c = sim::run(end, &data, g.rng.clone());
+            assert!(c.years <= data.sim.max_years, "seed {seed}: {}", c.years);
+            assert!(
+                c.rulers.len() >= 2 || c.fall == FallReason::NoHeir,
+                "seed {seed}"
+            );
+            // Stage 26c: a link of a life or a join of two entries never puts a second colon in
+            // a sentence.
+            let lives = c.rulers.iter().map(|r| r.biography.as_str());
+            for text in lives.chain(c.entries.iter().map(|e| e.text.as_str())) {
+                for s in text.split(". ") {
+                    assert!(s.matches(':').count() <= 1, "seed {seed}: {s}");
+                }
             }
-        }
-    }
+        },
+        |_| {},
+    );
 }
 
 #[test]

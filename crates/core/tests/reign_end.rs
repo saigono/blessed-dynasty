@@ -1,5 +1,6 @@
 //! Stage 5: end of the reign, death risk, abdication, heirs.
 
+use bd_core::batch::{par_seeds, threads};
 use bd_core::data::{Data, DataError, by_age};
 use bd_core::fx::Fx;
 use bd_core::game::{DecisionKind, Game, GameError, PendingEvent, Step};
@@ -120,7 +121,7 @@ fn middle_reign(start: &Game, seed: u64) -> u32 {
 #[test]
 fn reign_length_calibration() {
     let start = game(content(), 0);
-    let mut years: Vec<u32> = (0..1000).map(|s| middle_reign(&start, s)).collect();
+    let mut years: Vec<u32> = par_seeds(0..1000, threads(), |s| middle_reign(&start, s), |_| {});
     years.sort();
     let early = years.iter().filter(|&&y| y < 10).count();
     let median = years[500];

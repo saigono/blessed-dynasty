@@ -1,5 +1,6 @@
 //! Content lint: loads every data file and checks references across files.
 
+use bd_core::batch::{par_seeds, threads};
 use bd_core::data::{self, Data, DataError};
 use bd_core::game::{Game, Step};
 use bd_core::lint;
@@ -199,20 +200,25 @@ fn name_pools() {
 fn every_reign_event_fires_under_neutral_play() {
     let data = load_all();
     let preset = preset(&read("presets/default.ron"), &data);
-    let mut fired = BTreeSet::new();
-    for seed in 0..2000 {
+    let fired_of = |seed| {
         let mut g = Game::new(data.clone(), &preset, seed);
+        let mut fired = vec![];
         for _ in 0..60 {
             match g.wait().unwrap() {
                 Step::Event(v) => {
                     g.choose((v.choices.len() - 1) / 2).unwrap();
-                    fired.insert(v.event_id);
+                    fired.push(v.event_id);
                 }
                 Step::Idle => {}
                 Step::ReignEnded(_) => break,
             }
         }
-    }
+        fired
+    };
+    let fired: BTreeSet<String> = par_seeds(0..2000, threads(), fired_of, |_| {})
+        .into_iter()
+        .flatten()
+        .collect();
     let mut reign = rules();
     reign.add_events(&read("events/reign.ron")).unwrap();
     let silent: Vec<_> = (reign.events.iter())
@@ -233,8 +239,7 @@ fn every_reign_event_fires_under_neutral_play() {
 fn every_sim_event_fires_in_a_thousand_dynasties() {
     let data = load_all();
     let preset = preset(&read("presets/default.ron"), &data);
-    let mut fired: BTreeMap<String, u32> = BTreeMap::new();
-    for seed in 0..2000 {
+    let chronicle = |seed| {
         let mut g = Game::new(data.clone(), &preset, seed);
         if seed % 4 == 0 {
             g.world.flags.insert("law_charters".into());
@@ -247,9 +252,14 @@ fn every_sim_event_fires_in_a_thousand_dynasties() {
                 Step::ReignEnded(end) => break end,
             }
         };
-        for e in sim::run(end, &data, g.rng.clone()).entries {
-            *fired.entry(e.event.unwrap_or_default()).or_default() += 1;
-        }
+        sim::run(end, &data, g.rng.clone()).entries
+    };
+    let mut fired: BTreeMap<String, u32> = BTreeMap::new();
+    for e in par_seeds(0..2000, threads(), chronicle, |_| {})
+        .into_iter()
+        .flatten()
+    {
+        *fired.entry(e.event.unwrap_or_default()).or_default() += 1;
     }
     let omens = data.events.iter().filter(|e| e.omen);
     let silent: Vec<_> = (data.sim_events.iter().chain(omens))

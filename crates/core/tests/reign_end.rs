@@ -729,8 +729,9 @@ fn raids_and_pool(pool: u32, quiet: u32) -> (usize, usize) {
 
 #[test]
 fn neighbour_events_join_the_weighted_pick() {
-    // Three raids offered a year, weight 30 each, next to a pool event of 30: the pool
-    // event gets about a quarter of the ticks instead of none.
+    // Five raids offered a year (three before stage 28; the empire and Таврика have no
+    // border), weight 30 each, next to a pool event of 30: the pool event gets about a sixth
+    // of the ticks instead of none.
     let (raids, locals) = raids_and_pool(30, 0);
     assert_eq!(raids + locals, 40);
     assert!((5..=20).contains(&locals), "{locals}");

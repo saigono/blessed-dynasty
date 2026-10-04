@@ -360,7 +360,8 @@ fn the_chronicle_tells_a_law_repealed_and_brought_in() {
         told.collect::<Vec<_>>()
     };
     let has = |told: &[(String, String)], title: &str, law: &str| {
-        (told.iter()).any(|(t, x)| t == title && x.contains(&format!("закон «{law}»")))
+        // «закон» or «Закон», the text may begin with it.
+        (told.iter()).any(|(t, x)| t == title && x.contains(&format!("акон «{law}»")))
     };
     d.sim.auto.base = [("pressure".to_string(), Fx::from_int(100))].into();
     let told = texts(&d, true);

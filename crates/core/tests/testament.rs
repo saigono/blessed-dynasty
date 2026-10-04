@@ -422,8 +422,9 @@ fn rulers_of_the_simulation_name_heirs_in_wills() {
             .map(|e| e.tick)
     };
     // 0..100 since stage 26b: the queue of events moved the rng, a will crowns its favourite
-    // as often as before (8 of 300 dynasties against 9), the first now at seed 93.
-    let (c, tick) = (0..100)
+    // as often as before (8 of 300 dynasties against 9), the first now at seed 93. Stage 28:
+    // the big map moves the rng again, the first at seed 118: 100..200, as many dynasties.
+    let (c, tick) = (100..200)
         .find_map(|s| {
             let c = dynasty(&data, s, None);
             told(&c).map(|t| (c, t))

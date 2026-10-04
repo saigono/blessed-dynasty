@@ -45,6 +45,10 @@ pub fn neighbour_tick(
         false => (r - ai.drift).max(Fx(0)),
     };
     n.relation = r.clamp(Fx(0) - limit, limit);
+    // Stage 28: a hostile state beyond other lands has no border to threaten.
+    if n.stance == Stance::Defend && border.is_none() {
+        return None;
+    }
 
     let mut roll = rng.range(0, 100) as u32;
     let (event, _) = rules.events.iter().find(|(_, chance)| {
@@ -127,7 +131,10 @@ mod tests {
             .retain(|_, p| p.holder != Holder::Foreign(nordmark()));
         let n = w.neighbours.get_mut(&nordmark()).unwrap();
         (n.relation, n.strength) = (Fx::from_int(-50), Fx::from_int(100));
-        neighbour_tick(&mut w, &data, &mut Rng::from_seed(1), nordmark());
+        // Stage 28: and no threats from beyond other lands, where Defend has its ultimatum.
+        let mut rng = Rng::from_seed(1);
+        let events = (0..50).filter_map(|_| neighbour_tick(&mut w, &data, &mut rng, nordmark()));
+        assert_eq!(events.count(), 0);
         assert_eq!(w.neighbours[&nordmark()].stance, Stance::Defend);
     }
 

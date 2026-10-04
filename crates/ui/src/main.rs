@@ -496,8 +496,10 @@ impl App {
         if let Some(before) = self.year_start.take() {
             lines.extend(change_lines(g, &before, &g.world));
             // News from afar (stage 27), in words.
+            // Stage 28: those above the threshold (a great power's, `RealmStart.news`) stressed.
             let heard = g.realms.news.iter().filter(|n| n.tick > before.tick);
-            lines.extend(heard.map(|n| (n.text.clone(), None)));
+            let above = (g.data.realm.as_ref()).map_or(u32::MAX, |r| r.news.threshold);
+            lines.extend(heard.map(|n| (n.text.clone(), (n.importance > above).then_some(false))));
         }
         let date = g.world.tick.date(g.world.time_unit, g.world.start_year);
         match self.journal.last_mut() {
@@ -1680,9 +1682,25 @@ pub(crate) fn target_tip(ui: &mut Ui, w: &World, d: &Data, t: &Target) {
             ui.label(format!("Сила {}", round(n.strength)));
             ui.label(format!("Земель {}", lands.count()));
             realm_tip(ui, d, n);
+            ally_tip(ui, w, d, n);
         }
         Target::Heir(_) => {}
     }
+}
+
+/// Stage 28: what the relation and the map already make of a neighbour (rules.ron
+/// `neighbour_ai`): a friend (above `friendly_above`) trades and sends no raid nor war, and a
+/// state with no common border sends no war either.
+fn ally_tip(ui: &mut Ui, w: &World, d: &Data, n: &Neighbour) {
+    if n.relation > d.neighbour_ai.friendly_above {
+        let why = "союзник: торгует и не нападёт, пока дружба крепка";
+        ui.label(RichText::new(why).color(GOOD));
+    }
+    let border = match w.weakest_border(&n.id) {
+        Some(_) => "граничит с нами",
+        None => "общей границы нет: войной не грозит",
+    };
+    ui.label(RichText::new(border).color(FG2));
 }
 
 /// What the crown sees of a foreign kingdom (`Neighbour.realm`, stage 26): its ruler and
@@ -1850,6 +1868,7 @@ fn side(ui: &mut Ui, g: &Game) {
                 ui.label(format!("Отношение {value}: {mood}"));
                 ui.label(format!("Сила {}, {stance}", round(n.strength)));
                 realm_tip(ui, d, n);
+                ally_tip(ui, w, d, n);
                 for t in &ties {
                     ui.label(t);
                 }
@@ -2436,7 +2455,12 @@ fn effects(d: &Data, list: &[Effect]) -> Vec<Line> {
                 ("провинция меняет хозяина".into(), None)
             }
             Effect::StartWar(_) => ("война".into(), Some(false)),
-            Effect::Tribute(v) => signed(axis_name(d, &d.economy.treasury), *v),
+            // Stage 28: what the neighbour's strength gets back for it (a subsidy, a ransom).
+            Effect::Tribute(v) => {
+                let theirs = Fx(0) - *v * d.war.tribute_strength;
+                out.push((format!("сила соседа {}", plus(theirs)), None));
+                signed(axis_name(d, &d.economy.treasury), *v)
+            }
             Effect::Clash if !out.iter().any(|(t, _)| t == "битва") => ("битва".into(), None),
             Effect::Abdicate | Effect::RulerDies(_) => ("конец правления".into(), Some(false)),
             Effect::IfFriendly(es) => {
@@ -2646,19 +2670,24 @@ mod tests {
         /// Clicks the widget with this label, found by its accessibility node.
         fn click_label(&mut self, label: &str) -> egui::FullOutput {
             self.ctx.enable_accesskit();
-            // A card sizes itself in its first frames and settles in the middle after.
-            for _ in 0..8 {
-                self.frame(vec![]);
+            // A card sizes itself in its first frames and settles in the middle after: until
+            // the widget stands still (a tall card grows for a score of frames, stage 28).
+            let bounds = |h: &mut Self| {
+                let out = h.frame(vec![]);
+                let tree = (out.platform_output.accesskit_update).expect("accesskit is on");
+                // A button has its text as label, a clickable label as value.
+                let node = (tree.nodes.iter())
+                    .find(|(_, n)| n.label() == Some(label) || n.value() == Some(label));
+                node.and_then(|(_, n)| n.bounds())
+            };
+            let mut b = None;
+            for _ in 0..60 {
+                let now = bounds(self);
+                if now.is_some() && now == b {
+                    break;
+                }
+                b = now;
             }
-            let out = self.frame(vec![]);
-            let tree = out
-                .platform_output
-                .accesskit_update
-                .expect("accesskit is on");
-            // A button has its text as label, a clickable label as value.
-            let node = (tree.nodes.iter())
-                .find(|(_, n)| n.label() == Some(label) || n.value() == Some(label));
-            let b = node.and_then(|(_, n)| n.bounds());
             let b = b.unwrap_or_else(|| panic!("no «{label}» on screen"));
             let centre = Pos2::new((b.x0 + b.x1) as f32 / 2.0, (b.y0 + b.y1) as f32 / 2.0);
             self.click(centre)
@@ -2954,75 +2983,88 @@ mod tests {
         let line = |s: &str, up| (s.to_string(), up);
         // Every year opens with the treasury, notable or not.
         let money = |s: &str| line(&format!("{MONEY} {s}"), Some(true));
-        // Stage 26c: «Баронская лига» (the nobles' demand of 1189 and their assembly of 1191)
-        // joins the pick from 1192 on: another event that year, the league's card in 1193.
+        // Stage 28: the big map and its kingdoms draw on the rng: other events from the first
+        // year. The empire's news stand out (their importance above the threshold).
         let want = vec![
             (
                 "1188",
                 vec![line(
-                    "Отряды Нордмарка перешли границу и жгли сёла в Ардене, но королевское войско отбросило их за реку.",
+                    "Ходоки из деревень просили облегчить подушную подать, и Ульрих снизил её.",
                     None,
                 )],
-                vec![money("+27: доход +32, расходы -5")],
+                vec![
+                    money("+27: доход +32, расходы -5"),
+                    line("Доход -2", Some(false)),
+                    line("Народ +10", Some(true)),
+                ],
             ),
             (
                 "1189",
                 vec![line(
-                    "Знать получила свои вольности на пергаменте, и с тех пор каждый барон носил копию грамоты при себе, как оберег от королевских указов.",
+                    "В засушливый год в гавань пришли корабли с заморским зерном, и казна отдала за него последние сундуки.",
                     None,
                 )],
                 vec![
-                    money("+28: доход +32, расходы -4"),
-                    line("Бюрократия -5", Some(false)),
-                    line("Знать +11", Some(true)),
+                    line(
+                        &format!("{MONEY} -35: доход +30, расходы -5, действия и события -60"),
+                        Some(false),
+                    ),
+                    line("Рождение: Генрих", Some(true)),
                     line("Завершено: Проложить дорогу (Берг)", None),
                 ],
             ),
             (
                 "1190",
                 vec![line(
-                    "Купцы Веструма получили право торговать на ярмарках королевства, и в торговых рядах заговорили на чужом наречии.",
+                    "Ульрих велел заложить в столице собор на казённые деньги, и епископ благословил первый камень.",
                     None,
                 )],
                 vec![
-                    money("+54: доход +33, расходы -4, действия и события +25"),
-                    line("Рождение: Генрих", Some(true)),
+                    line(
+                        &format!("{MONEY} -34: доход +31, расходы -5, действия и события -60"),
+                        Some(false),
+                    ),
+                    line("Церковь +7", Some(true)),
+                    line(
+                        "Из-за рубежа пришла весть: Кадарская империя двинула войско на Ольховию.",
+                        Some(false),
+                    ),
                 ],
             ),
             (
                 "1191",
                 vec![line(
-                    "Знать съехалась в столицу на собор, и Ульрих выслушал лучших людей королевства.",
-                    None,
-                )],
-                vec![
-                    money("+28: доход +33, расходы -4"),
-                    line("Знать +8", Some(true)),
-                ],
-            ),
-            (
-                "1192",
-                vec![line(
-                    "Град выбил хлеба в Соле, и корона раздала голодающим зерно из казённых амбаров.",
+                    "Рудник в горах Сола стал казённым: над штольней повесили королевский герб, и серебро шло прямо в столицу.",
                     None,
                 )],
                 vec![
                     line(
-                        &format!("{MONEY} -6: доход +33, расходы -4, действия и события -35"),
+                        &format!("{MONEY} -14: доход +31, расходы -5, действия и события -40"),
                         Some(false),
                     ),
                     line("Рождение: Освальд", Some(true)),
                 ],
             ),
             (
+                "1192",
+                vec![line(
+                    "На осенней ярмарке впервые встали лавки купцов Пурпуляндии, и казна в тот год насчитала пошлин больше обычного.",
+                    None,
+                )],
+                vec![money("+54: доход +34, расходы -5, действия и события +25")],
+            ),
+            (
                 "1193",
-                vec![],
+                vec![line(
+                    "Ярмарки открыли для торговцев Веструма: чужое сукно подешевело, а вместе с ним в города пришли чужие вести.",
+                    None,
+                )],
                 vec![
-                    money("+28: доход +33, расходы -4"),
-                    line("Умер в детстве королевский сын Генрих", Some(false)),
+                    money("+54: доход +34, расходы -5, действия и события +25"),
+                    line("Умер в детстве королевский сын Освальд", Some(false)),
                     // Stage 27: news from afar, in words.
                     line(
-                        "Из-за рубежа пришла весть: Нордмарк двинул войско на Веструм.",
+                        "Из-за рубежа пришла весть: Пурпуляндия двинула войско на Нордмарк.",
                         None,
                     ),
                 ],
@@ -3036,7 +3078,7 @@ mod tests {
         let (latest, older) = (pos(&texts, "1193"), pos(&texts, "1192"));
         assert!(latest < older, "the latest year comes first");
         // The news of a year in one block under its header (stage 26b).
-        let news = pos(&texts, "· Умер в детстве королевский сын Генрих");
+        let news = pos(&texts, "· Умер в детстве королевский сын Освальд");
         assert_eq!(texts[news - 1], NEWS);
         assert!(
             !texts.iter().any(|t| t.contains("Смерть наследника")),
@@ -3056,8 +3098,10 @@ mod tests {
         let g = h.app.game.as_mut().unwrap();
         (g.data.quiet_weight, g.data.heirs.birth) = (1_000_000, vec![]);
         (g.world.war, g.queue) = (None, vec![]);
+        // Stage 28: and the kingdoms stand still (no map, no year of theirs), no news.
+        g.realms.owners.clear();
         h.app.apply(Cmd::Wait);
-        let quiet = vec![money("+29: доход +33, расходы -4")];
+        let quiet = vec![money("+29: доход +34, расходы -5")];
         assert_eq!(
             h.app.journal.last().unwrap(),
             &("1194".to_string(), vec![], quiet)
@@ -3432,12 +3476,25 @@ mod tests {
                 .iter()
                 .any(|t| t.starts_with("Посвататься к соседнему двору"))
         );
-        // The chance of every court before the suit (here a flat 100), Нордмарк at -40 none.
+        // The chance of every court before the suit (here a flat 100), Нордмарк at -40 none,
+        // nor the empire at -30 (stage 28).
         for t in [
-            "Шанс согласия: Пурпуляндия 98%, Веструм 100%",
-            "Сватов не примут: Нордмарк",
+            "Шанс согласия: Ольховия 100%, Пурпуляндия 98%, Таврика 99%, Веструм 100%, Зюдмарк 100%",
+            "Сватов не примут: Кадарская империя, Нордмарк",
         ] {
             assert!(marriage.contains(&t.to_string()), "{t}: {marriage:?}");
+        }
+        // Stage 28: the subsidy tells what the silver buys: the neighbour's strength and trust.
+        h.app
+            .game
+            .as_mut()
+            .unwrap()
+            .world
+            .axes
+            .insert(AxisId("treasury".into()), Fx::from_int(300));
+        let subsidy = hover(&mut h, "Субсидия соседу");
+        for t in ["Казна -100", "сила соседа +10", "отношения +15"] {
+            assert!(subsidy.contains(&t.to_string()), "{t}: {subsidy:?}");
         }
 
         let law = hover(&mut h, "Закон: Абсолютное первородство ℹ");
@@ -3453,9 +3510,21 @@ mod tests {
             // Stage 26: the kingdom behind the numbers.
             "Правит Годфрид из дома Вестингов",
             "Закон: Выборный закон",
+            // Stage 28: an ally by the relation alone, on our border.
+            "союзник: торгует и не нападёт, пока дружба крепка",
+            "граничит с нами",
         ] {
             assert!(n.contains(&t.to_string()), "{t}: {n:?}");
         }
+        let empire = hover(&mut h, "Кадарская империя");
+        assert!(
+            empire.contains(&"общей границы нет: войной не грозит".to_string()),
+            "{empire:?}"
+        );
+        assert!(
+            !empire.iter().any(|t| t.starts_with("союзник")),
+            "{empire:?}"
+        );
         assert!(n.iter().any(|t| t.starts_with("Стабильность: ")), "{n:?}");
         let vestrum = Target::Neighbour(NeighbourId("vestrum".into()));
         h.app
@@ -3467,6 +3536,25 @@ mod tests {
         let n = hover(&mut h, "Веструм ♥");
         // Dated by the wedding, a year after the suit.
         assert!(n.contains(&"брачный союз с 1188".to_string()), "{n:?}");
+    }
+
+    /// Stage 28: the empire keeps the colour the preset gives it, its every land and every
+    /// land it takes; a state without one gets the palette by its order.
+    #[test]
+    fn the_empire_has_a_colour_of_its_own() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(1));
+        let mut w = h.game().world.clone();
+        let kadar = Holder::Foreign(NeighbourId("kadar".into()));
+        let red = egui::Color32::from_rgb(150, 46, 52);
+        assert_eq!(map::holder_color(&w, &kadar), red);
+        let nordmark = Holder::Foreign(NeighbourId("nordmark".into()));
+        assert_ne!(map::holder_color(&w, &nordmark), red);
+        w.neighbours
+            .get_mut(&NeighbourId("kadar".into()))
+            .unwrap()
+            .color = None;
+        assert_ne!(map::holder_color(&w, &kadar), red);
     }
 
     /// Stage 17: «Назначить наследника» tells who the law names and what naming another
@@ -3676,7 +3764,7 @@ mod tests {
         for t in [
             "♔ Ульрих (р. 1155), на троне с 1187",
             "Конрад (р. 1181)",
-            "Генрих (1190–1193)",
+            "Освальд (1191–1193)",
         ] {
             assert!(shown.contains(&t.to_string()), "{t}: {shown:?}");
         }
@@ -4375,6 +4463,8 @@ mod tests {
             ("риск", None),
             ("провинция уходит вассалу", None),
             ("лояльность провинции +0.001", Some(true)),
+            // Stage 28: tribute moves the neighbour's strength the other way.
+            ("сила соседа +3", None),
             ("Казна -30", Some(false)),
             ("битва", None),
         ];

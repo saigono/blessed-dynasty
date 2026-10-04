@@ -83,6 +83,10 @@ pub struct RealmStart {
     /// (`sim.auto` keys), e.g. `{"war": 40}` for a realm that lives by conquest.
     #[serde(default)]
     pub auto: BTreeMap<String, crate::fx::Fx>,
+    /// Stage 28: added to the importance of every news that names this kingdom (rules.ron
+    /// `realm.news`): news of a great power weigh more, and the screen stresses them.
+    #[serde(default)]
+    pub news: u32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]

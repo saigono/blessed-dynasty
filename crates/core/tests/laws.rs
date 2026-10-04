@@ -584,18 +584,27 @@ fn a_suit_is_turned_away_at_war_and_at_low_relations() {
     let chance = |g: &Game, n: &str| m.chance(&g.world, &g.data, &court(n));
     assert_eq!(chance(&g, "nordmark"), Fx(0));
     assert!(chance(&g, "vestrum") > Fx(0) && chance(&g, "purpur") > Fx(0));
-    assert_eq!(courts(&g), ["purpur", "vestrum"]);
+    // Stage 28: the buffers and Таврика too, not the empire at -30.
+    assert_eq!(
+        courts(&g),
+        ["olkhovia", "purpur", "tavrika", "vestrum", "zudmark"]
+    );
     g.world
         .neighbours
         .get_mut(&court("nordmark"))
         .unwrap()
         .relation = Fx::from_int(-20);
     assert!(chance(&g, "nordmark") > Fx(0), "at the threshold");
-    assert_eq!(courts(&g), ["nordmark", "purpur", "vestrum"]);
+    assert_eq!(
+        courts(&g),
+        [
+            "nordmark", "olkhovia", "purpur", "tavrika", "vestrum", "zudmark"
+        ]
+    );
     // At war with Веструм (and Нордмарк cold again: war on a friend costs trust).
     war_on(&mut g, "vestrum");
     assert_eq!(chance(&g, "vestrum"), Fx(0));
-    assert_eq!(courts(&g), ["purpur"]);
+    assert_eq!(courts(&g), ["olkhovia", "purpur", "tavrika", "zudmark"]);
 }
 
 /// Acceptance: the chance follows the formula of rules.ron and the roll the seed.

@@ -598,9 +598,13 @@ impl Effect {
                         _ => None,
                     })
                     .min();
+                // Stage 28: nor the name of a state that broke away (`Secede` keeps its entry
+                // among the neighbours), so two states never share a name.
                 let names = ctx.data.names.vassals.iter();
                 let fresh = names.map(|n| VassalId(n.clone())).find(|id| {
-                    !w.vassals.contains_key(id) && w.vassals.values().all(|v| v.name != id.0)
+                    !w.vassals.contains_key(id)
+                        && w.vassals.values().all(|v| v.name != id.0)
+                        && !w.neighbours.contains_key(&NeighbourId(id.0.clone()))
                 });
                 // A house that gets more land grows stronger by `strength`.
                 let grow = |w: &mut World, v: VassalId| {
@@ -862,14 +866,15 @@ fn turn(id: &str, w: &World) -> usize {
 
 impl Event {
     /// `text`, one of `texts` or of the `texts_when` that hold, by the turn of the event
-    /// (`Choice::told_now`).
+    /// (`Choice::told_now`). Stage 28: a `texts_when` that holds takes the place of a variant
+    /// (the first of them `text`'s) instead of joining the list, so the list keeps its length
+    /// and the next turn reads anew even when a condition came true in between.
     pub fn text_now(&self, w: &World) -> &str {
-        let when = (self.texts_when.iter())
-            .filter(|(p, _)| p.eval(w))
-            .map(|(_, t)| t);
-        let all: Vec<&String> = (std::iter::once(&self.text).chain(&self.texts))
-            .chain(when)
-            .collect();
+        let mut all: Vec<&String> = std::iter::once(&self.text).chain(&self.texts).collect();
+        let when = (self.texts_when.iter()).filter(|(p, _)| p.eval(w));
+        for (slot, (_, t)) in all.iter_mut().zip(when) {
+            *slot = t;
+        }
         all[turn(&self.id, w) % all.len()]
     }
 
@@ -1012,33 +1017,84 @@ mod tests {
             ids.map(|p| p.id.0.as_str()).collect::<Vec<_>>()
         };
         let crown = ["berg", "capital", "gart", "lugovo", "ostwick", "sol"];
-        assert_eq!(matching("()").len(), 20);
+        assert_eq!(matching("()").len(), 43);
         assert_eq!(matching("(holder: Crown)"), crown);
-        assert_eq!(matching("(holder: Foreign)").len(), 10);
+        assert_eq!(matching("(holder: Foreign)").len(), 33);
         assert_eq!(
             matching("(loyalty_below: 50)"),
-            ["arden", "holm", "mar", "weir"]
+            [
+                "amida", "arden", "edessa", "harran", "holm", "mar", "merv", "nisiba", "samosa",
+                "sarda", "tars", "weir", "zeitun"
+            ]
         );
-        assert_eq!(matching("(loyalty_above: 50)"), crown);
-        assert_eq!(matching(r#"(building: "fort")"#), ["capital"]);
-        assert_eq!(matching(r#"(without_building: "fort")"#).len(), 19);
-        // Own border provinces, plus where two neighbours touch: skala and porfir,
-        // frostad and vestburg.
+        // The crown's land and the empire's capital.
+        assert_eq!(
+            matching("(loyalty_above: 50)"),
+            [
+                "berg",
+                "capital",
+                "gart",
+                "kadar_city",
+                "lugovo",
+                "ostwick",
+                "sol"
+            ]
+        );
+        assert_eq!(matching(r#"(building: "fort")"#), ["capital", "kadar_city"]);
+        assert_eq!(matching(r#"(without_building: "fort")"#).len(), 41);
+        // Own border provinces, plus where two neighbours touch (stage 28: most of the
+        // foreign land of the big map).
         assert_eq!(
             matching("(borders_foreign: true)"),
             [
-                "arden", "berg", "frostad", "gart", "holm", "lugovo", "mar", "ostwick", "porfir",
-                "skala", "sol", "vestburg", "weir"
+                "amaran",
+                "amida",
+                "arden",
+                "berestye",
+                "berg",
+                "dubrava",
+                "edessa",
+                "frostad",
+                "gart",
+                "holm",
+                "kafa",
+                "kap",
+                "kirm",
+                "lipno",
+                "lugovo",
+                "mar",
+                "merv",
+                "nisiba",
+                "olkhov",
+                "olm",
+                "ostwick",
+                "porfir",
+                "samosa",
+                "sarda",
+                "skala",
+                "sol",
+                "solkhat",
+                "sundal",
+                "surozh",
+                "tavros",
+                "telz",
+                "vestburg",
+                "vinna",
+                "viren",
+                "vyshgorod",
+                "weir",
+                "zeitun",
+                "zudgard"
             ]
         );
         let inner = matching("(borders_foreign: false)");
         assert!(
-            ["capital", "kirm", "nordheim"]
+            ["capital", "kadar_city", "nordheim"]
                 .iter()
                 .all(|p| inner.contains(p))
         );
         assert_eq!(matching("(capital: true)"), ["capital"]);
-        assert_eq!(matching("(capital: false)").len(), 19);
+        assert_eq!(matching("(capital: false)").len(), 42);
     }
 
     #[test]
@@ -1186,6 +1242,16 @@ mod tests {
         assert_eq!(rosten.strength, data.grant.new_strength);
         run(&mut w, &data, "Grant(EventTarget)", "berg");
         assert_eq!(holder(&w, "berg"), vassal("Ольбек"));
+        // Stage 28: the name of a state that broke away is taken too.
+        let mut gone = w.clone();
+        let n = gone.neighbours[&NeighbourId("nordmark".into())].clone();
+        gone.neighbours.insert(NeighbourId("Ольбек".into()), n);
+        gone.vassals.remove(&VassalId("Ольбек".into()));
+        gone.provinces.get_mut(&pid("berg")).unwrap().holder = Holder::Crown;
+        let mut fresh = data.clone();
+        fresh.names.vassals.push("Тарн".into());
+        run(&mut gone, &fresh, "Grant(EventTarget)", "berg");
+        assert_eq!(holder(&gone, "berg"), vassal("Тарн"));
         // The pool is used up: the nearest vassal at any distance.
         data.names.vassals.clear();
         run(&mut w, &data, "Grant(EventTarget)", "lugovo");

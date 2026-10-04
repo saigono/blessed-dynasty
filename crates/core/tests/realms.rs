@@ -108,12 +108,20 @@ fn the_kingdoms_reach_us_only_through_the_realm_rules() {
 /// own now, their wars and houses move it, and a usurper ends the dynasty in its 205th year.
 /// Stage 26c: the compound events join the pool and the texts vary: the house dies out without
 /// an heir in its 141st year (without the compound events it ends as in stage 27, only the
-/// texts differ).
+/// texts differ). Stage 28: the big map and four more neighbours (their every year draws on
+/// the rng) change the founder's reign, so a link made before the stage no longer fits: it
+/// is refused at the eighth year, not played otherwise. The link is re-made on the stage-28
+/// map (seed 42, `test.ron` softly, then neutral; 23 decisions) and its outcome re-pinned.
 #[test]
 fn a_link_from_before_the_stage_plays_the_same() {
-    let link = "AQdkZWZhdWx0Kh0AASMAAQABAQABAQABAQABAQABAQAAAQABAgABAQAAAQABAQABAQABAgABAQABAQABAQABAQ\
-                ABAQAAAQAAAQAAAQABAQABAQABAQAAAQABAQABAQAB";
+    let old = "AQdkZWZhdWx0Kh0AASMAAQABAQABAQABAQABAQABAQAAAQABAgABAQAAAQABAQABAQABAgABAQABAQABAQABAQ\
+               ABAQAAAQAAAQAAAQABAQABAQABAQAAAQABAQABAQAB";
     let f = files();
+    let l = bd_core::link::decode(old).unwrap();
+    let mut g = batch::load(&f, PRESET, MAP, l.seed).unwrap();
+    assert!(l.play(&mut g).unwrap_err().contains("журнал не совпадает"));
+    let link = "AQdkZWZhdWx0KhcAASMAAQAAAQABAQABAQABAQABAQABAQABAQAAAQAAAQAAAQABAQABAQABAQAAAQABAQAAAg\
+                ABAQAAAQAAAQAAAQAAAQAB";
     let l = bd_core::link::decode(link).unwrap();
     assert_eq!((l.preset_id.as_str(), l.seed), ("default", 42));
     let mut g = batch::load(&f, PRESET, MAP, l.seed).unwrap();
@@ -134,13 +142,13 @@ fn a_link_from_before_the_stage_plays_the_same() {
             c.entries.len(),
             s.total
         ),
-        (28, 141, "NoHeir", 45, 9399)
+        (23, 55, "Usurped", 35, 3861)
     );
-    assert_eq!(format!("{hash:016x}"), "049160f01bb3f49c");
+    assert_eq!(format!("{hash:016x}"), "fb0f7a86ea5d4bc1");
     assert_eq!(
         c.realms.len(),
-        5,
-        "the kingdoms play beside it, two of them new"
+        9,
+        "the kingdoms play beside it, seven of the start, two of them new"
     );
 }
 
@@ -253,7 +261,7 @@ fn the_streams_of_the_kingdoms_are_apart() {
     let streams: std::collections::BTreeSet<_> = (g.realms.list.values())
         .map(|d| format!("{:?}", d.g.rng))
         .collect();
-    assert_eq!(streams.len(), 3);
+    assert_eq!(streams.len(), 7);
 }
 
 /// The one map as world `w` of `me` sees it: the owner of every province.
@@ -349,7 +357,19 @@ fn the_kingdoms_share_our_map_and_show_their_rulers() {
     let houses: Vec<_> = (g.world.neighbours.values())
         .map(|n| n.realm.as_ref().unwrap().house.as_str())
         .collect();
-    assert_eq!(houses, ["Эрлинги", "Аргириды", "Вестинги"]);
+    // By id: kadar, nordmark, olkhovia, purpur, tavrika, vestrum, zudmark.
+    assert_eq!(
+        houses,
+        [
+            "Аскариды",
+            "Эрлинги",
+            "Ольговичи",
+            "Аргириды",
+            "Гаврасы",
+            "Вестинги",
+            "Ротбарты"
+        ]
+    );
 }
 
 /// Stage 26b: a link to a game the automaton played (`warmonger`) opens to the same world:
@@ -681,9 +701,8 @@ const EMPIRE: &str = "kadar";
 
 /// Whether, in world `w`, land held as `a` (by `is_a`) borders land held as `b`.
 fn borders(w: &World, is_a: impl Fn(&Holder) -> bool, is_b: impl Fn(&Holder) -> bool) -> bool {
-    (w.provinces.values().filter(|p| is_a(&p.holder))).any(|p| {
-        (p.neighbours.iter().filter_map(|n| w.provinces.get(n))).any(|q| is_b(&q.holder))
-    })
+    (w.provinces.values().filter(|p| is_a(&p.holder)))
+        .any(|p| (p.neighbours.iter().filter_map(|n| w.provinces.get(n))).any(|q| is_b(&q.holder)))
 }
 
 /// What the empire did in a dynasty of ours, read from the chronicles: (it bordered our land
@@ -770,8 +789,86 @@ fn the_empire_threatens_but_not_surely() {
     assert!((40..=70).contains(&pct(*met, 1000)), "{report}");
     assert!((30..=60).contains(&pct(*fell, 1000)), "{report}");
     assert!((10..=20).contains(&pct(*lost, *fallen)), "{report}");
-    let first = falls.iter().filter(|(k, _)| *k != "Alive").max_by_key(|(_, v)| **v);
-    assert_ne!(first.map(|(k, _)| k.as_str()), Some("Conquered"), "{report}");
+    let first = falls
+        .iter()
+        .filter(|(k, _)| *k != "Alive")
+        .max_by_key(|(_, v)| **v);
+    assert_ne!(
+        first.map(|(k, _)| k.as_str()),
+        Some("Conquered"),
+        "{report}"
+    );
     let guarded = &conquered["guardian"];
     assert!(guarded.0 * 3 <= lost * 2, "{report}");
+}
+
+/// Stage 28 acceptance: news that name the empire weigh one more than their kind (`news: 1`
+/// of its `RealmStart`), the others as their kind.
+#[test]
+fn the_news_of_the_empire_weigh_more() {
+    let d = world_of(&files(), 3, 80);
+    let rules = &d.g.data.realm.as_ref().unwrap().news;
+    let kinds = [
+        &rules.war,
+        &rules.capture,
+        &rules.house,
+        &rules.breakaway,
+        &rules.fallen,
+    ];
+    let base = |title: &str| kinds.iter().find(|k| k.title == title).unwrap().importance;
+    let (of, other): (Vec<_>, Vec<_>) =
+        (d.g.realms.news.iter()).partition(|n| n.text.contains("Кадарск"));
+    assert!(!of.is_empty() && !other.is_empty());
+    for n in of {
+        assert_eq!(n.importance, base(&n.title) + 1, "{}", n.text);
+    }
+    for n in other {
+        assert_eq!(n.importance, base(&n.title), "{}", n.text);
+    }
+}
+
+/// Stage 28 acceptance: «Субсидия соседу» costs 100 silver; the neighbour's strength grows
+/// by the tribute rate (`war.tribute_strength`), its relation by 15, and its kingdom's army
+/// takes the strength in at the end of the year (`realm.strength.army`).
+#[test]
+fn a_subsidy_strengthens_the_neighbour() {
+    use bd_core::game::Step;
+    use bd_core::rules::Target;
+    use bd_core::state::AxisId;
+    let start = batch::load(&files(), PRESET, MAP, 5).unwrap();
+    let olkhovia = id("olkhovia");
+    let ax = |a: &str| AxisId(a.into());
+    let year = |subsidy: bool| {
+        let mut g = start.clone();
+        g.world
+            .axes
+            .insert(ax("treasury"), bd_core::fx::Fx::from_int(300));
+        if subsidy {
+            let to = Some(Target::Neighbour(olkhovia.clone()));
+            g.start_action("subsidize_neighbour", to).unwrap();
+        }
+        while g.world.tick.0 < 1 {
+            if let Step::Event(_) = g.wait().unwrap() {
+                g.choose(0).unwrap();
+            }
+        }
+        g
+    };
+    let (none, paid) = (year(false), year(true));
+    let n = |g: &Game| g.world.neighbours[&olkhovia].clone();
+    let army = |g: &Game| g.realms.list[&olkhovia].g.world.axes[&ax("army")];
+    let i = bd_core::fx::Fx::from_int;
+    assert_eq!(n(&paid).relation - n(&none).relation, i(15));
+    assert!(
+        n(&paid).strength >= n(&none).strength + i(9),
+        "{:?}",
+        (n(&paid).strength, n(&none).strength)
+    );
+    assert!(
+        army(&paid) >= army(&none) + i(15),
+        "{:?}",
+        (army(&paid), army(&none))
+    );
+    let treasury = |g: &Game| g.world.axes[&ax("treasury")];
+    assert_eq!(treasury(&none) - treasury(&paid), i(100));
 }

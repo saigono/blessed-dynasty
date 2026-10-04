@@ -771,7 +771,7 @@ mod tests {
     #[test]
     fn preset_matches_data() {
         let (data, w) = world();
-        assert_eq!(w.provinces.len(), 20);
+        assert_eq!(w.provinces.len(), 43);
         assert_eq!(w.axes.len(), data.axes.len());
         assert_eq!(w.start_year, 1187);
         // Preset override wins over the rules default, the rest keep defaults.
@@ -793,9 +793,19 @@ mod tests {
             (foreign("nordmark"), foreign("purpur"), foreign("vestrum")),
             (3, 4, 3)
         );
+        // Stage 28: two buffers, the edge state and the empire.
+        assert_eq!(
+            (
+                foreign("zudmark"),
+                foreign("olkhovia"),
+                foreign("tavrika"),
+                foreign("kadar")
+            ),
+            (4, 5, 4, 10)
+        );
         // The whole graph is reachable; the cached distance is the BFS one.
         let hops = w.hops(&w.capital.province);
-        assert_eq!(hops.len(), 20);
+        assert_eq!(hops.len(), 43);
         for p in w.provinces.values() {
             assert_eq!(p.distance_to_capital, hops[&p.id], "{}", id(p));
         }
@@ -836,7 +846,7 @@ mod tests {
             let ns = w.foreign_neighbours(&pid(p));
             ns.into_iter().map(|n| n.0).collect::<Vec<_>>()
         };
-        assert_eq!(of("sol"), ["purpur", "vestrum"]);
+        assert_eq!(of("sol"), ["olkhovia", "zudmark"]);
         assert_eq!(of("arden"), ["nordmark"]);
         assert!(of("capital").is_empty());
         // A foreign province: other states only, not its own holder.

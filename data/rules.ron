@@ -262,13 +262,14 @@
     // Stage 26b: the buildings the map shows, by their `Build` id, each a glyph of the
     // game's font (DejaVu Sans; a test checks it). A work of the whole kingdom told by flags
     // shows in the capital: built while `flag` is set, being built while `underway` is.
+    // Stage 29: `sprite` on the old map, a name of assets/sprites (data/sprites.ron).
     buildings: [
-        (id: "fort", name: "крепость", icon: "♜"),
-        (id: "road", name: "дорога", icon: "═"),
-        (id: "market", name: "рынок", icon: "⚖"),
-        (id: "abbey", name: "обитель", icon: "☦"),
-        (id: "dikes", name: "валы", icon: "≈"),
-        (id: "cathedral", name: "собор", icon: "✝", flag: "cathedral", underway: "cathedral_building"),
+        (id: "fort", name: "крепость", icon: "♜", sprite: "fort"),
+        (id: "road", name: "дорога", icon: "═", sprite: "milestone"),
+        (id: "market", name: "рынок", icon: "⚖", sprite: "market"),
+        (id: "abbey", name: "обитель", icon: "☦", sprite: "abbey"),
+        (id: "dikes", name: "валы", icon: "≈", sprite: "dikes"),
+        (id: "cathedral", name: "собор", icon: "✝", flag: "cathedral", underway: "cathedral_building", sprite: "cathedral"),
     ],
 
     // Province loyalty below this shows as unrest on the map. Display only; below the

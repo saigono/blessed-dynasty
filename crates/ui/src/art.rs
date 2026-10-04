@@ -1,0 +1,229 @@
+//! Stage 29: the art of the old map: the sprites of assets/sprites, one PNG each, the paper,
+//! the sea and the strips that repeat, the heraldic mask, and data/sprites.ron.
+
+use eframe::egui::{
+    Color32, ColorImage, Context, TextureFilter, TextureHandle, TextureId, TextureOptions,
+    TextureWrapMode, Vec2, vec2,
+};
+use serde::Deserialize;
+use std::collections::BTreeMap;
+
+macro_rules! png {
+    ($($p:literal),* $(,)?) => {
+        &[$(($p, include_bytes!(concat!("../../../assets/sprites/", $p, ".png")) as &[u8])),*]
+    };
+}
+
+/// Every sprite the map draws, `<sheet>/<name>-<variant>`, one or two variants of each.
+pub const SPRITES: &[(&str, &[u8])] = png![
+    "buildings/fort-1", "buildings/fort-2", "buildings/castle-1", "buildings/castle-2",
+    "buildings/market-1", "buildings/market-2", "buildings/abbey-1", "buildings/abbey-2",
+    "buildings/cathedral-1", "buildings/cathedral-2", "buildings/milestone-1",
+    "buildings/dikes-1", "buildings/scaffold-1",
+    "settlements/cottage-1", "settlements/cottage-2", "settlements/hamlet-1",
+    "settlements/hamlet-2", "settlements/town-1", "settlements/town-2",
+    "settlements/town-tower-1", "settlements/town-tower-3", "settlements/capital-1",
+    "settlements/capital-2", "settlements/crown-1", "settlements/shield-1",
+    "settlements/banner-1",
+    "nature/conifer-1", "nature/conifer-2", "nature/trees-1", "nature/trees-2",
+    "nature/hills-1", "nature/hills-2", "nature/hill-1", "nature/mountains-1",
+    "nature/mountains-2", "nature/mountain-1", "nature/field-1", "nature/field-2",
+    "nature/reeds-1", "nature/reeds-2",
+    "sea/ship-1", "sea/cog-1", "sea/boat-1",
+    "extras/fort-building-1", "extras/church-building-1", "extras/camp-1", "extras/fire-1",
+    "extras/revolt-1", "extras/graves-1", "extras/ruins-1",
+    "decor/compass-1", "decor/cartouche-1", "decor/corner-1", "decor/ribbon-1",
+    "decor/wind-1", "decor/fish-1",
+];
+
+/// Laid as tiles or along lines: their textures repeat.
+pub const TILES: &[(&str, &[u8])] = png![
+    "tiles/paper", "tiles/sea", "strips/border-band", "strips/border-band-mask",
+    "strips/coast", "strips/river", "strips/road-cobble",
+];
+
+const STYLE: &str = include_str!("../../../data/sprites.ron");
+
+/// data/sprites.ron.
+#[derive(Deserialize)]
+pub struct Style {
+    pub settlements: Vec<(i32, String)>,
+    pub capital: String,
+    pub crown: String,
+    pub in_capital: BTreeMap<String, String>,
+    pub scaffold: String,
+    pub underway: BTreeMap<String, String>,
+    pub road: String,
+    pub terrain: BTreeMap<String, Vec<String>>,
+    pub marks: Vec<Mark>,
+    pub shield: String,
+    pub banner: String,
+    pub ships: Vec<String>,
+}
+
+#[derive(Deserialize)]
+pub struct Mark {
+    pub when: When,
+    pub sprite: String,
+}
+
+/// What a mark shows: see data/sprites.ron.
+#[derive(Deserialize, Debug, PartialEq)]
+pub enum When {
+    Flag(String),
+    Unrest,
+    WarBorder,
+    WarTarget,
+    Fewer(i32),
+}
+
+pub fn style() -> Style {
+    ron::from_str(STYLE).expect("data/sprites.ron")
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sprite {
+    pub id: TextureId,
+    /// In pixels of the PNG.
+    pub size: Vec2,
+}
+
+pub struct Art {
+    /// By name: "fort" → its variants.
+    sprites: BTreeMap<String, Vec<Sprite>>,
+    pub tiles: BTreeMap<&'static str, TextureId>,
+    /// White where the field of `style.shield` is: tinted, under the shield.
+    pub shield_field: Sprite,
+    pub style: Style,
+    /// The textures live while these do.
+    _handles: Vec<TextureHandle>,
+}
+
+impl Art {
+    pub fn load(ctx: &Context) -> Art {
+        let style = style();
+        let mut handles = vec![];
+        let mut load = |name: &str, img: ColorImage, wrap| {
+            let options = TextureOptions {
+                wrap_mode: wrap,
+                mipmap_mode: Some(TextureFilter::Linear),
+                ..TextureOptions::LINEAR
+            };
+            let size = vec2(img.size[0] as f32, img.size[1] as f32);
+            let h = ctx.load_texture(name, img, options);
+            let s = Sprite { id: h.id(), size };
+            handles.push(h);
+            s
+        };
+        let mut sprites: BTreeMap<String, Vec<Sprite>> = BTreeMap::new();
+        let mut field = None;
+        for (path, bytes) in SPRITES {
+            let img = decode(bytes);
+            let file = path.rsplit('/').next().unwrap_or(path);
+            let name = file.rsplit_once('-').map_or(file, |(n, _)| n);
+            if name == style.shield && field.is_none() {
+                field = Some(load("shield-field", field_of(&img), TextureWrapMode::ClampToEdge));
+            }
+            let s = load(path, img, TextureWrapMode::ClampToEdge);
+            sprites.entry(name.to_string()).or_default().push(s);
+        }
+        let tiles = (TILES.iter())
+            .map(|(path, bytes)| {
+                let name = path.rsplit('/').next().unwrap_or(path);
+                (name, load(path, decode(bytes), TextureWrapMode::Repeat).id)
+            })
+            .collect();
+        Art {
+            sprites,
+            tiles,
+            shield_field: field.expect("the shield is among the sprites"),
+            style,
+            _handles: handles,
+        }
+    }
+
+    /// A variant of sprite `name` by `salt` (a province id): the same every time.
+    pub fn sprite(&self, name: &str, salt: &str) -> Option<Sprite> {
+        let all = self.sprites.get(name)?;
+        Some(all[(hash(salt) % all.len() as u64) as usize])
+    }
+
+    #[cfg(test)]
+    pub fn has(&self, name: &str) -> bool {
+        self.sprites.contains_key(name)
+    }
+}
+
+/// FNV-1a: the same on every platform.
+pub fn hash(s: &str) -> u64 {
+    (s.bytes()).fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        (h ^ b as u64).wrapping_mul(0x100_0000_01b3)
+    })
+}
+
+fn decode(bytes: &[u8]) -> ColorImage {
+    let mut dec = png::Decoder::new(std::io::Cursor::new(bytes));
+    dec.set_transformations(png::Transformations::normalize_to_color8());
+    let mut r = dec.read_info().expect("a png of assets/sprites");
+    let mut buf = vec![0; r.output_buffer_size().expect("a png that fits memory")];
+    let info = r.next_frame(&mut buf).expect("a png of assets/sprites");
+    let size = [info.width as usize, info.height as usize];
+    let buf = &buf[..info.buffer_size()];
+    match info.color_type {
+        png::ColorType::Rgba => ColorImage::from_rgba_unmultiplied(size, buf),
+        _ => ColorImage::from_rgb(size, buf),
+    }
+}
+
+/// The field of a shield: the light pixels reached from its middle without crossing ink,
+/// white; the rest clear.
+fn field_of(img: &ColorImage) -> ColorImage {
+    let [w, h] = img.size;
+    let light = |i: usize| {
+        let c = img.pixels[i];
+        c.a() > 200 && c.r() as u32 + c.g() as u32 + c.b() as u32 > 540
+    };
+    let mut out = ColorImage::filled([w, h], Color32::TRANSPARENT);
+    let mut stack = vec![w / 2 + h / 2 * w];
+    while let Some(i) = stack.pop() {
+        if out.pixels[i] != Color32::TRANSPARENT || !light(i) {
+            continue;
+        }
+        out.pixels[i] = Color32::WHITE;
+        let (x, y) = (i % w, i / w);
+        if x > 0 {
+            stack.push(i - 1);
+        }
+        if x + 1 < w {
+            stack.push(i + 1);
+        }
+        if y > 0 {
+            stack.push(i - w);
+        }
+        if y + 1 < h {
+            stack.push(i + w);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The field of the shield is its inside: the middle, not the corner outside it, and not
+    /// the band between its two outlines.
+    #[test]
+    fn the_shield_field_is_filled_from_inside() {
+        let (_, bytes) = SPRITES.iter().find(|(p, _)| p.ends_with("/shield-1")).unwrap();
+        let img = decode(bytes);
+        let f = field_of(&img);
+        let [w, h] = f.size;
+        let at = |x: usize, y: usize| f.pixels[x + y * w];
+        assert_eq!(at(w / 2, h / 2), Color32::WHITE);
+        assert_eq!(at(1, h - 2), Color32::TRANSPARENT);
+        assert_eq!(at(w / 2, 2), Color32::TRANSPARENT, "between the outlines");
+        let filled = f.pixels.iter().filter(|c| **c == Color32::WHITE).count();
+        assert!(filled > w * h / 3 && filled < w * h * 3 / 4, "{filled}");
+    }
+}

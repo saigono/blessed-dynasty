@@ -110,6 +110,9 @@ pub struct BuildingDef {
     pub flag: Option<String>,
     #[serde(default)]
     pub underway: Option<String>,
+    /// Stage 29: its sprite on the old map, a name of assets/sprites without the variant.
+    #[serde(default)]
+    pub sprite: String,
 }
 
 /// Name pools (`data/names.ron`). A vassal house founded by `Effect::Grant` takes the first

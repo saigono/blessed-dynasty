@@ -438,7 +438,7 @@ fn found(
         axes: f.axes.clone(),
         map: Map {
             provinces,
-            polygons: BTreeMap::new(),
+            ..Map::default()
         },
         capital: Capital {
             province: capital,

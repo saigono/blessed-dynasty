@@ -93,6 +93,8 @@ Sprite sheet for a strategy game map in the style of the 1539 Carta Marina by Ol
 
 `raw/events/<тема>.jpg` → `sprites/events/<тема>.jpg`. Сцены нарисованы в манере раскрашенной гравюры XVI века, по одной картинке на тему. Поля и рамка обрезаны, размер 600×400, JPEG, всего около 3 МБ. Сцены и промпт лежат в `raw/events/themes.txt` и `raw/events/gen.sh`; эти файлы в git не попадают.
 
+Промпт требует цельную сцену без панелей, немного фигур, каждую фигуру и предмет по одному разу, корону только у правящего короля и только предметы XVI века. Без этих правил модель рисовала две короны, трёх королей, рельсы и конверты; десять тем (abdication, assassin, envoy, heresy, intrigue, mine, mourning, petition, refused, siege) из-за этого перерисованы. Если запрет упомянуть, модель может нарисовать запрещённое: для шахты пришлось писать «nobody else: no king, no crowns».
+
 Темы (40): abdication, appanage, arrest, assassin, battle, bishop, border, brigands, campaign, cathedral, city-fire, coronation, council, defeat, envoy, famine, festival, flood, heaven-wrath, heresy, intrigue, mine, mourning, petition, pilgrimage, plague, quarrel, raid, refugees, refused, revolt, runaways, sickbed, siege, talks, trade, tutor, victory, war-declared, wedding.
 
 Событие ссылается на тему полем `image` (этап 29b). Одна тема может подходить нескольким событиям.

@@ -1,0 +1,41 @@
+// Stage 29: what the old map draws where. A sprite is named as in assets/sprites without its
+// sheet and variant: "fort" is buildings/fort-1.png, fort-2.png; the variant goes by the
+// province. The buildings name theirs in rules.ron (`sprite`).
+(
+    // A settlement by the province's people: the last whose number they reached.
+    settlements: [(0, "cottage"), (7000, "hamlet"), (9500, "town"), (12000, "town-tower")],
+    // The capital of a state, and the crown over it.
+    capital: "capital",
+    crown: "crown",
+    // A building drawn otherwise in a state's capital: its fort is a castle.
+    in_capital: {"fort": "castle"},
+    // A building going up is pale under scaffolding: its own, or `scaffold`.
+    scaffold: "scaffold",
+    underway: {"fort": "fort-building", "cathedral": "church-building", "abbey": "church-building"},
+    // The building whose provinces a road joins, to each other and to the capital.
+    road: "road",
+    // The lie of the land (`terrain` of the map file): what grows or rises there.
+    terrain: {
+        "forest": ["conifer", "trees"],
+        "hills": ["hills", "hill"],
+        "mountains": ["mountains", "mountain"],
+        "fields": ["field"],
+        "marsh": ["reeds"],
+    },
+    // The marks of what goes on: a flag of the kingdom (in its capital), a mark of a province,
+    // unrest (loyalty below `unrest_below` of rules.ron), the war (our provinces on the
+    // enemy's border, the province fought for), a province emptied below so many people.
+    marks: [
+        (when: WarBorder, sprite: "camp"),
+        (when: WarTarget, sprite: "fire"),
+        (when: Unrest, sprite: "revolt"),
+        (when: Flag("plague"), sprite: "graves"),
+        (when: Fewer(4000), sprite: "ruins"),
+    ],
+    // Heraldry: the shield of a state (its field tinted with the state's colour), the banner
+    // at the seat of a vassal house.
+    shield: "shield",
+    banner: "banner",
+    // On the sea round the land.
+    ships: ["ship", "cog", "boat"],
+)

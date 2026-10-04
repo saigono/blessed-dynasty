@@ -158,34 +158,37 @@
         // the full price.
         pressure: (30, 70),
         list: [
-            (id: "law_primogeniture", group: "Наследование", keep: true, cost: 60, years: 3,
-                requires: NotFlag("succession_contested"),
-                resistance: [("loyalty_nobles", -10)],
+            // Stage 28b: the firmer a law holds the crown together, the dearer it is and the
+            // harder the nobles resist it; the primogenitures need loyal nobles to start.
+            (id: "law_primogeniture", group: "Наследование", keep: true, cost: 120, years: 4,
+                requires: All([NotFlag("succession_contested"), AxisAbove("loyalty_nobles", 59.999)]),
+                resistance: [("loyalty_nobles", -20)],
                 on_complete: [Axis("loyalty_church", 3), Axis("loyalty_nobles", -3)]),
-            (id: "law_male", group: "Наследование", keep: true, cost: 45, years: 2,
-                requires: NotFlag("succession_contested"),
-                resistance: [("loyalty_nobles", -5)],
+            (id: "law_male", group: "Наследование", keep: true, cost: 90, years: 3,
+                requires: All([NotFlag("succession_contested"), AxisAbove("loyalty_nobles", 54.999)]),
+                resistance: [("loyalty_nobles", -10)],
                 on_complete: [Axis("loyalty_church", 2)]),
-            (id: "law_salic", group: "Наследование", keep: true, cost: 45, years: 2,
-                requires: NotFlag("succession_contested"),
-                resistance: [("loyalty_church", -10)],
+            (id: "law_salic", group: "Наследование", keep: true, cost: 90, years: 3,
+                requires: All([NotFlag("succession_contested"), AxisAbove("loyalty_nobles", 54.999)]),
+                resistance: [("loyalty_church", -10), ("loyalty_nobles", -5)],
                 on_complete: [Axis("loyalty_nobles", 3), Axis("loyalty_church", -2)]),
             // A grown man on the throne pleases the barons.
-            (id: "law_seniority", group: "Наследование", keep: true, cost: 60, years: 3,
+            (id: "law_seniority", group: "Наследование", keep: true, cost: 60, years: 2,
                 requires: NotFlag("succession_contested"),
                 resistance: [("loyalty_church", -10)],
                 anchors: [("loyalty_nobles", 3)],
                 on_complete: [Axis("loyalty_nobles", 3), Axis("stability", -3)]),
             // The council of barons pulls toward the corvée.
-            (id: "law_elective", group: "Наследование", keep: true, cost: 60, years: 3,
+            (id: "law_elective", group: "Наследование", keep: true, cost: 60, years: 2,
                 requires: NotFlag("succession_contested"),
                 resistance: [("loyalty_church", -10)],
                 anchors: [("loyalty_nobles", 5)], edges: [("e4", 1.2)],
                 on_complete: [Axis("loyalty_nobles", 5), Axis("legitimacy", -3)]),
-            // More lords, more corvée: with serfdom the gain of П2 nears 0.8.
-            (id: "law_partition", group: "Наследование", keep: true, cost: 45, years: 2,
+            // The custom of the land. More lords, more corvée: with serfdom the gain of П2
+            // nears 0.8.
+            (id: "law_partition", group: "Наследование", keep: true, cost: 30, years: 1,
                 requires: NotFlag("succession_contested"),
-                resistance: [("loyalty_church", -10)],
+                resistance: [("loyalty_church", -5)],
                 anchors: [("loyalty_nobles", 8)], edges: [("e4", 1.25), ("e1", 1.2)],
                 on_complete: [Axis("loyalty_nobles", 5), Axis("stability", -3)]),
             // The ten laws of section 5. Peasants: serfdom or free peasants (custom: neither).
@@ -750,6 +753,10 @@
                 // Laws change rarely: `law` for any change, then per point of a law's anchor
                 // shift or resistance on a pressing faction (laws.pressure).
                 "law": -10, "pressure": 2,
+                // Stage 28b: the custom of partition is left for a primogeniture only by a
+                // ruler of its trait (cautious, warlike, pious below), and only when the
+                // nobles allow it (`laws`, `requires`); never for seniority or election.
+                "law_primogeniture": 40, "law_male": 23, "law_salic": 35,
                 // An heir named in a sealed will over the law (stage 24, royal_will).
                 "bequeath": -2,
             },

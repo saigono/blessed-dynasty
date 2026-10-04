@@ -43,8 +43,8 @@
         (id: "tavrika", name: "Таврика", relation: 0, strength: 40, stance: Wait),
         (id: "kadar", name: "Кадарская империя", relation: -30, strength: 150, stance: Expand, color: Some((150, 46, 52))),
     ],
-    // The succession law and the ruler's marriage.
-    flags: ["law_primogeniture", "married"],
+    // The succession law and the ruler's marriage. Stage 28b: partition, the custom of the land.
+    flags: ["law_partition", "married"],
     // Stage 26: every neighbour a kingdom of its own, played by our rules (realm.rs). Each starts
     // as we do but for what it sets: house, capital, ruler, heirs, flags (the succession law,
     // the ruler's marriage), axes over ours, vassals and their lands (`fiefs`). `us`: the
@@ -60,7 +60,7 @@
                 (name: "", age: 12, ability: 50, claim: 70, status: Home, sex: Male),
                 (name: "", age: 9, ability: 50, claim: 40, status: Home, sex: Female),
             ],
-            flags: ["law_primogeniture", "married"],
+            flags: ["law_partition", "married"],
             axes: {"army": 70, "treasury": 80, "legitimacy": 50, "stability": 55, "bureaucracy": 20},
         )),
         kingdoms: [
@@ -153,7 +153,9 @@
             ),
             // The empire: vast and warlike, its land beyond the crown's reach, its marches held
             // by strong governors on the brink of breaking away, an old emperor whose brother
-            // and sons will dispute the throne by the law of seniority. `auto`: the weights its
+            // will dispute the throne with his sons. Stage 28b: male primogeniture, of the five
+            // laws tried the one that holds the goals of stage 28 with the widest margin
+            // (docs/calibration.md, stage 28b). `auto`: the weights its
             // every ruler adds to the automaton's (rules.ron sim.auto): war is its custom.
             (
                 id: "kadar",
@@ -165,7 +167,7 @@
                     (name: "Смбат", age: 26, ability: 50, claim: 60, status: Home, sex: Male),
                     (name: "Гагик", age: 19, ability: 60, claim: 45, status: Home, sex: Male),
                 ],
-                flags: ["law_seniority", "married"],
+                flags: ["law_male", "married"],
                 axes: {"army": 150, "treasury": 250, "legitimacy": 50, "stability": 35, "loyalty_nobles": 35, "loyalty_people": 40, "bureaucracy": 0, "prestige": 120},
                 vassals: [
                     (id: "sklir", name: "Склир", loyalty: 30, strength: 25),
@@ -179,5 +181,5 @@
             ),
         ],
     )),
-    intro: "1187 год. Старый королевский дом угас, и корона по праву крови перешла к Ульриху, дальнему родичу последнего короля: право на его стороне, но знать держится настороже, а бароны Вейр и Арден правят своими землями сами. С севера грозит враждебный Нордмарк, на востоке выжидает сильная Пурпуляндия, на западе дружбы ищет Веструм, а на юге, за малыми Зюдмарком и Ольховией, за горами лежит Кадарская империя. Земель у неё больше, чем способны удержать её наместники, войско её огромно, старый император Тигран снова точит меч, а братья и сыновья уже делят его престол. У Ульриха пока один наследник, шестилетний сын Конрад.",
+    intro: "1187 год. Старый королевский дом угас, и корона по праву крови перешла к Ульриху, дальнему родичу последнего короля: право на его стороне, но знать держится настороже, а бароны Вейр и Арден правят своими землями сами. По старому обычаю престол получает старший сын, а младшие — уделы из коронных земель; закрепить корону за одним наследником можно только законом, и знать не даст его ввести, пока не поверит новому государю. С севера грозит враждебный Нордмарк, на востоке выжидает сильная Пурпуляндия, на западе дружбы ищет Веструм, а на юге, за малыми Зюдмарком и Ольховией, за горами лежит Кадарская империя. Земель у неё больше, чем способны удержать её наместники, войско её огромно, старый император Тигран снова точит меч, а братья и сыновья уже делят его престол. У Ульриха пока один наследник, шестилетний сын Конрад.",
 )

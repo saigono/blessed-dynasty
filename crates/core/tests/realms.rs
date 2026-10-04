@@ -753,6 +753,45 @@ fn pct(part: usize, all: usize) -> usize {
     (part * 100).checked_div(all).unwrap_or(0)
 }
 
+/// The goals of stage 28 over the games of `empire_games`: (the empire met us, fell apart, in
+/// percent of the games; conquered, in percent of the falls and in games), the first fall
+/// reason but Alive and a line of the report.
+type Goals = ([usize; 4], String, String);
+
+fn empire_goals(games: &[(FallReason, (bool, bool, usize, usize))]) -> Goals {
+    let n = games.len();
+    let mut falls: BTreeMap<String, usize> = BTreeMap::new();
+    for (fall, _) in games {
+        *falls.entry(format!("{fall:?}")).or_default() += 1;
+    }
+    let met = games.iter().filter(|(_, s)| s.0).count();
+    let fell = games.iter().filter(|(_, s)| s.1).count();
+    let fallen = n - falls.get("Alive").copied().unwrap_or(0);
+    let lost = falls.get("Conquered").copied().unwrap_or(0);
+    let mut peaks: Vec<usize> = games.iter().map(|(_, s)| s.3).collect();
+    peaks.sort();
+    let report = format!(
+        "met {}%, fell apart {}%, conquered {lost} of {fallen} falls ({}%), \
+         peak land {} / {} / {}, falls {falls:?}",
+        pct(met, n),
+        pct(fell, n),
+        pct(lost, fallen),
+        peaks[n / 4],
+        peaks[n / 2],
+        peaks[n * 3 / 4],
+    );
+    let first = (falls.iter().filter(|(k, _)| *k != "Alive")).max_by_key(|(_, v)| **v);
+    let first = first.map_or(String::new(), |(k, _)| k.clone());
+    ([pct(met, n), pct(fell, n), pct(lost, fallen), lost], first, report)
+}
+
+/// Whether the goals of `empire_goals` hold: met 40..70%, fell apart 30..60%, conquered
+/// 10..20% of the falls and not the first reason.
+fn empire_goals_hold(([met, fell, lost, _], first, _): &Goals) -> bool {
+    (40..=70).contains(met) && (30..=60).contains(fell) && (10..=20).contains(lost)
+        && first != "Conquered"
+}
+
 /// Stage 28 acceptance of the calibration (docs/calibration.md), 1000 dynasties of 300 years:
 /// the empire becomes our neighbour in 40..70% of them, falls apart or loses a third of its
 /// land in 30..60%; «Завоёваны» is 10..20% of the falls of `neutral`, not the first reason;
@@ -763,49 +802,135 @@ fn pct(part: usize, all: usize) -> usize {
 #[ignore = "release only, about a minute"]
 fn the_empire_threatens_but_not_surely() {
     let f = files();
+    let neutral = empire_goals(&empire_games(&f, "neutral"));
+    let guardian = empire_goals(&empire_games(&f, "guardian"));
+    let report = format!("neutral: {}\nguardian: {}", neutral.2, guardian.2);
+    println!("{report}");
+    assert!(empire_goals_hold(&neutral), "{report}");
+    assert!(guardian.0[3] * 3 <= neutral.0[3] * 2, "{report}");
+}
+
+/// Where the kingdom of the empire begins in the text of preset `p`.
+fn empire_at(p: &str) -> usize {
+    let kingdoms = p.find("kingdoms: [").unwrap();
+    kingdoms + p[kingdoms..].find(&format!("id: \"{EMPIRE}\"")).unwrap()
+}
+
+/// The preset with the empire on succession `law` at the start, the rest as it is.
+fn empire_on(law: &str) -> Files {
+    let mut f = files();
+    let p = &f[PRESET];
+    let at = empire_at(p);
+    let from = at + p[at..].find("flags: [\"").unwrap() + "flags: [\"".len();
+    let to = from + p[from..].find('"').unwrap();
+    let p = format!("{}{law}{}", &p[..from], &p[to..]);
+    f.insert(PRESET.into(), p);
+    f
+}
+
+/// The succession laws of `heirs.laws` a state may start on in stage 28b.
+const START_LAWS: [&str; 5] = [
+    "law_partition",
+    "law_seniority",
+    "law_elective",
+    "law_male",
+    "law_primogeniture",
+];
+
+/// Stage 28b acceptance: the empire on each of `START_LAWS` at the start, 1000 dynasties of
+/// `neutral` each, against the goals of stage 28; the law of the preset holds them all (the
+/// table and the choice in docs/calibration.md, stage 28b).
+/// `cargo test --release -p core --test realms -- --ignored empire_starts`.
+#[test]
+#[ignore = "release only, six minutes"]
+fn the_empire_starts_on_a_law_that_keeps_its_goals() {
     let mut report = String::new();
-    let mut conquered = BTreeMap::new();
-    for strategy in ["neutral", "guardian"] {
-        let games = empire_games(&f, strategy);
-        let n = games.len();
-        let mut falls: BTreeMap<String, usize> = BTreeMap::new();
-        for (fall, _) in &games {
-            *falls.entry(format!("{fall:?}")).or_default() += 1;
-        }
-        let met = games.iter().filter(|(_, s)| s.0).count();
-        let fell = games.iter().filter(|(_, s)| s.1).count();
-        let fallen = n - falls.get("Alive").copied().unwrap_or(0);
-        let lost = falls.get("Conquered").copied().unwrap_or(0);
-        let mut peaks: Vec<usize> = games.iter().map(|(_, s)| s.3).collect();
-        peaks.sort();
-        report += &format!(
-            "{strategy}: met {}%, fell apart {}%, conquered {lost} of {fallen} falls ({}%), \
-             peak land {} / {} / {}, falls {falls:?}\n",
-            pct(met, n),
-            pct(fell, n),
-            pct(lost, fallen),
-            peaks[n / 4],
-            peaks[n / 2],
-            peaks[n * 3 / 4],
-        );
-        conquered.insert(strategy, (lost, fallen, met, fell, falls));
+    let mut held = BTreeMap::new();
+    for law in START_LAWS {
+        let goals = empire_goals(&empire_games(&empire_on(law), "neutral"));
+        report += &format!("{law}: {}\n", goals.2);
+        held.insert(law, empire_goals_hold(&goals));
     }
     println!("{report}");
-    let (lost, fallen, met, fell, falls) = &conquered["neutral"];
-    assert!((40..=70).contains(&pct(*met, 1000)), "{report}");
-    assert!((30..=60).contains(&pct(*fell, 1000)), "{report}");
-    assert!((10..=20).contains(&pct(*lost, *fallen)), "{report}");
-    let first = falls
-        .iter()
-        .filter(|(k, _)| *k != "Alive")
-        .max_by_key(|(_, v)| **v);
-    assert_ne!(
-        first.map(|(k, _)| k.as_str()),
-        Some("Conquered"),
-        "{report}"
-    );
-    let guarded = &conquered["guardian"];
-    assert!(guarded.0 * 3 <= lost * 2, "{report}");
+    let p = &files()[PRESET];
+    let at = empire_at(p);
+    let chosen = START_LAWS.iter().find(|l| {
+        let flags = &p[at + p[at..].find("flags: [").unwrap()..];
+        flags.starts_with(&format!("flags: [\"{l}\""))
+    });
+    assert!(held[chosen.expect("the empire starts on a law")], "{report}");
+}
+
+/// Dynasty years `law_games` tells the succession law at.
+const LAWS_AT: [u32; 3] = [50, 100, 300];
+
+/// `strategy` over seeds 0..1000: per game the fall, the dynasty's years and its succession
+/// law at `LAWS_AT` (None: fallen before).
+fn law_games(f: &Files, strategy: &str) -> Vec<(FallReason, u32, [Option<String>; 3])> {
+    let start = batch::load(f, PRESET, MAP, 0).unwrap();
+    let rules = batch::score_rules(f, &start).unwrap();
+    let auto = batch::chooser(f, &start, strategy).unwrap();
+    let game = |seed| {
+        let mut g = start.reseeded(seed);
+        batch::play(&mut g, auto.as_ref(), &mut vec![]).unwrap();
+        let c = batch::dynasty(&g, &rules).0.unwrap();
+        let year = |e: &&bd_core::sim::ChronicleEntry| e.tick.year(e.snapshot.time_unit);
+        let law = |y: u32| {
+            let last = c.entries.iter().take_while(|e| year(e) <= y).last();
+            let w = last.map_or(&g.world, |e| &e.snapshot);
+            let law = g.data.heirs.law(w).map_or(String::new(), |l| l.flag.clone());
+            (c.years >= y).then_some(law)
+        };
+        (c.fall.clone(), c.years, LAWS_AT.map(law))
+    };
+    batch::par_seeds(0..1000, batch::threads(), game, |_| {})
+}
+
+/// Absolute, male primogeniture and the Salic law: the eldest son first.
+const PRIMOGENITURES: [&str; 3] = ["law_primogeniture", "law_male", "law_salic"];
+
+/// Stage 28b acceptance of the calibration (docs/calibration.md), 1000 dynasties each of the
+/// strategies of 08b: the falls, the median years and the succession laws at `LAWS_AT`. In
+/// `neutral`, which starts on partition, a primogeniture is in force at the 100th year in
+/// 30..60% of the dynasties then alive, and a dynasty broken into appanages is not the first
+/// fall.
+/// `cargo test --release -p core --test realms -- --ignored primogeniture`.
+#[test]
+#[ignore = "release only, five minutes"]
+fn primogeniture_comes_when_the_nobles_allow() {
+    let f = files();
+    let mut report = String::new();
+    let mut neutral = None;
+    for strategy in ["neutral", "crown_all", "vassal_all", "warmonger"] {
+        let games = law_games(&f, strategy);
+        let n = games.len();
+        let mut falls: BTreeMap<String, usize> = BTreeMap::new();
+        for (fall, ..) in &games {
+            *falls.entry(format!("{fall:?}")).or_default() += 1;
+        }
+        let mut years: Vec<u32> = games.iter().map(|g| g.1).collect();
+        years.sort();
+        let q = (years[n / 4], years[n / 2], years[n * 3 / 4]);
+        report += &format!("{strategy}: years {q:?}, falls {falls:?}\n");
+        for (k, y) in LAWS_AT.iter().enumerate() {
+            let mut laws: BTreeMap<&str, usize> = BTreeMap::new();
+            for g in &games {
+                *laws.entry(g.2[k].as_deref().unwrap_or("fallen")).or_default() += 1;
+            }
+            report += &format!("  year {y}: {laws:?}\n");
+        }
+        if strategy == "neutral" {
+            neutral = Some((games, falls));
+        }
+    }
+    println!("{report}");
+    let (games, falls) = neutral.unwrap();
+    let alive: Vec<&String> = games.iter().filter_map(|g| g.2[1].as_ref()).collect();
+    let first = alive.iter().filter(|l| PRIMOGENITURES.contains(&l.as_str()));
+    let share = pct(first.count(), alive.len());
+    assert!((30..=60).contains(&share), "{share}%\n{report}");
+    let first = (falls.iter().filter(|(k, _)| *k != "Alive")).max_by_key(|(_, v)| **v);
+    assert_ne!(first.map(|(k, _)| k.as_str()), Some("NoCrownLand"), "{report}");
 }
 
 /// Stage 28 acceptance: news that name the empire weigh one more than their kind (`news: 1`

@@ -1217,9 +1217,9 @@ fn intro(ctx: &egui::Context, p: &Preset) -> Option<Cmd> {
 const HOW_TO_PLAY: [&str; 4] = [
     "Цель: оставить потомкам крепкое государство. Вы правите только первым государем, \
      счёт считается по тому, сколько проживёт династия и чего она достигнет.",
-    "Ход: щёлкните по своей земле, соседу на карте, гербу или человеку при дворе: справа \
-     откроется карточка с указами. Затем нажмите «Подождать год». За год случаются события: \
-     выберите вариант в окне. Что произошло, видно в итогах года справа.",
+    "Ход: щёлкните по своей земле, соседу на карте, ленте с его именем или человеку при \
+     дворе: справа откроется карточка с указами. Затем нажмите «Подождать год». За год \
+     случаются события: выберите вариант в окне. Что произошло, видно в итогах года справа.",
     "Наведите мышь на указ, соседа, закон или провинцию, чтобы узнать подробности.",
     "Правление кончается смертью государя или отречением. Дальше симуляция разыграет \
      судьбу династии, а хроника покажет, к чему привели ваши решения.",
@@ -4947,7 +4947,7 @@ mod tests {
     }
 
     /// Acceptance (stage 29d): on the chronicle's little map the labels shrink with it, cover
-    /// none other and stay within it; the provinces go unnamed, the states named.
+    /// none other and stay within it, each over its state's land; the provinces go unnamed.
     #[test]
     fn the_chronicle_map_labels_fit() {
         let mut h = Harness::new();
@@ -4960,8 +4960,17 @@ mod tests {
             assert!(view.width() < 400.0, "{view:?}");
             let labels = h.app.map.labels.borrow().clone();
             assert!(labels.len() >= 3, "{labels:?}");
+            let w = h.app.dynasty.as_ref().unwrap().0.entries[entry].snapshot.clone();
             for (i, (a, r)) in labels.iter().enumerate() {
                 assert!(!matches!(a, map::Click::Province(_)), "{a:?} named");
+                // Over its own land.
+                let under = h.app.map.province_at(r.center()).map(|id| &w.provinces[id].holder);
+                let state = match under {
+                    Some(Holder::Foreign(n)) => Some(map::Click::State(n.clone())),
+                    Some(_) => Some(map::Click::Kingdom),
+                    None => None,
+                };
+                assert_eq!(state.as_ref(), Some(a), "{a:?} {r:?}");
                 assert!(view.contains_rect(*r), "{a:?} {r:?} out of {view:?}");
                 // Across: 37 on the whole map.
                 assert!(r.height().min(r.width()) < 22.0, "{a:?} {r:?}");

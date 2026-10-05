@@ -663,7 +663,9 @@ impl MapView {
             };
             put(town, &id.0, a, h, Color32::WHITE);
             if capital {
-                put(&st.crown, &id.0, a - vec2(0.0, h + 0.5), 7.0, Color32::WHITE);
+                // On top of the capital at any zoom: its height in map units shrinks as it does.
+                let top = (h + 0.5) / self.zoom.get().sqrt();
+                put(&st.crown, &id.0, a - vec2(0.0, top), 7.0, Color32::WHITE);
             }
             for (i, (b, built)) in buildings(w, d, id).into_iter().enumerate() {
                 let side = if i % 2 == 0 { 1.0 } else { -1.0 };
@@ -729,7 +731,7 @@ impl MapView {
     /// (upright for a tall land). Stage 29c: of the places about that piece the ribbon takes
     /// one where it covers no other ribbon or the cartouche, lies on the piece and covers the
     /// fewest settlements (stage 29d: and rivers); finding none it is written smaller, so
-    /// shorter. On a small map a ribbon with no such place is left out.
+    /// shorter. On a small map a ribbon with no such place on the piece is left out.
     fn ribbons(&self, painter: &Painter, w: &World, d: &Data, art: &Art) {
         let px = (STATE_PX * self.text_scale()).clamp(MIN_PX, 24.0);
         let Some(tex) = art.sprite("ribbon", "") else {
@@ -838,7 +840,8 @@ impl MapView {
                             break;
                         }
                     }
-                    let fits = |b: &(usize, f32, Pos2)| b.0 < 100 || !self.small();
+                    // A small map names a state only over its land, covering none other.
+                    let fits = |b: &(usize, f32, Pos2)| b.0 < 30 || !self.small();
                     best.filter(fits).map(|(_, smaller, c)| (smaller, c))
                 }
             };

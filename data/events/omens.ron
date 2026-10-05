@@ -68,7 +68,7 @@
         // П1, oppression: no way out of one's estate. The villages empty, and the corvée
         // with them: the node drops off its bound (stage 20, the serfdom trap discharges).
         id: "omen_empty_villages",
-        image: "runaways",
+        image: "empty-village",
         title: "Пустеют сёла",
         text: "В {province.пр} пустеют сёла. Молодым некуда податься, ни в город, ни в ремесло, ни в монахи, и они уходят куда глаза глядят. Пашни зарастают березняком.",
         texts: [

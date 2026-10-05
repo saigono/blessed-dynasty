@@ -4,7 +4,7 @@
 [
     (
         id: "neighbour_ultimatum",
-        image: "envoy",
+        image: "ultimatum",
         title: "Ультиматум: {neighbour}",
         text: "Послы {neighbour.род} входят в тронный зал не кланяясь. Они требуют дани серебром и скотом и обещают, что за отказ заплатят порубежные сёла.",
         texts: [

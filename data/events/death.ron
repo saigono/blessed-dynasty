@@ -158,7 +158,7 @@
     ),
     (
         id: "war_wound",
-        image: "battle",
+        image: "wounded-king",
         title: "Рана в бою",
         text: "Сеча была жаркой: копьё вошло {ruler.дат} в бок, и {ruler} едва держится в седле. Оруженосцы выносят {ruler:его|её} с поля на щитах.",
         texts: [
@@ -216,7 +216,7 @@
         // Old age (rules.ron death.risks, from 70): its own cooldown, so it adds to illness
         // instead of waiting for it, and few rulers live past 80.
         id: "old_age",
-        image: "sickbed",
+        image: "old-king",
         title: "Старость",
         text: "{ruler} слабеет с каждой зимой. Днём подолгу дремлет у камина, путает имена советников и всё чаще зовёт к себе духовника.",
         texts: [

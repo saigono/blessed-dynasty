@@ -55,6 +55,8 @@ pub const PICTURES: &[(&str, &[u8])] = jpg![
     "festival", "flood", "heaven-wrath", "heresy", "intrigue", "mine", "mourning", "petition",
     "pilgrimage", "plague", "quarrel", "raid", "refugees", "refused", "revolt", "runaways",
     "sickbed", "siege", "talks", "trade", "tutor", "victory", "war-declared", "wedding",
+    "claimants", "consecration", "drought", "empty-village", "guild", "old-king", "plague-end",
+    "sick-heir", "tavern", "ultimatum", "wounded-king",
 ];
 
 const STYLE: &str = include_str!("../../../data/sprites.ron");

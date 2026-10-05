@@ -258,7 +258,7 @@
     ),
     (
         id: "heir_death",
-        image: "sickbed",
+        image: "sick-heir",
         title: "Беда с наследником",
         text: "На охоте под {heir.тв} споткнулся конь, и {heir} {heir:упал|упала} на камни. Третий день горячка, лекари не ручаются за жизнь.",
         texts: [
@@ -326,7 +326,7 @@
     (
         // After a contested abdication (rules.ron `abdication`); fires in the simulation.
         id: "succession_dispute",
-        image: "quarrel",
+        image: "claimants",
         title: "Спор о короне",
         text: "Корона сложена до срока, и бароны не спешат присягать. В замках называют своих претендентов, а на дорогах к столице видят вооружённых людей.",
         texts: [

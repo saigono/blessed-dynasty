@@ -58,7 +58,7 @@
     ),
     (
         id: "cap_guild_charter",
-        image: "petition",
+        image: "guild",
         title: "Гильдии просят хартию",
         text: "Старшины столичных цехов принесли к трону хартию вольностей: свой суд, свои весы и право не пускать на рынок чужаков. Они просят скрепить её королевской печатью.",
         texts: [
@@ -164,7 +164,7 @@
     (
         // Chain step of cap_cathedral.
         id: "cap_cathedral_consecrated",
-        image: "cathedral",
+        image: "consecration",
         title: "Освящение собора",
         text: "Собор достроен. Леса сняты, большой колокол подняли на звонницу, и его слышно за три версты от стен. Епископ ждёт двор на освящение.",
         texts: [
@@ -480,7 +480,7 @@
     (
         // Chain step of cap_plague and dis_pestilence.
         id: "plague_ends",
-        image: "plague",
+        image: "plague-end",
         title: "Мор отступил",
         text: "Новых больных нет уже месяц. Город считает мёртвых, проветривает дома, и на рынке снова кричат торговки.",
         texts: [
@@ -1394,7 +1394,7 @@
     ),
     (
         id: "heir_bad_company",
-        image: "festival",
+        image: "tavern",
         title: "Дурная компания",
         text: "{heir} пропадает ночами в кабаках с молодыми повесами. По городу ходят песни о {heir:его|её} проделках, а один трактирщик уже прислал счёт во дворец.",
         texts: [
@@ -1447,7 +1447,7 @@
     (
         // Not deadly: heir_death of heirs.ron is the deadly one. A bad roll costs ability.
         id: "heir_fever",
-        image: "sickbed",
+        image: "sick-heir",
         title: "Горячка",
         text: "{heir} мечется в горячке третьи сутки, не узнаёт мать и зовёт кого-то по имени. Лекари пускают кровь и разводят руками, а у ворот стоит деревенская знахарка с травами.",
         texts: [
@@ -1714,7 +1714,7 @@
     ),
     (
         id: "dis_drought",
-        image: "famine",
+        image: "drought",
         title: "Засуха",
         text: "Третий месяц ни капли дождя. Колодцы пересохли, земля трескается, как старый горшок, а скот падает прямо на выгоне.",
         texts: [

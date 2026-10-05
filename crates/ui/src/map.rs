@@ -124,6 +124,14 @@ type Key = Vec<(Holder, Color32)>;
 /// The washes, bands and ink in map coordinates, and the key they were made for.
 type Made = (Key, Vec<Mesh>, Vec<(Vec<Pos2>, Ink)>);
 
+/// Where the ribbons go (`MapView::ribbons`): for the holders of the land, the view, its zoom
+/// and pan and the cartouche, of every state the size of its name, the ribbon's centre on
+/// screen and whether its coat stands at the right end.
+type Spots = (
+    (Vec<Holder>, Rect, f32, Vec2, Option<Rect>),
+    BTreeMap<Option<NeighbourId>, (f32, Pos2, bool)>,
+);
+
 pub struct MapView {
     lands: BTreeMap<ProvinceId, Land>,
     edges: Vec<Edge>,
@@ -145,6 +153,7 @@ pub struct MapView {
     pan: Cell<Vec2>,
     /// Made again only when the holders change.
     cache: RefCell<Option<Made>>,
+    spots: RefCell<Option<Spots>>,
     /// What the ribbons, coats and the cartouche painted last answer to a click.
     pub(crate) hits: RefCell<Vec<(Rect, Click)>>,
     /// The ribbons painted last: whose, the ribbon, its coat and the coat's foot on screen.
@@ -224,6 +233,7 @@ impl MapView {
             zoom: Cell::new(1.0),
             pan: Cell::new(Vec2::ZERO),
             cache: RefCell::new(None),
+            spots: RefCell::new(None),
             hits: RefCell::new(vec![]),
             labels: RefCell::new(vec![]),
         };
@@ -680,12 +690,17 @@ impl MapView {
                 Rect::from_min_max(p - vec2(10.0, CAPITAL) * k, p + vec2(10.0 * k, 5.0 * k + 10.0))
             })
             .collect();
-        let mut placed: Vec<Rect> = vec![];
-        if self.rect.get().width() >= OVERLAYS {
-            let (c, _, _, at) = self.cartouche(painter, w, d);
-            placed.push(c.plate.translate(at.to_vec2()));
-        }
         let view = self.rect.get();
+        let cartouche = (view.width() >= OVERLAYS).then(|| {
+            let (c, _, _, at) = self.cartouche(painter, w, d);
+            c.plate.translate(at.to_vec2())
+        });
+        let mut placed: Vec<Rect> = cartouche.into_iter().collect();
+        // Looked for again only when the land or the view changes.
+        let holders = (self.lands.keys().filter_map(|id| w.provinces.get(id))).map(|p| p.holder.clone());
+        let key = (holders.collect(), view, self.zoom.get(), self.pan.get(), cartouche);
+        let cached = (self.spots.borrow().as_ref()).filter(|(k, _)| *k == key).map(|(_, s)| s.clone());
+        let mut spots = BTreeMap::new();
         let mut states: Vec<Option<&NeighbourId>> = vec![None];
         states.extend(w.neighbours.keys().map(Some));
         for s in states {
@@ -706,54 +721,79 @@ impl MapView {
                     (w.neighbours[n].name.clone(), c, Click::State(n.clone()))
                 }
             };
-            let on = |p: Pos2| mine.iter().any(|id| contains(&self.lands[*id].raw, self.to_map(p)));
-            // About the middle of the piece first, then about each of its settlements.
-            let mut bases = vec![self.to_screen(at)];
-            bases.extend(mine.iter().map(|id| self.to_screen(self.lands[*id].anchor - vec2(0.0, 12.0))));
-            let mut best: Option<(usize, Laid, Arc<Galley>, Pos2, bool)> = None;
-            for smaller in [1.0, 0.85, 0.72] {
-                let g = painter.layout_no_wrap(name.clone(), map_font(px * smaller), FG);
-                let r = lay(&RIBBON, g.size());
-                let across = rotate(vec2(0.0, r.plate.height() * 1.15), angle);
-                let along = rotate(vec2(r.plate.width() * 0.25, 0.0), angle);
-                let mut tries = vec![];
-                for b in &bases {
-                    for j in [0.0, -1.0, 1.0, -2.0, 2.0, -3.0, 3.0] {
-                        for i in [0.0, -1.0, 1.0] {
-                            tries.extend([false, true].map(|flip| (*b + across * j + along * i, flip)));
+            let found = match &cached {
+                Some(c) => c.get(&s.cloned()).copied(),
+                None => {
+                    let boxes: Vec<(Rect, &[Pos2])> = (mine.iter())
+                        .map(|id| (Rect::from_points(&self.lands[*id].raw), &self.lands[*id].raw[..]))
+                        .collect();
+                    let on = |p: Pos2| {
+                        let p = self.to_map(p);
+                        boxes.iter().any(|(b, raw)| b.contains(p) && contains(raw, p))
+                    };
+                    // About the middle of the piece first, then about each of its settlements.
+                    let mut bases = vec![self.to_screen(at)];
+                    bases.extend(mine.iter().map(|id| self.to_screen(self.lands[*id].anchor - vec2(0.0, 12.0))));
+                    let mut best: Option<(usize, f32, Pos2, bool)> = None;
+                    for smaller in [1.0, 0.85, 0.72] {
+                        let g = painter.layout_no_wrap(name.clone(), map_font(px * smaller), FG);
+                        let r = lay(&RIBBON, g.size());
+                        let across = rotate(vec2(0.0, r.plate.height() * 1.15), angle);
+                        let along = rotate(vec2(r.plate.width() * 0.25, 0.0), angle);
+                        let mut tries = vec![];
+                        for b in &bases {
+                            for j in [0.0, -1.0, 1.0, -2.0, 2.0, -3.0, 3.0] {
+                                for i in [0.0, -1.0, 1.0] {
+                                    tries.extend([false, true].map(|flip| (*b + across * j + along * i, flip)));
+                                }
+                            }
+                        }
+                        // Covering a ribbon or a coat, or a coat off the piece, costs more than
+                        // anything but leaving the view; lying off the piece more than covering towns.
+                        let cost = |&(c, flip): &(Pos2, bool)| {
+                            let (rib, coat, foot) = ribbon_at(&r, art, c, angle, flip);
+                            let both = rib.union(coat);
+                            let place = |p: Pos2| c + rotate(p - r.plate.center(), angle);
+                            let off = corners(r.zone).into_iter().map(place).filter(|p| !on(*p)).count();
+                            let crossed = placed.iter().filter(|p| p.intersects(rib) || p.intersects(coat)).count();
+                            let covers = towns.iter().filter(|t| t.shrink(2.0).intersects(both)).count();
+                            1000 * !view.contains_rect(both) as usize
+                                + 100 * (crossed + !on(foot) as usize)
+                                + 10 * (off + !on(c) as usize)
+                                + covers
+                        };
+                        // The nearest to the middle of those that cost least; the first that costs
+                        // nothing saves looking further.
+                        tries.sort_by(|a, b| a.0.distance(bases[0]).total_cmp(&b.0.distance(bases[0])));
+                        let mut pick: Option<(usize, (Pos2, bool))> = None;
+                        for t in &tries {
+                            let paid = cost(t);
+                            if pick.is_none_or(|(least, _)| paid < least) {
+                                pick = Some((paid, *t));
+                            }
+                            if paid == 0 {
+                                break;
+                            }
+                        }
+                        let Some((paid, (c, flip))) = pick else {
+                            continue;
+                        };
+                        if best.as_ref().is_none_or(|b| paid < b.0) {
+                            best = Some((paid, smaller, c, flip));
+                        }
+                        if paid < 100 {
+                            break;
                         }
                     }
+                    best.map(|(_, smaller, c, flip)| (smaller, c, flip))
                 }
-                // Covering a ribbon or a coat, or a coat off the piece, costs more than
-                // anything but leaving the view; lying off the piece more than covering towns.
-                let cost = |&(c, flip): &(Pos2, bool)| {
-                    let (rib, coat, foot) = ribbon_at(&r, art, c, angle, flip);
-                    let both = rib.union(coat);
-                    let place = |p: Pos2| c + rotate(p - r.plate.center(), angle);
-                    let off = corners(r.zone).into_iter().map(place).filter(|p| !on(*p)).count();
-                    let crossed = placed.iter().filter(|p| p.intersects(rib) || p.intersects(coat)).count();
-                    let covers = towns.iter().filter(|t| t.shrink(2.0).intersects(both)).count();
-                    1000 * !view.contains_rect(both) as usize
-                        + 100 * (crossed + !on(foot) as usize)
-                        + 10 * (off + !on(c) as usize)
-                        + covers
-                };
-                // The nearest to the middle of those that cost least.
-                let key = |t: &&(Pos2, bool)| (cost(t), (t.0.distance(bases[0]) * 10.0) as i64);
-                let Some(&(c, flip)) = tries.iter().min_by_key(key) else {
-                    continue;
-                };
-                let paid = cost(&(c, flip));
-                if best.as_ref().is_none_or(|b| paid < b.0) {
-                    best = Some((paid, r, g, c, flip));
-                }
-                if paid < 100 {
-                    break;
-                }
-            }
-            let Some((_, r, g, centre, flip)) = best else {
+            };
+            let Some((smaller, centre, flip)) = found else {
                 continue;
             };
+            spots.insert(s.cloned(), (smaller, centre, flip));
+            let g = painter.layout_no_wrap(name, map_font(px * smaller), FG);
+            let r = lay(&RIBBON, g.size());
             let place = |p: Pos2| centre + rotate(p - r.plate.center(), angle);
             let mut mesh = Mesh::with_texture(tex.id);
             for (local, uv) in slices(&RIBBON, r.scale, r.stretch) {
@@ -767,6 +807,7 @@ impl MapView {
             self.hits.borrow_mut().push((rib.union(coat_at), click.clone()));
             self.labels.borrow_mut().push((click, rib, coat_at, foot));
         }
+        *self.spots.borrow_mut() = Some((key, spots));
     }
 
     /// The provinces of state `s` (ours: None) on the map: the largest connected piece of

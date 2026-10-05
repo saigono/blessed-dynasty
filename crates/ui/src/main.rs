@@ -4820,6 +4820,20 @@ mod tests {
         }
     }
 
+    /// Stage 29c: a frame like the last places the ribbons where it did (looked up, not
+    /// searched again); a zoom places them anew.
+    #[test]
+    fn the_ribbons_move_only_with_the_view() {
+        let mut h = map_in(1187);
+        let first = h.app.map.labels.borrow().clone();
+        h.frame(vec![]);
+        assert_eq!(*h.app.map.labels.borrow(), first);
+        let centre = h.app.map.to_screen(h.app.map.centre(&ProvinceId("capital".into())).unwrap());
+        h.app.map.zoom_at(centre, 2.0);
+        h.frame(vec![]);
+        assert_ne!(*h.app.map.labels.borrow(), first);
+    }
+
     /// Acceptance (stage 29c): the map has no legend: a state answers a click on its ribbon
     /// and coat only, the kingdom on them and the cartouche (the legend's coats answered too).
     #[test]

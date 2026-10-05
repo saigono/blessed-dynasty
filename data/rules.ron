@@ -158,34 +158,37 @@
         // the full price.
         pressure: (30, 70),
         list: [
-            (id: "law_primogeniture", group: "Наследование", keep: true, cost: 60, years: 3,
-                requires: NotFlag("succession_contested"),
-                resistance: [("loyalty_nobles", -10)],
+            // Stage 28b: the firmer a law holds the crown together, the dearer it is and the
+            // harder the nobles resist it; the primogenitures need loyal nobles to start.
+            (id: "law_primogeniture", group: "Наследование", keep: true, cost: 120, years: 4,
+                requires: All([NotFlag("succession_contested"), AxisAbove("loyalty_nobles", 59.999)]),
+                resistance: [("loyalty_nobles", -20)],
                 on_complete: [Axis("loyalty_church", 3), Axis("loyalty_nobles", -3)]),
-            (id: "law_male", group: "Наследование", keep: true, cost: 45, years: 2,
-                requires: NotFlag("succession_contested"),
-                resistance: [("loyalty_nobles", -5)],
+            (id: "law_male", group: "Наследование", keep: true, cost: 90, years: 3,
+                requires: All([NotFlag("succession_contested"), AxisAbove("loyalty_nobles", 54.999)]),
+                resistance: [("loyalty_nobles", -10)],
                 on_complete: [Axis("loyalty_church", 2)]),
-            (id: "law_salic", group: "Наследование", keep: true, cost: 45, years: 2,
-                requires: NotFlag("succession_contested"),
-                resistance: [("loyalty_church", -10)],
+            (id: "law_salic", group: "Наследование", keep: true, cost: 90, years: 3,
+                requires: All([NotFlag("succession_contested"), AxisAbove("loyalty_nobles", 54.999)]),
+                resistance: [("loyalty_church", -10), ("loyalty_nobles", -5)],
                 on_complete: [Axis("loyalty_nobles", 3), Axis("loyalty_church", -2)]),
             // A grown man on the throne pleases the barons.
-            (id: "law_seniority", group: "Наследование", keep: true, cost: 60, years: 3,
+            (id: "law_seniority", group: "Наследование", keep: true, cost: 60, years: 2,
                 requires: NotFlag("succession_contested"),
                 resistance: [("loyalty_church", -10)],
                 anchors: [("loyalty_nobles", 3)],
                 on_complete: [Axis("loyalty_nobles", 3), Axis("stability", -3)]),
             // The council of barons pulls toward the corvée.
-            (id: "law_elective", group: "Наследование", keep: true, cost: 60, years: 3,
+            (id: "law_elective", group: "Наследование", keep: true, cost: 60, years: 2,
                 requires: NotFlag("succession_contested"),
                 resistance: [("loyalty_church", -10)],
                 anchors: [("loyalty_nobles", 5)], edges: [("e4", 1.2)],
                 on_complete: [Axis("loyalty_nobles", 5), Axis("legitimacy", -3)]),
-            // More lords, more corvée: with serfdom the gain of П2 nears 0.8.
-            (id: "law_partition", group: "Наследование", keep: true, cost: 45, years: 2,
+            // The custom of the land. More lords, more corvée: with serfdom the gain of П2
+            // nears 0.8.
+            (id: "law_partition", group: "Наследование", keep: true, cost: 30, years: 1,
                 requires: NotFlag("succession_contested"),
-                resistance: [("loyalty_church", -10)],
+                resistance: [("loyalty_church", -5)],
                 anchors: [("loyalty_nobles", 8)], edges: [("e4", 1.25), ("e1", 1.2)],
                 on_complete: [Axis("loyalty_nobles", 5), Axis("stability", -3)]),
             // The ten laws of section 5. Peasants: serfdom or free peasants (custom: neither).
@@ -548,7 +551,8 @@
                 description: "Копить золото и не начинать войн без крайней нужды.",
                 // `marriage` 6: a wedding outweighs its dowry for a ruler who counts gold
                 // twice too (stage 25, docs/calibration.md).
-                weights: {"treasury": 0.3, "income": 2, "province_income": 1, "army": 0.15, "war": -40, "marriage": 6}),
+                weights: {"treasury": 0.3, "income": 2, "province_income": 1, "army": 0.6, "war": -40, "marriage": 6,
+                    "law_primogeniture": 36, "law_male": 27, "law_salic": 27}),
             (id: "sword", name: "Меч кормит род",
                 description: "Держать сильное войско и добывать земли оружием.",
                 weights: {"war": 10, "army": 0.1, "province": 10, "prestige": 0.3}),
@@ -560,7 +564,7 @@
                 weights: {"grant": -30, "secede": -20, "province": 30}),
             (id: "peace", name: "Мир с соседями",
                 description: "Жить с соседями в дружбе, родниться с ними и избегать войн.",
-                weights: {"relation": 0.4, "war": -25, "marriage": 10}),
+                weights: {"relation": 0.4, "war": -25, "marriage": 10, "army": 0.3}),
             (id: "law", name: "Закон превыше короля",
                 description: "Крепить приказы и законы, а не волю одного государя.",
                 weights: {"bureaucracy": 0.5, "law": 3, "pressure": 1, "stability": 0.5}),
@@ -751,6 +755,10 @@
                 // Laws change rarely: `law` for any change, then per point of a law's anchor
                 // shift or resistance on a pressing faction (laws.pressure).
                 "law": -10, "pressure": 2,
+                // Stage 28b: the custom of partition is left for a primogeniture only by a
+                // ruler of its trait (cautious, warlike, pious below), and only when the
+                // nobles allow it (`laws`, `requires`); never for seniority or election.
+                "law_primogeniture": 40, "law_male": 23, "law_salic": 35,
                 // An heir named in a sealed will over the law (stage 24, royal_will).
                 "bequeath": -2,
             },
@@ -772,6 +780,8 @@
             crowned: ("Новое правление", "После {prev.род} на престол {ruler:взошёл|взошла} {ruler}."),
             province_lost: ("Потеря земли", "Корона потеряла {province.вин}: край отошёл под руку {neighbour.род}."),
             province_gained: ("Земля возвращена", "При {ruler.пр} корона вернула себе {province.вин}, отняв край у {neighbour.род}."),
+            // Stage 28b: land that was never ours (`province_gained`: land given back).
+            province_taken: ("Земля присоединена", "При {ruler.пр} корона взяла {province.вин}, отняв край у {neighbour.род}."),
             // The heir first in line died of age risk (heirs.death); see heir_death_age.
             heir_died: ("Смерть наследника", "{heir:Умер|Умерла} {heir}, {heir:первый|первая} в очереди на престол."),
             // The law in force changed (an action done or a choice); {law} is its name.
@@ -802,6 +812,13 @@
                     "Ключи от ворот {province.род} привезли к трону на бархатной подушке, и {neighbour.дат} пришлось уступить край.",
                     "Над стенами {province.род} снова подняли королевское знамя, и мытари короны вернулись в свои старые конторы.",
                     "В {province.пр} снова поминали в молитвах {ruler.вин}, и край вернулся под руку короны.",
+                ],
+                "province_taken": [
+                    "Над замками {province.род} впервые подняли королевское знамя, и {neighbour} {neighbour:смирился|смирилась} с потерей.",
+                    "Наместники {neighbour.род} покинули {province.вин}, и край впервые признал над собой руку короны.",
+                    "В церквях {province.род} теперь молились за {ruler.вин}, а не за {neighbour.вин}.",
+                    "Ключи от ворот {province.род} привезли к трону на бархатной подушке, и {neighbour.дат} пришлось уступить чужой прежде край.",
+                    "Мытари короны впервые въехали в {province.вин}, а межевые столбы перенесли на новый рубеж.",
                 ],
                 "heir_died": [
                     "Двор облачился в траур: {heir:скончался|скончалась} {heir}, {heir:наследник|наследница} престола.",

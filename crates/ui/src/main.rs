@@ -2704,6 +2704,11 @@ mod tests {
                     ),
                     line("Рождение: Генрих", Some(true)),
                     line("Завершено: Проложить дорогу (Берг)", None),
+                    // Stage 28b: the empire on male primogeniture marches a year earlier.
+                    line(
+                        "Из-за рубежа пришла весть: Кадарская империя двинула войско на Ольховию.",
+                        Some(false),
+                    ),
                 ],
             ),
             (
@@ -2718,10 +2723,6 @@ mod tests {
                         Some(false),
                     ),
                     line("Церковь +7", Some(true)),
-                    line(
-                        "Из-за рубежа пришла весть: Кадарская империя двинула войско на Ольховию.",
-                        Some(false),
-                    ),
                 ],
             ),
             (
@@ -2756,9 +2757,10 @@ mod tests {
                     money("+54: доход +34, расходы -5, действия и события +25"),
                     line("Умер в детстве королевский сын Освальд", Some(false)),
                     // Stage 27: news from afar, in words.
+                    line("Земли: Кадарская империя взяла Вышгород", None),
                     line(
-                        "Из-за рубежа пришла весть: Пурпуляндия двинула войско на Нордмарк.",
-                        None,
+                        "Гонцы донесли, что земля Вышгород отошла под руку Кадарской империи, и Ольховия не сумела её отстоять.",
+                        Some(false),
                     ),
                 ],
             ),
@@ -2833,6 +2835,11 @@ mod tests {
         h.height = 1400.0;
         h.app.apply(Cmd::Start(1));
         h.click_label("Править");
+        // Stage 28b: the preset's partition says what it holds («держит выше: Знать»), which
+        // this test of the axes counts against them: the law before it holds nothing.
+        let flags = &mut h.app.game.as_mut().unwrap().world.flags;
+        flags.remove("law_partition");
+        flags.insert("law_primogeniture".into());
         let set = |h: &mut Harness, axes: &[(&str, i64)]| {
             let g = h.app.game.as_mut().unwrap();
             for (a, v) in axes {
@@ -3196,8 +3203,10 @@ mod tests {
         }
 
         card(&mut h, Card::Kingdom);
-        let law = hover(&mut h, "Закон: Абсолютное первородство ℹ");
-        let text = h.game().data.heirs.laws[0].text();
+        // Stage 28b: the preset starts on partition.
+        let law = hover(&mut h, "Закон: Разделение ℹ");
+        let d = &h.game().data;
+        let text = (d.heirs.laws.iter()).find(|l| l.flag == "law_partition").unwrap().text();
         assert!(law.contains(&text) && text.contains("ниже 70"), "{law:?}");
         assert!(texts_of(&mut h).contains(&"Первый в очереди: Конрад".to_string()));
 
@@ -3344,10 +3353,14 @@ mod tests {
             "the law in force says so"
         );
         for t in [
-            "Стоимость 45 · 2 года · сила короны от 40",
-            "пока вводят, к цели: Церковь -10 · по введении: Знать +3, Церковь -2",
+            "Стоимость 90 · 3 года · сила короны от 40",
+            "пока вводят, к цели: Церковь -10, Знать -5 · по введении: Знать +3, Церковь -2",
         ] {
             assert!(list.iter().any(|x| x.starts_with(t)), "{t}: {list:?}");
+        }
+        // Stage 28b: the primogenitures need loyal nobles (the preset's are at 40), and say so.
+        for t in ["Нужно: Знать от 60", "Нужно: Знать от 55"] {
+            assert!(list.contains(&t.to_string()), "{t}: {list:?}");
         }
         // Each group opens: its laws, what they hold and feed, their price and resistance.
         for g in ["Наследование", "Крестьяне"] {
@@ -3363,10 +3376,10 @@ mod tests {
             h.click_label(g);
             settle(&mut h);
         }
-        h.click_label("Салический закон");
+        h.click_label("Лествичное право");
         assert!(!h.app.laws);
         let running = &h.game().world.active_actions;
-        assert_eq!(running[0].id, "enact_law_salic");
+        assert_eq!(running[0].id, "enact_law_seniority");
         let wait = |h: &mut Harness, n: u32| {
             for _ in 0..n {
                 h.app.apply(Cmd::Wait);
@@ -3376,7 +3389,7 @@ mod tests {
             }
         };
         wait(&mut h, 2);
-        assert!(texts_of(&mut h).contains(&"Закон: Салический закон ℹ".to_string()));
+        assert!(texts_of(&mut h).contains(&"Закон: Лествичное право ℹ".to_string()));
         // Another law, in force on the reign screen, and its repeal for half the price.
         h.app
             .game
@@ -4153,7 +4166,7 @@ mod tests {
         let mut h = Harness::new();
         assert!(h.ctx.global_style().interaction.tooltip_delay <= 0.1);
         begun(&mut h);
-        let law = h.game().data.heirs.laws[0].clone();
+        let law = h.game().data.heirs.law(&h.game().world).unwrap().clone();
         let label = format!("Закон: {} {INFO}", law.name);
         // No hover tip in this test: only the click can show it.
         h.ctx

@@ -118,7 +118,8 @@ fn target(d: &Data, w: &World, id: &str) -> Fx {
 }
 
 /// Section 2 and 3 of the design: eight hidden nodes, edges e1..e18 (e7 off until its law),
-/// and at the start every source stands at its rest: every target is the anchor.
+/// and at the start every source stands at its rest: every target is the anchor (stage 28b:
+/// the anchor of the laws in force, partition lifts the nobles').
 #[test]
 fn the_graph_of_the_design_is_silent_at_the_start() {
     let d = content(DATA, &read(&format!("{DATA}/rules.ron")));
@@ -143,7 +144,7 @@ fn the_graph_of_the_design_is_silent_at_the_start() {
     assert!(e7.off && e7.k == Fx(400));
     let w = Game::new(d.clone(), &preset(DATA, &d), 0).world;
     for a in d.axes.iter().filter(|a| graph::step(&d, a) > Fx(0)) {
-        assert_eq!(target(&d, &w, &a.id.0), a.default, "{}", a.id.0);
+        assert_eq!(target(&d, &w, &a.id.0), graph::anchor(&d, &w, a), "{}", a.id.0);
     }
 }
 

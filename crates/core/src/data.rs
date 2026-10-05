@@ -1059,6 +1059,10 @@ pub struct SimTexts {
     pub crowned: (String, String),
     pub province_lost: (String, String),
     pub province_gained: (String, String),
+    /// Stage 28b: land joined the realm that was never ours (`province_gained` is for land
+    /// given back).
+    #[serde(default)]
+    pub province_taken: (String, String),
     /// The heir first in line died (`heirs.death`); `{heir}`.
     pub heir_died: (String, String),
     /// Display text per reign end cause (`Game.ended`: a `RulerDies` cause or the

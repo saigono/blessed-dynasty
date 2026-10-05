@@ -139,9 +139,11 @@ fn every_strategy_plays_and_an_unknown_one_fails() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("нет стратегии nope"));
 }
 
+/// Seed 43 since stage 28b: on seed 42 the founder of partition dies without an heir, and the
+/// chronicle has no entry.
 #[test]
 fn trace_links_entries_to_decisions() {
-    let args = ["trace", "--seed", "42", "--script", "data/scripts/test.ron"];
+    let args = ["trace", "--seed", "43", "--script", "data/scripts/test.ron"];
     let out = stdout(cli(&args));
     assert_eq!(out, stdout(cli(&args)));
     // Every entry: a header line, then its causes or the note that it has none.
@@ -206,14 +208,15 @@ fn scenario(name: &str, seed: &str, event: &str) -> (usize, String, String) {
 /// 19, the kingdoms at war with each other move our neighbours' strength and so the rng
 /// (the first schism in the year 162). Stage 26c: 292 again, the compound events move the rng
 /// (the first schism in the year 155). Stage 28: 360, the big map and its kingdoms move the
-/// rng (the first schism in the year 155, two by the horizon).
+/// rng (the first schism in the year 155, two by the horizon). Stage 28b: 74, partition at
+/// the start moves the rng (the first schism in the year 191, two by the horizon).
 #[test]
 fn scenario_avalanche_ends_in_schism() {
-    let (n, first, end) = scenario("avalanche", "360", "schism");
+    let (n, first, end) = scenario("avalanche", "74", "schism");
     assert_eq!(n, 2);
     assert_eq!(
         first,
-        "1342 Раскол [schism]\n  цепочка #4 law_charters → literacy → faith: Вера раскололась: \
+        "1378 Раскол [schism]\n  цепочка #5 law_charters → literacy → faith: Вера раскололась: \
          множились грамотные (с 1194 года, когда города получили хартии вольностей из рук \
          основателя), от этого шаталась вера."
     );
@@ -223,11 +226,11 @@ fn scenario_avalanche_ends_in_schism() {
 /// Golden: long stability. Granaries and schools; no peasant war, schism or great famine in
 /// 300 years. Seed 12 since stage 24 (2 before), as rare as it was; 0 since stage 25; 5
 /// since stage 26b; 11 since stage 27 (the kingdoms move the rng); 13 since stage 28 (the
-/// big map).
+/// big map); 4 since stage 28b (partition at the start).
 #[test]
 fn scenario_stability_has_no_catastrophe() {
     for event in ["peasant_war", "schism", "great_famine"] {
-        let (n, _, end) = scenario("stability", "13", event);
+        let (n, _, end) = scenario("stability", "4", event);
         assert_eq!(
             (n, end.as_str()),
             (0, "конец Alive на 300-м году"),
@@ -236,8 +239,9 @@ fn scenario_stability_has_no_catastrophe() {
     }
 }
 
-/// Golden: the golden age of the corvée (seed 1 since stage 28, the big map moves the rng: the
-/// first peasant war in the year 80, seven by the horizon; seed 10 since stage 26c, the compound events move the
+/// Golden: the golden age of the corvée (seed 41 since stage 28b, partition at the start moves
+/// the rng: the first peasant war in the year 76, four by the horizon; seed 1 since stage 28,
+/// the big map moves the rng: the first peasant war in the year 80, seven by the horizon; seed 10 since stage 26c, the compound events move the
 /// rng; 16 since stage 27, the kingdoms' wars; 42 since stage 26b; 2 since stage 25; 53 since
 /// stage 24, 3 before). The first peasant war comes in the year 52, five by the horizon; its
 /// chain of three nodes leads back to the founder's serfdom decree, decision #3 of tick 3.
@@ -245,17 +249,17 @@ fn scenario_stability_has_no_catastrophe() {
 /// weakened.
 #[test]
 fn scenario_trap_ends_in_peasant_war() {
-    let (n, first, end) = scenario("trap", "1", "peasant_war");
-    assert_eq!(n, 7);
+    let (n, first, end) = scenario("trap", "41", "peasant_war");
+    assert_eq!(n, 4);
     assert_eq!(
         first,
-        "1267 Мужицкая война [peasant_war]\n  цепочка #3 law_serfdom → serfdom → strata → \
+        "1263 Мужицкая война [peasant_war]\n  цепочка #3 law_serfdom → serfdom → strata → \
          loyalty_people: Мужики поднялись: крепла барщина (с 1193 года, когда основатель \
          прикрепил крестьян к земле господ), от этого росло расслоение, от этого озлоблялся \
          народ."
     );
     let script = "data/scripts/trap.ron";
-    let out = stdout(cli(&["trace", "--seed", "1", "--script", script]));
+    let out = stdout(cli(&["trace", "--seed", "41", "--script", script]));
     assert!(
         out.contains("  решение #3 (тик 3, law_serfdom) → метка"),
         "{out}"
@@ -480,6 +484,7 @@ fn founder_laws_make_different_equilibria() {
         (0..3).any(|k| (metrics[i][k] - metrics[0][k]).abs() * 100 >= metrics[0][k] * 15)
     };
     assert!((1..sets.len()).any(off), "{metrics:?}");
+    println!("{metrics:?} {s:?}");
     let dominant = |i: usize| s[i].3.iter().max_by_key(|(_, n)| **n).unwrap().0.clone();
     let reasons: BTreeSet<String> = (1..sets.len()).map(dominant).collect();
     assert!(reasons.len() >= 2, "{s:?}");
@@ -877,11 +882,18 @@ fn law_profiles_differ() {
     assert_eq!(laws[worst(3)], "law_seniority", "{rows:?}");
     // Stage 27: an appanage that broke away and took the capital conquers (was NoCrownLand
     // when no crown land was left): partition breaks up twice as often, by the rows.
+    // Stage 28b: half the dynasties that start on partition leave it for a primogeniture by
+    // their 100th year (sim.auto, the nobles' loyalty), so it breaks up a fifth more often
+    // (95 against 76), no longer half (docs/calibration.md, stage 28b).
     let broken = |o: &str| {
         let fell = |l: &&str| matches!(l.split(',').nth(4), Some("NoCrownLand" | "Conquered"));
         o.lines().filter(fell).count()
     };
-    assert!(broken(&outs[5]) > broken(&outs[0]) * 3 / 2, "{rows:?}");
+    let (partition, primogeniture) = (broken(&outs[5]), broken(&outs[0]));
+    assert!(
+        partition * 5 > primogeniture * 6,
+        "{partition} {primogeniture} {rows:?}"
+    );
     // Stage 17: the rightful heir's claim cuts the disputes of absolute primogeniture below
     // the 32% of stage 16 without letting NoHeir soar; male primogeniture has its own risk.
     // Stage 17b: at most 12% under absolute primogeniture, only a child or a weak heir.

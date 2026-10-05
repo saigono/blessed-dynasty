@@ -44,6 +44,8 @@
 | 28b | 28b-succession-laws.md | 28 |
 | 29 | 29-old-map-ui.md | 28 |
 | 29b | 29b-event-pictures.md | 29 |
+| 29c | 29c-map-polish.md | 28b, 29b |
+| 30 | 30-texts-and-faith.md | 28b, 29b |
 
 После этапа 2 параллельно можно вести 3, 5, 8a, 9, 10a. На соло-разработке реально две-три ветки за раз.
 

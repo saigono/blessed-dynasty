@@ -277,6 +277,17 @@ fn the_ten_laws_of_the_design() {
     assert_eq!(law("law_partition").edges.len(), 2);
 }
 
+/// Stage 30b acceptance: «Единоверие» pleases the people (no heretics in sight), its anchor
+/// of the people is positive; the price stays on trade and the treasury.
+#[test]
+fn one_faith_pleases_the_people() {
+    let d = data();
+    let l = d.law("law_one_faith").unwrap();
+    let anchor = |a: &str| (l.anchors.iter()).find(|(x, _)| x.0 == a).map(|(_, v)| *v);
+    assert!(anchor("loyalty_people").is_some_and(|v| v > Fx(0)), "{:?}", l.anchors);
+    assert!(anchor("trade").is_some_and(|v| v < Fx(0)) && l.treasury < Fx(0));
+}
+
 /// Acceptance: the mark of a law brought in by the player does not fade while the law is in
 /// force; the rest of the same decision fades as always, and so does the law's once repealed.
 #[test]

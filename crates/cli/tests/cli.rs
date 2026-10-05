@@ -536,13 +536,13 @@ fn avalanches_are_seen_coming() {
     }
 }
 
-/// Stage 19, criterion 4: no best law. Each of the ten laws in force from the start, 1000
-/// `neutral` dynasties: worse than none on at least one of median years, median score, the
+/// Stage 19, criterion 4: no best law. Each of the ten laws in force from the start, 2000
+/// `neutral` dynasties (stage 30b, seeds 0..1999; 1000 before): worse than none on at least one of median years, median score, the
 /// share of Usurped, the median treasury at the end (the table of docs/calibration.md). Four
 /// laws do not meet it yet, a question to the design.
 /// `cargo test --release -p cli -- --ignored no_best_law`.
 #[test]
-#[ignore = "release only, two minutes"]
+#[ignore = "release only, twenty minutes"]
 fn no_best_law() {
     let laws = [
         "",
@@ -565,7 +565,7 @@ fn no_best_law() {
                 vec!["--law", l]
             };
             Command::new(env!("CARGO_BIN_EXE_cli"))
-                .args([&["batch", "--runs", "1000"][..], &law].concat())
+                .args([&["batch", "--runs", "2000"][..], &law].concat())
                 .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
                 .stdout(std::process::Stdio::piped())
                 .spawn()
@@ -601,17 +601,18 @@ fn no_best_law() {
             laws[i]
         );
     }
-    // Stage 30: «Единоверие» was worse by noise alone (8% of the median years on these
-    // seeds, 3% on the next thousand; Usurped 3 points, 1); with its price (merchants, their
-    // dues and the people's goodwill lost, the persecution) it is clearly worse on a row: by a
-    // tenth of a median or 5 points of Usurped (docs/calibration.md, stage 30).
+    // Stage 30: «Единоверие» was worse by noise alone (8% of the median years on seeds
+    // 0..999, 3% on the next thousand; Usurped 3 points, 1); with its price (merchants and
+    // their dues lost, the persecution) it is clearly worse on a row: by a tenth of a median
+    // or 5 points of Usurped (docs/calibration.md, stages 30 and 30b). Stage 30b: the people
+    // are pleased with it, the price stays on trade and the treasury.
     let (faith, none) = (&rows[3], &rows[0]);
     let clearly = |k: usize| match k {
         2 => faith[k] <= none[k] - 5,
         _ => faith[k] * 10 <= none[k] * 9,
     };
     assert!((0..4).any(clearly), "{faith:?} against {none:?}");
-    println!("{rows:?}");
+    println!("{rows:?}; «Единоверие» {faith:?} against {none:?}");
 }
 
 /// A copy of data/ in the target's tmp dir whose rules.ron lacks the top-level `sections`

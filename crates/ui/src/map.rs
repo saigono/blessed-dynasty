@@ -71,7 +71,7 @@ const SHIP: f32 = 20.0;
 const NAME_PX: f32 = 10.5;
 const STATE_PX: f32 = 12.5;
 
-/// The narrowest view with the cartouche, the compass and the legend: not the chronicle's.
+/// The narrowest view with the cartouche and the compass: not the chronicle's.
 const OVERLAYS: f32 = 500.0;
 
 /// The closest zoom of the big map.

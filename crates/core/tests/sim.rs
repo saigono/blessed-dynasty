@@ -963,7 +963,8 @@ fn an_unfinished_war_starts_over_under_the_heir() {
 /// Stage 26c, a bug of the samples: a neighbour that lost its last land has left the world
 /// (`drop_landless`, in the same step as the crown took that land), and the land is told
 /// without its name, not «отняв край у .». Here Берг is held by a neighbour already gone.
-/// Stage 28b: Берг was never ours in the chronicle, so it is joined, not given back.
+/// Stage 28b: Берг was never ours in the chronicle, so it is joined, not given back, though
+/// the entry of the event that took it (in the chronicle now) shows it ours that year.
 #[test]
 fn land_taken_from_a_vanished_neighbour_is_told_without_its_name() {
     let mut data = content();
@@ -971,7 +972,7 @@ fn land_taken_from_a_vanished_neighbour_is_told_without_its_name() {
     let berg = g.world.provinces.get_mut(&pid("berg")).unwrap();
     berg.holder = Holder::Foreign(NeighbourId("gone".into()));
     quiet(&mut data);
-    data.sim.threshold = 9;
+    data.sim.threshold = 1;
     data.add_events(
         r#"[(id: "take", title: "", text: "", when: All([]), weight: 1, once: true,
          cooldown_years: 0, importance: 1, target: None,

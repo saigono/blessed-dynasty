@@ -1245,11 +1245,12 @@ fn province_entries(g: &Game, holders: &[Holder], c: &mut Chronicle, r: &mut Rei
     let t = &g.data.sim.texts;
     let w = &g.world;
     for (p, was) in w.provinces.values().zip(holders) {
-        // Stage 28b: land is given back only if it was ours at some entry (the first is the
-        // world of the founder's death); else it is taken.
+        // Stage 28b: land is given back only if it was ours at an entry of a year before
+        // (the first entries are the world of the founder's death; this year's may show it
+        // ours already); else it is taken.
         let ours = |e: &ChronicleEntry| {
             let q = e.snapshot.provinces.get(&p.id);
-            q.is_some_and(|q| !matches!(q.holder, Holder::Foreign(_)))
+            e.tick < w.tick && q.is_some_and(|q| !matches!(q.holder, Holder::Foreign(_)))
         };
         let ((title, text), foreign, key) = match (was, &p.holder) {
             (Holder::Foreign(_), Holder::Foreign(_)) => continue,

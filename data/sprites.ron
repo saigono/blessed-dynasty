@@ -32,9 +32,7 @@
         (when: Flag("plague"), sprite: "graves"),
         (when: Fewer(4000), sprite: "ruins"),
     ],
-    // Heraldry: the shield of a state (its field tinted with the state's colour), the banner
-    // at the seat of a vassal house.
-    shield: "shield",
+    // The banner at the seat of a vassal house.
     banner: "banner",
     // On the sea round the land.
     ships: ["ship", "cog", "boat"],

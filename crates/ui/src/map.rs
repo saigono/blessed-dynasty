@@ -1,7 +1,7 @@
 //! The old map (stage 29): the provinces on paper in the manner of the Carta Marina, from the
 //! raster art of `art.rs`: the sea and the paper in tiles, the land washed in its state's
-//! colour, bands along the borders and the coast, rivers and roads, ink, sprites, heraldry and
-//! labels. Floats are display only.
+//! colour, bands along the borders and the coast, rivers and roads, ink, sprites and labels.
+//! Floats are display only.
 
 use crate::art::{Art, Sprite, When, hash};
 use bd_core::data::{BuildingDef, Data};
@@ -70,6 +70,12 @@ const SHIP: f32 = 20.0;
 /// Province names and state ribbons, in screen pixels at the whole map.
 const NAME_PX: f32 = 10.5;
 const STATE_PX: f32 = 12.5;
+/// Stage 29d: a capital's name is this much larger than a province's.
+const CAPITAL_NAME: f32 = 1.3;
+/// Stage 29d: below this many screen pixels per map unit (the chronicle's little map) the
+/// labels shrink with the map, no smaller than `MIN_PX`, and only the states are named.
+const SMALL: f32 = 0.7;
+const MIN_PX: f32 = 7.0;
 
 /// The narrowest view with the cartouche and the compass: not the chronicle's.
 const OVERLAYS: f32 = 500.0;
@@ -87,7 +93,7 @@ pub fn map_font(px: f32) -> FontId {
 pub enum Click {
     Province(ProvinceId),
     State(NeighbourId),
-    /// Our coat of arms, ribbon or cartouche.
+    /// Our ribbon or cartouche.
     Kingdom,
 }
 
@@ -125,11 +131,11 @@ type Key = Vec<(Holder, Color32)>;
 type Made = (Key, Vec<Mesh>, Vec<(Vec<Pos2>, Ink)>);
 
 /// Where the ribbons go (`MapView::ribbons`): for the holders of the land, the view, its zoom
-/// and pan and the cartouche, of every state the size of its name, the ribbon's centre on
-/// screen and whether its coat stands at the right end.
+/// and pan and the cartouche, of every state the size of its name and the ribbon's centre on
+/// screen.
 type Spots = (
     (Vec<Holder>, Rect, f32, Vec2, Option<Rect>),
-    BTreeMap<Option<NeighbourId>, (f32, Pos2, bool)>,
+    BTreeMap<Option<NeighbourId>, (f32, Pos2)>,
 );
 
 pub struct MapView {
@@ -137,7 +143,8 @@ pub struct MapView {
     edges: Vec<Edge>,
     /// The land and the sea round it, in map coordinates.
     frame: Rect,
-    rivers: Vec<Vec<Pos2>>,
+    /// Drawn as splines through the points of the map file.
+    pub(crate) rivers: Vec<Vec<Pos2>>,
     /// Trees, hills and fields: where, the terrain, a salt for the variant.
     nature: Vec<(Pos2, String, String)>,
     /// The ships, the fish and the wind on the sea.
@@ -146,7 +153,7 @@ pub struct MapView {
     /// The capitals the states started with (the preset's kingdoms).
     capitals: BTreeMap<NeighbourId, ProvinceId>,
     /// Where the last frame painted the map; clicks and tests read it.
-    rect: Cell<Rect>,
+    pub(crate) rect: Cell<Rect>,
     /// Stage 28: the wheel zooms in (1 is the whole map) round the pointer, a drag moves the
     /// view: the centre of the view in map coordinates, off the frame's centre.
     zoom: Cell<f32>,
@@ -154,10 +161,11 @@ pub struct MapView {
     /// Made again only when the holders change.
     cache: RefCell<Option<Made>>,
     spots: RefCell<Option<Spots>>,
-    /// What the ribbons, coats and the cartouche painted last answer to a click.
+    /// What the ribbons and the cartouche painted last answer to a click.
     pub(crate) hits: RefCell<Vec<(Rect, Click)>>,
-    /// The ribbons painted last: whose, the ribbon, its coat and the coat's foot on screen.
-    pub(crate) labels: RefCell<Vec<(Click, Rect, Rect, Pos2)>>,
+    /// The labels painted last on screen: the ribbons (a state's, the kingdom's), the names
+    /// (a province's).
+    pub(crate) labels: RefCell<Vec<(Click, Rect)>>,
 }
 
 impl MapView {
@@ -191,6 +199,23 @@ impl MapView {
                 e.sides[(u != a) as usize] = Some((*id).clone());
             }
         }
+        // Stage 29d: the coast a spline through its (wobbled) points, not a wobbled line; the
+        // borders inland end on those points and meet it there. Each coast edge from its land's side on.
+        let coast: BTreeMap<(i32, i32), (i32, i32)> = (edges.iter())
+            .filter_map(|(&[a, b], e)| match e.sides {
+                [Some(_), None] => Some((a, b)),
+                [None, Some(_)] => Some((b, a)),
+                _ => None,
+            })
+            .collect();
+        let back: BTreeMap<_, _> = coast.iter().map(|(&u, &v)| (v, u)).collect();
+        for (&u, &v) in &coast {
+            let mut pts = spline([back[&u], u, v, coast[&v]].map(|p| wobble(at(p))));
+            if u > v {
+                pts.reverse();
+            }
+            edges.get_mut(&[u.min(v), u.max(v)]).expect("an edge").pts = pts;
+        }
         let lands = (polys.iter())
             .map(|(id, pts)| {
                 let mut outline = vec![];
@@ -223,7 +248,7 @@ impl MapView {
             edges: edges.into_values().collect(),
             frame: Rect::from_points(&all).expand(SEA),
             rivers: (map.rivers.iter())
-                .map(|r| r.iter().map(|&p| at(p)).collect())
+                .map(|r| smooth(&r.iter().map(|&p| at(p)).collect::<Vec<_>>()))
                 .collect(),
             nature: vec![],
             sea: vec![],
@@ -305,6 +330,22 @@ impl MapView {
         self.fit() * self.zoom.get().sqrt()
     }
 
+    /// Of the size of a label at the whole map: as the sprites, but no larger than on a map
+    /// fit to more than a pixel per unit (stage 29d: the chronicle's little map names smaller).
+    fn text_scale(&self) -> f32 {
+        self.fit().min(1.0) * self.zoom.get().sqrt()
+    }
+
+    /// The map is shown small: the states named, not the provinces.
+    fn small(&self) -> bool {
+        self.scale() < SMALL
+    }
+
+    /// The capitals of the states of `w`: ours and each foreign state's.
+    pub(crate) fn capitals(&self, w: &World) -> BTreeSet<ProvinceId> {
+        state_capitals(w, &self.capitals)
+    }
+
     fn view_centre(&self) -> Pos2 {
         self.frame.center() + self.pan.get()
     }
@@ -343,7 +384,7 @@ impl MapView {
         self.province_at_map(self.to_map(screen))
     }
 
-    /// What a click at `screen` asks for: a ribbon, a coat or the cartouche over the land,
+    /// What a click at `screen` asks for: a ribbon or the cartouche over the land,
     /// else the province under it (by the inverse of the view).
     pub fn click_at(&self, screen: Pos2) -> Option<Click> {
         let hits = self.hits.borrow();
@@ -402,8 +443,12 @@ impl MapView {
         let hovered = resp.hover_pos().and_then(|pos| self.province_at(pos));
         let war_target = w.war.as_ref().and_then(|x| x.target.as_ref());
         if let Some(p) = hovered.and_then(|id| w.provinces.get(id)) {
+            let capital = self.capitals(w).contains(&p.id);
             resp.on_hover_ui_at_pointer(|ui| {
                 crate::target_tip(ui, w, data, &Target::Province(p.id.clone()));
+                if capital {
+                    ui.label(format!("Столица: {}", state_name(w, state_of(&p.holder))));
+                }
                 if war_target == Some(&p.id) {
                     ui.label(eframe::egui::RichText::new("Цель войны").color(RUBRIC));
                 }
@@ -618,7 +663,9 @@ impl MapView {
             };
             put(town, &id.0, a, h, Color32::WHITE);
             if capital {
-                put(&st.crown, &id.0, a - vec2(0.0, h + 0.5), 7.0, Color32::WHITE);
+                // On top of the capital at any zoom: its height in map units shrinks as it does.
+                let top = (h + 0.5) / self.zoom.get().sqrt();
+                put(&st.crown, &id.0, a - vec2(0.0, top), 7.0, Color32::WHITE);
             }
             for (i, (b, built)) in buildings(w, d, id).into_iter().enumerate() {
                 let side = if i % 2 == 0 { 1.0 } else { -1.0 };
@@ -652,11 +699,16 @@ impl MapView {
         out
     }
 
-    /// The name of every province under its settlement, in ink on a halo of paper; the
-    /// province fought for in rubric with ⚔.
+    /// The name of every province under its settlement, in ink on a halo of paper; a
+    /// state's capital larger (stage 29d); the province fought for in rubric with ⚔. None on
+    /// a small map.
     fn names(&self, painter: &Painter, w: &World) {
-        let px = (NAME_PX * self.zoom.get().sqrt()).min(20.0);
+        if self.small() {
+            return;
+        }
+        let px = (NAME_PX * self.text_scale()).min(20.0);
         let war_target = w.war.as_ref().and_then(|x| x.target.as_ref());
+        let capitals = self.capitals(w);
         for (id, l) in &self.lands {
             let Some(p) = w.provinces.get(id) else {
                 continue;
@@ -666,23 +718,26 @@ impl MapView {
                 false => (p.name.clone(), FG),
             };
             let at = self.to_screen(l.anchor + vec2(0.0, 5.0));
+            let px = if capitals.contains(id) { px * CAPITAL_NAME } else { px };
             let g = painter.layout_no_wrap(name, map_font(px), color);
-            halo(painter, at - vec2(g.size().x / 2.0, 0.0), g, color);
+            let at = at - vec2(g.size().x / 2.0, 0.0);
+            let label = (Click::Province(id.clone()), Rect::from_min_size(at, g.size()));
+            self.labels.borrow_mut().push(label);
+            halo(painter, at, g, color);
         }
     }
 
     /// Every state's name on a ribbon over the largest connected piece of its land, along it
-    /// (upright for a tall land), with its coat at one end standing on the ribbon's foot and
-    /// turned with it. Stage 29c: of the places about that piece the ribbon takes one where
-    /// it and its coat cover no other ribbon, coat or the cartouche, the coat stands on the
-    /// piece, the ribbon lies on it and covers the fewest settlements; finding none it is
-    /// written smaller, so shorter.
+    /// (upright for a tall land). Stage 29c: of the places about that piece the ribbon takes
+    /// one where it covers no other ribbon or the cartouche, lies on the piece and covers the
+    /// fewest settlements (stage 29d: and rivers); finding none it is written smaller, so
+    /// shorter. On a small map a ribbon with no such place on the piece is left out.
     fn ribbons(&self, painter: &Painter, w: &World, d: &Data, art: &Art) {
-        let px = (STATE_PX * self.zoom.get().sqrt()).min(24.0);
+        let px = (STATE_PX * self.text_scale()).clamp(MIN_PX, 24.0);
         let Some(tex) = art.sprite("ribbon", "") else {
             return;
         };
-        // The settlements and their names stay in sight if they can.
+        // The settlements and their names stay in sight if they can, and the rivers.
         let k = self.sprite_scale();
         let towns: Vec<Rect> = (self.lands.values())
             .map(|l| {
@@ -690,6 +745,7 @@ impl MapView {
                 Rect::from_min_max(p - vec2(10.0, CAPITAL) * k, p + vec2(10.0 * k, 5.0 * k + 10.0))
             })
             .collect();
+        let rivers: Vec<Pos2> = self.rivers.iter().flatten().map(|p| self.to_screen(*p)).collect();
         let view = self.rect.get();
         let cartouche = (view.width() >= OVERLAYS).then(|| {
             let (c, _, _, at) = self.cartouche(painter, w, d);
@@ -714,13 +770,11 @@ impl MapView {
                 true => -std::f32::consts::FRAC_PI_2,
                 false => 0.0,
             };
-            let (name, color, click) = match s {
-                None => ("Королевство".to_string(), CROWN, Click::Kingdom),
-                Some(n) => {
-                    let c = holder_color(w, &Holder::Foreign(n.clone()));
-                    (w.neighbours[n].name.clone(), c, Click::State(n.clone()))
-                }
+            let click = match s {
+                None => Click::Kingdom,
+                Some(n) => Click::State(n.clone()),
             };
+            let name = state_name(w, s);
             let found = match &cached {
                 Some(c) => c.get(&s.cloned()).copied(),
                 None => {
@@ -734,7 +788,7 @@ impl MapView {
                     // About the middle of the piece first, then about each of its settlements.
                     let mut bases = vec![self.to_screen(at)];
                     bases.extend(mine.iter().map(|id| self.to_screen(self.lands[*id].anchor - vec2(0.0, 12.0))));
-                    let mut best: Option<(usize, f32, Pos2, bool)> = None;
+                    let mut best: Option<(usize, f32, Pos2)> = None;
                     for smaller in [1.0, 0.85, 0.72] {
                         let g = painter.layout_no_wrap(name.clone(), map_font(px * smaller), FG);
                         let r = lay(&RIBBON, g.size());
@@ -744,28 +798,29 @@ impl MapView {
                         for b in &bases {
                             for j in [0.0, -1.0, 1.0, -2.0, 2.0, -3.0, 3.0] {
                                 for i in [0.0, -1.0, 1.0] {
-                                    tries.extend([false, true].map(|flip| (*b + across * j + along * i, flip)));
+                                    tries.push(*b + across * j + along * i);
                                 }
                             }
                         }
-                        // Covering a ribbon or a coat, or a coat off the piece, costs more than
-                        // anything but leaving the view; lying off the piece more than covering towns.
-                        let cost = |&(c, flip): &(Pos2, bool)| {
-                            let (rib, coat, foot) = ribbon_at(&r, art, c, angle, flip);
-                            let both = rib.union(coat);
-                            let place = |p: Pos2| c + rotate(p - r.plate.center(), angle);
+                        // Covering a ribbon costs more than anything but leaving the view;
+                        // lying off the piece more than covering towns and rivers.
+                        let cost = |c: &Pos2| {
+                            let rib = ribbon_at(&r, *c, angle);
+                            let place = |p: Pos2| *c + rotate(p - r.plate.center(), angle);
                             let off = corners(r.zone).into_iter().map(place).filter(|p| !on(*p)).count();
-                            let crossed = placed.iter().filter(|p| p.intersects(rib) || p.intersects(coat)).count();
-                            let covers = towns.iter().filter(|t| t.shrink(2.0).intersects(both)).count();
-                            1000 * !view.contains_rect(both) as usize
-                                + 100 * (crossed + !on(foot) as usize)
-                                + 10 * (off + !on(c) as usize)
+                            let crossed = placed.iter().filter(|p| p.intersects(rib)).count();
+                            let covers = towns.iter().filter(|t| t.shrink(2.0).intersects(rib)).count();
+                            let wet = rivers.iter().any(|p| rib.contains(*p)) as usize;
+                            1000 * !view.contains_rect(rib) as usize
+                                + 100 * crossed
+                                + 10 * (off + !on(*c) as usize)
                                 + covers
+                                + 10 * wet
                         };
                         // The nearest to the middle of those that cost least; the first that costs
                         // nothing saves looking further.
-                        tries.sort_by(|a, b| a.0.distance(bases[0]).total_cmp(&b.0.distance(bases[0])));
-                        let mut pick: Option<(usize, (Pos2, bool))> = None;
+                        tries.sort_by(|a, b| a.distance(bases[0]).total_cmp(&b.distance(bases[0])));
+                        let mut pick: Option<(usize, Pos2)> = None;
                         for t in &tries {
                             let paid = cost(t);
                             if pick.is_none_or(|(least, _)| paid < least) {
@@ -775,23 +830,25 @@ impl MapView {
                                 break;
                             }
                         }
-                        let Some((paid, (c, flip))) = pick else {
+                        let Some((paid, c)) = pick else {
                             continue;
                         };
                         if best.as_ref().is_none_or(|b| paid < b.0) {
-                            best = Some((paid, smaller, c, flip));
+                            best = Some((paid, smaller, c));
                         }
                         if paid < 100 {
                             break;
                         }
                     }
-                    best.map(|(_, smaller, c, flip)| (smaller, c, flip))
+                    // A small map names a state only over its land, covering none other.
+                    let fits = |b: &(usize, f32, Pos2)| b.0 < 30 || !self.small();
+                    best.filter(fits).map(|(_, smaller, c)| (smaller, c))
                 }
             };
-            let Some((smaller, centre, flip)) = found else {
+            let Some((smaller, centre)) = found else {
                 continue;
             };
-            spots.insert(s.cloned(), (smaller, centre, flip));
+            spots.insert(s.cloned(), (smaller, centre));
             let g = painter.layout_no_wrap(name, map_font(px * smaller), FG);
             let r = lay(&RIBBON, g.size());
             let place = |p: Pos2| centre + rotate(p - r.plate.center(), angle);
@@ -801,11 +858,10 @@ impl MapView {
             }
             painter.add(mesh);
             painter.add(TextShape::new(place(r.text.min), g, FG).with_angle(angle));
-            let (rib, coat_at, foot) = ribbon_at(&r, art, centre, angle, flip);
-            coat(Some(painter), art, foot, r.plate.height() * 1.3, angle, color);
-            placed.extend([rib, coat_at]);
-            self.hits.borrow_mut().push((rib.union(coat_at), click.clone()));
-            self.labels.borrow_mut().push((click, rib, coat_at, foot));
+            let rib = ribbon_at(&r, centre, angle);
+            placed.push(rib);
+            self.hits.borrow_mut().push((rib, click.clone()));
+            self.labels.borrow_mut().push((click, rib));
         }
         *self.spots.borrow_mut() = Some((key, spots));
     }
@@ -914,6 +970,14 @@ fn state_of(h: &Holder) -> Option<&NeighbourId> {
     }
 }
 
+/// The name of state `s` on the map: «Королевство» for ours.
+pub(crate) fn state_name(w: &World, s: Option<&NeighbourId>) -> String {
+    match s.and_then(|n| w.neighbours.get(n)) {
+        Some(n) => n.name.clone(),
+        None => "Королевство".into(),
+    }
+}
+
 /// The ink between the two sides of an edge (`None` the sea).
 fn ink_of(a: Option<&Holder>, b: Option<&Holder>) -> Ink {
     match (a, b) {
@@ -979,43 +1043,9 @@ fn sprite_shape(s: Sprite, foot: Pos2, h: f32, tint: Color32) -> Shape {
     Shape::image(s.id, rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), tint)
 }
 
-/// A ribbon laid as `r` about `centre` and turned by `angle`, its coat at its left end (at
-/// its right when `flip`): the bounds of the ribbon and of the coat, and the coat's foot.
-fn ribbon_at(r: &Laid, art: &Art, centre: Pos2, angle: f32, flip: bool) -> (Rect, Rect, Pos2) {
-    let place = |p: Pos2| centre + rotate(p - r.plate.center(), angle);
-    let h = r.plate.height() * 1.3;
-    let foot = match flip {
-        false => place(r.plate.left_bottom() - vec2(h * 0.42, 0.0)),
-        true => place(r.plate.right_bottom() + vec2(h * 0.42, 0.0)),
-    };
-    let ribbon = Rect::from_points(&corners(r.plate).map(place));
-    (ribbon, Rect::from_points(&coat(None, art, foot, h, angle, Color32::WHITE)), foot)
-}
-
-/// A state's coat standing on `foot`, `h` tall and turned by `angle`: the shield, its field in
-/// the state's colour over it (the outline stays on top: the field stops at the ink), the
-/// crown above. Returns its corners; without a painter only them.
-fn coat(painter: Option<&Painter>, art: &Art, foot: Pos2, h: f32, angle: f32, color: Color32) -> Vec<Pos2> {
-    let mut out = vec![];
-    let mut put = |s: Sprite, bottom: f32, h: f32, tint: Color32| {
-        let size = vec2(s.size.x / s.size.y * h, h);
-        let local = Rect::from_min_size(pos2(-size.x / 2.0, -bottom - h), size);
-        let pts = corners(local).map(|p| foot + rotate(p.to_vec2(), angle));
-        if let Some(painter) = painter {
-            let mut m = Mesh::with_texture(s.id);
-            quad(&mut m, pts, corners(Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0))), tint);
-            painter.add(m);
-        }
-        out.extend(pts);
-    };
-    if let Some(s) = art.sprite(&art.style.shield, "") {
-        put(s, 0.0, h, Color32::WHITE);
-        put(art.shield_field, 0.0, h, lerp(Color32::WHITE, color, 0.85));
-    }
-    if let Some(c) = art.sprite(&art.style.crown, "") {
-        put(c, h * 0.93, h * 0.42, Color32::WHITE);
-    }
-    out
+/// The bounds on screen of a ribbon laid as `r` about `centre` and turned by `angle`.
+fn ribbon_at(r: &Laid, centre: Pos2, angle: f32) -> Rect {
+    Rect::from_points(&corners(r.plate).map(|p| centre + rotate(p - r.plate.center(), angle)))
 }
 
 /// `g` with its top left at `at`, over a halo of paper.
@@ -1183,6 +1213,33 @@ pub fn band(
         }
     }
     m
+}
+
+/// A Catmull-Rom curve from `p[1]` to `p[2]`, `p[0]` and `p[3]` their neighbours: a point
+/// every `STEP` or so, both ends exact (stage 29d: the coast and the rivers).
+fn spline(p: [Pos2; 4]) -> Vec<Pos2> {
+    let n = ((p[2] - p[1]).length() / STEP).ceil().max(1.0) as usize;
+    let [a, b, c, d] = p.map(|q| q.to_vec2());
+    let mut out: Vec<Pos2> = (0..=n)
+        .map(|k| {
+            let t = k as f32 / n as f32;
+            let (t2, t3) = (t * t, t * t * t);
+            let q = b * 2.0 + (c - a) * t + (a * 2.0 - b * 5.0 + c * 4.0 - d) * t2 + (b * 3.0 - a - c * 3.0 + d) * t3;
+            (q / 2.0).to_pos2()
+        })
+        .collect();
+    (out[0], out[n]) = (p[1], p[2]);
+    out
+}
+
+/// An open polyline as a spline through its points.
+fn smooth(p: &[Pos2]) -> Vec<Pos2> {
+    let mut out: Vec<Pos2> = vec![];
+    for i in 0..p.len().saturating_sub(1) {
+        let s = spline([p[i.saturating_sub(1)], p[i], p[i + 1], p[(i + 2).min(p.len() - 1)]]);
+        out.extend(&s[(i > 0) as usize..]);
+    }
+    out
 }
 
 /// A point moved a little by its own coordinates: alike wherever it is drawn from.
@@ -1492,4 +1549,74 @@ mod tests {
         assert_eq!(ink_of(Some(&crown), Some(&crown)), Ink::Dotted);
         assert_eq!(ink_of(Some(&nord), Some(&nord)), Ink::Dotted);
     }
+
+    fn default_map() -> Map {
+        ron::from_str(include_str!("../../../data/maps/default.ron")).expect("the map file")
+    }
+
+    /// The turn from `a`→`b` to `b`→`c` in degrees, positive to the right on screen.
+    fn turn(a: Pos2, b: Pos2, c: Pos2) -> f32 {
+        let t = ((c - b).angle() - (b - a).angle()).to_degrees();
+        (t + 540.0).rem_euclid(360.0) - 180.0
+    }
+
+    fn to_line(p: Pos2, a: Pos2, b: Pos2) -> f32 {
+        let t = ((p - a).dot(b - a) / (b - a).length_sq()).clamp(0.0, 1.0);
+        p.distance(a + (b - a) * t)
+    }
+
+    /// Acceptance (stage 29d): the coast of the default map is a smooth curve, its own loop:
+    /// from one point of it to the next it turns by no more than `SHARPEST` (the outlines it
+    /// goes through turn by 90° and more at their corners, the wobble by up to 40°).
+    #[test]
+    fn the_coast_is_smooth() {
+        const SHARPEST: f32 = 25.0;
+        let view = MapView::new(&default_map(), None);
+        let coast = view.loops(|_| true);
+        assert_eq!(coast.len(), 1);
+        let l = &coast[0];
+        let n = l.len();
+        for i in 0..n {
+            let t = turn(l[(i + n - 1) % n], l[i], l[(i + 1) % n]);
+            assert!(t.abs() <= SHARPEST, "{t}° at {:?}", l[i]);
+        }
+        // The borders inland meet it with no gap: each ends on it or inside it, not at sea.
+        for e in view.edges.iter().filter(|e| e.sides.iter().all(Option::is_some)) {
+            for p in [e.pts[0], e.pts[e.pts.len() - 1]] {
+                assert!(l.contains(&p) || contains(l, p), "{p:?} at sea");
+            }
+        }
+    }
+
+    /// Acceptance (stage 29d): every river of the default map winds, with `BENDS` bends at
+    /// least (a bend: a turn of `BEND`° or more at a point of the file, the other way from the
+    /// bend before it); as drawn it runs on land, and its mouth lies on the coast or just past
+    /// it, no further than `MOUTH` map units (under the coast band, not out at sea).
+    #[test]
+    fn the_rivers_wind_and_end_on_the_coast() {
+        const BENDS: usize = 4;
+        const BEND: f32 = 15.0;
+        const MOUTH: f32 = 4.0;
+        let map = default_map();
+        let view = MapView::new(&map, None);
+        let coast = view.loops(|_| true);
+        let off = |p: Pos2| {
+            let l = &coast[0];
+            (0..l.len()).map(|i| to_line(p, l[i], l[(i + 1) % l.len()])).fold(f32::MAX, f32::min)
+        };
+        assert!(!map.rivers.is_empty());
+        for (raw, drawn) in map.rivers.iter().zip(&view.rivers) {
+            let pts: Vec<Pos2> = raw.iter().map(|&(x, y)| pos2(x as f32, y as f32)).collect();
+            let turns = pts.windows(3).map(|w| turn(w[0], w[1], w[2])).filter(|t| t.abs() >= BEND);
+            let turns: Vec<f32> = turns.collect();
+            let bends = turns.len().min(1) + turns.windows(2).filter(|t| t[0] * t[1] < 0.0).count();
+            assert!(bends >= BENDS, "{bends} bends of {raw:?}");
+            let (mouth, course) = drawn.split_last().expect("a river");
+            for p in course {
+                assert!(contains(&coast[0], *p) || off(*p) <= MOUTH, "{p:?} of {raw:?} at sea");
+            }
+            assert!(off(*mouth) <= MOUTH, "the mouth {mouth:?} {} off the coast", off(*mouth));
+        }
+    }
 }
+

@@ -18,6 +18,8 @@ eframe = { version = "0.36", default-features = false, features = ["accesskit", 
 wasm-bindgen-futures = "0.4"
 # Stage 11b: fetch for the game statistics; already in the lock through eframe.
 web-sys = { version = "0.3", features = ["RequestInit", "Window"] }
+# Stage 29d: the start screen's random seed (Math.random); already in the lock through eframe.
+js-sys = "0.3"
 
 [dev-dependencies]
 # Stage 11b: the tests read the statistics body; already in the lock through cli.

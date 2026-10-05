@@ -186,6 +186,19 @@ struct App {
     sent: Vec<String>,
 }
 
+/// The seed the start screen offers (stage 29d): drawn anew at every opening, by the browser
+/// on the web and by the clock natively. Only the field's default: a game is its seed's.
+#[cfg(target_arch = "wasm32")]
+fn random_seed() -> u64 {
+    (js_sys::Math::random() * 1_000_000.0) as u64
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn random_seed() -> u64 {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+    (now.unwrap_or_default().as_nanos() % 1_000_000) as u64
+}
+
 fn load_data() -> Data {
     let mut d = bd_core::data::load(RULES).expect("rules.ron");
     EVENTS
@@ -242,7 +255,7 @@ impl App {
             data,
             presets,
             preset: 0,
-            seed: "1".into(),
+            seed: random_seed().to_string(),
             played: 1,
             dynasty: None,
             entry: 0,
@@ -783,7 +796,7 @@ impl App {
             }
             let h = ui.available_height() * 0.64;
             let scroll = egui::ScrollArea::vertical().id_salt("card").auto_shrink([false, false]);
-            scroll.max_height(h).show(ui, |ui| cmd = cmd.take().or(cards::card(ui, g, &self.card)));
+            scroll.max_height(h).show(ui, |ui| cmd = cmd.take().or(cards::card(ui, g, &self.card, &self.map.capitals(&g.world))));
             ui.separator();
             let scroll = egui::ScrollArea::vertical().id_salt("journal").auto_shrink([false, false]);
             scroll.show(ui, |ui| journal(ui, &self.journal));
@@ -1260,9 +1273,9 @@ fn intro(ctx: &egui::Context, p: &Preset) -> Option<Cmd> {
 const HOW_TO_PLAY: [&str; 4] = [
     "Цель: оставить потомкам крепкое государство. Вы правите только первым государем, \
      счёт считается по тому, сколько проживёт династия и чего она достигнет.",
-    "Ход: щёлкните по своей земле, соседу на карте, гербу или человеку при дворе: справа \
-     откроется карточка с указами. Затем нажмите «Подождать год». За год случаются события: \
-     выберите вариант в окне. Что произошло, видно в итогах года справа.",
+    "Ход: щёлкните по своей земле, соседу на карте, ленте с его именем или человеку при \
+     дворе: справа откроется карточка с указами. Затем нажмите «Подождать год». За год \
+     случаются события: выберите вариант в окне. Что произошло, видно в итогах года справа.",
     "Наведите мышь на указ, соседа, закон или провинцию, чтобы узнать подробности.",
     "Правление кончается смертью государя или отречением. Дальше симуляция разыграет \
      судьбу династии, а хроника покажет, к чему привели ваши решения.",
@@ -2412,7 +2425,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use egui::{Event, PointerButton, Pos2, RawInput, Rect, vec2};
+    use egui::{Event, PointerButton, Pos2, RawInput, Rect, pos2, vec2};
 
     /// The app in a headless egui context: frames go through the same `show` as on screen.
     struct Harness {
@@ -4829,7 +4842,7 @@ mod tests {
 
     /// Acceptance (stage 29): every building of rules.ron names a sprite the map has, and so
     /// does every rule of data/sprites.ron: the settlements, the capital and its buildings,
-    /// those going up, the terrains, the marks, the heraldry, the ships. Every province of the
+    /// those going up, the terrains, the marks, the banner, the ships. Every province of the
     /// map file has a terrain the style knows.
     #[test]
     fn every_building_and_mark_has_its_sprite() {
@@ -4842,7 +4855,7 @@ mod tests {
         names.extend(st.in_capital.values().chain(st.underway.values()).map(String::as_str));
         names.extend(st.terrain.values().flatten().map(String::as_str));
         names.extend(st.ships.iter().map(String::as_str));
-        names.extend([&st.capital, &st.crown, &st.scaffold, &st.shield, &st.banner].map(String::as_str));
+        names.extend([&st.capital, &st.crown, &st.scaffold, &st.banner].map(String::as_str));
         for n in names {
             assert!(art.has(n), "no sprite «{n}»");
         }
@@ -4941,45 +4954,192 @@ mod tests {
         h
     }
 
-    /// Acceptance (stage 29c): on the map of the start and of 1200 every state with land has
-    /// its ribbon, its coat stands on a province of that state, no further from the ribbon
-    /// than the coat is tall.
+    /// The ribbons painted last: whose and where.
+    fn ribbons(h: &Harness) -> Vec<(map::Click, Rect)> {
+        let labels = h.app.map.labels.borrow();
+        labels.iter().filter(|(c, _)| !matches!(c, map::Click::Province(_))).cloned().collect()
+    }
+
+    /// Acceptance (stage 29d): on the map of the start and of 1200 every state with land has
+    /// its ribbon and no coat: what answers a click is the ribbon itself, and a click on it
+    /// opens the state's card.
     #[test]
-    fn the_coats_stand_on_their_land_by_their_ribbons() {
+    fn the_states_have_ribbons_not_coats() {
         for year in [1187, 1200] {
-            let h = map_in(year);
-            let w = &h.game().world;
-            let labels = h.app.map.labels.borrow();
+            let mut h = map_in(year);
+            // The map takes clicks with no event over it.
+            while let Screen::Event(_) = h.app.screen {
+                h.app.apply(Cmd::Choose(0));
+            }
+            settle(&mut h);
+            let w = h.game().world.clone();
             let landed = |n: &&NeighbourId| (w.provinces.values()).any(|p| p.holder == Holder::Foreign((*n).clone()));
-            assert_eq!(labels.len(), 1 + w.neighbours.keys().filter(landed).count(), "{year}");
-            for (click, ribbon, coat, foot) in labels.iter() {
-                let id = (h.app.map.province_at(*foot)).unwrap_or_else(|| panic!("{year} {click:?}: in the sea"));
-                let state = match &w.provinces[id].holder {
-                    Holder::Foreign(n) => map::Click::State(n.clone()),
-                    _ => map::Click::Kingdom,
+            let ribbons = ribbons(&h);
+            assert_eq!(ribbons.len(), 1 + w.neighbours.keys().filter(landed).count(), "{year}");
+            assert!(!h.app.art.has("shield"), "no shield among the sprites");
+            for (click, ribbon) in &ribbons {
+                let hits = h.app.map.hits.borrow().clone();
+                assert!(hits.contains(&(*ribbon, click.clone())), "{year} {click:?}: {hits:?}");
+                h.click(ribbon.center());
+                let card = match click {
+                    map::Click::State(n) => Card::Neighbour(n.clone()),
+                    _ => Card::Kingdom,
                 };
-                assert_eq!(&state, click, "{year}: the coat on {id:?}");
-                assert!(ribbon.distance_to_pos(*foot) <= coat.height(), "{year} {click:?}");
+                assert_eq!(h.app.card, card, "{year}");
             }
         }
     }
 
-    /// Acceptance (stage 29c): on the map of the start and of 1200 no ribbon or coat covers
-    /// another (its own ribbon too) or the cartouche.
+    /// Acceptance (stage 29c): on the map of the start and of 1200 no ribbon covers another
+    /// or the cartouche.
     #[test]
-    fn ribbons_and_coats_cover_none_other() {
+    fn ribbons_cover_none_other() {
         for year in [1187, 1200] {
             let h = map_in(year);
-            let labels = h.app.map.labels.borrow();
-            let mut rects: Vec<(String, Rect)> = vec![];
-            for (click, ribbon, coat, _) in labels.iter() {
-                rects.extend([(format!("{click:?} ribbon"), *ribbon), (format!("{click:?} coat"), *coat)]);
-            }
+            let rects = ribbons(&h);
             let cartouche = h.app.map.hits.borrow().last().map(|h| h.0).unwrap();
             for (i, (a, r)) in rects.iter().enumerate() {
-                assert!(!r.intersects(cartouche), "{year}: {a} {r:?} on the cartouche");
+                assert!(!r.intersects(cartouche), "{year}: {a:?} {r:?} on the cartouche");
                 for (b, o) in &rects[i + 1..] {
-                    assert!(!r.intersects(*o), "{year}: {a} {r:?} on {b} {o:?}");
+                    assert!(!r.intersects(*o), "{year}: {a:?} {r:?} on {b:?} {o:?}");
+                }
+            }
+        }
+    }
+
+    /// Acceptance (stage 29d): on the map of the start and of 1200 no river runs under a
+    /// name or a ribbon (the band's half-width round them).
+    #[test]
+    fn the_rivers_cross_no_label() {
+        for year in [1187, 1200] {
+            let h = map_in(year);
+            let map = &h.app.map;
+            let labels = map.labels.borrow();
+            assert!(labels.iter().any(|(c, _)| matches!(c, map::Click::Province(_))));
+            let half = 2.5 * map.to_screen(pos2(1.0, 0.0)).distance(map.to_screen(pos2(0.0, 0.0)));
+            for r in &map.rivers {
+                let pts: Vec<Pos2> = r.iter().map(|p| map.to_screen(*p)).collect();
+                for w in pts.windows(2) {
+                    let steps = w[0].distance(w[1]).ceil() as usize;
+                    for k in 0..=steps {
+                        let p = w[0].lerp(w[1], k as f32 / steps.max(1) as f32);
+                        let hit = labels.iter().find(|(_, l)| l.expand(half).contains(p));
+                        assert!(hit.is_none(), "{year}: a river at {p:?} under {hit:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// Acceptance (stage 29d): every state's capital is marked: one province of its land
+    /// stands as a capital (its sprite) with a larger name than the rest, the map's tip over
+    /// it and the neighbour's card name it.
+    #[test]
+    fn every_state_shows_its_capital() {
+        let mut h = map_in(1187);
+        let w = h.game().world.clone();
+        let capitals = h.app.map.capitals(&w);
+        let mut states: Vec<Option<&NeighbourId>> = vec![None];
+        states.extend(w.neighbours.keys().map(Some));
+        let labels = h.app.map.labels.borrow().clone();
+        let tall = |id: &ProvinceId| {
+            let l = labels.iter().find(|(c, _)| *c == map::Click::Province(id.clone()));
+            l.unwrap_or_else(|| panic!("{id:?} unnamed")).1.height()
+        };
+        let plain = tall(&ProvinceId("berg".into()));
+        for s in states {
+            let state = |p: &&bd_core::state::Province| match &p.holder {
+                Holder::Foreign(n) => Some(n) == s,
+                _ => s.is_none(),
+            };
+            let theirs: Vec<_> = w.provinces.values().filter(state).filter(|p| capitals.contains(&p.id)).collect();
+            assert_eq!(theirs.len(), 1, "{s:?}: {theirs:?}");
+            assert!(tall(&theirs[0].id) > plain * 1.2, "{s:?}");
+        }
+        // Their sprite: a capital at every one.
+        let out = h.frame(vec![]);
+        let sprite = |id: &ProvinceId| h.app.art.sprite(&h.app.art.style.capital, &id.0).unwrap().id;
+        let drawn: Vec<egui::TextureId> = (out.shapes.iter())
+            .filter_map(|c| match &c.shape {
+                egui::Shape::Mesh(m) => Some(m.texture_id),
+                _ => None,
+            })
+            .collect();
+        for id in &capitals {
+            assert!(drawn.contains(&sprite(id)), "{id:?}");
+        }
+        // The tip over the empire's capital and the empire's card.
+        let kadar = ProvinceId("kadar_city".into());
+        assert!(capitals.contains(&kadar));
+        let at = h.province_on_screen("kadar_city");
+        h.ctx.global_style_mut(|s| s.interaction.tooltip_delay = 0.0);
+        h.frame(vec![Event::PointerMoved(Pos2::new(1.0, 1.0))]);
+        h.frame(vec![Event::PointerMoved(at)]);
+        settle(&mut h);
+        let tip = texts_of(&mut h);
+        assert!(tip.contains(&"Столица: Кадарская империя".to_string()), "{tip:?}");
+        h.click(at);
+        assert_eq!(h.app.card, Card::Neighbour(NeighbourId("kadar".into())));
+        let shown = settled(&mut h);
+        assert!(shown.contains(&"Столица: Кадар".to_string()), "{shown:?}");
+    }
+
+    /// Acceptance (stage 29d): the start screen offers a seed of its own each time it opens,
+    /// not a constant; a game from a seed typed in is that seed's game, as a link plays it.
+    #[test]
+    fn the_start_screen_offers_a_random_seed() {
+        let (mut a, mut b) = (Harness::new(), Harness::new());
+        assert!(matches!(a.app.screen, Screen::Start));
+        let seed: u64 = a.app.seed.parse().expect("a number");
+        assert_ne!(a.app.seed, b.app.seed, "drawn anew");
+        b.app.seed = a.app.seed.clone();
+        for h in [&mut a, &mut b] {
+            h.click_label("Новая партия");
+            assert_eq!(h.app.played, seed);
+            h.app.apply(Cmd::Begin);
+            for _ in 0..5 {
+                match h.app.screen {
+                    Screen::Event(_) => h.app.apply(Cmd::Choose(0)),
+                    _ => h.app.apply(Cmd::Wait),
+                }
+            }
+        }
+        assert_eq!(a.game(), b.game());
+        let mut c = Harness::new();
+        c.app.open(&a.app.link());
+        assert_eq!(c.game().world, a.game().world);
+    }
+
+    /// Acceptance (stage 29d): on the chronicle's little map the labels shrink with it, cover
+    /// none other and stay within it, each over its state's land; the provinces go unnamed.
+    #[test]
+    fn the_chronicle_map_labels_fit() {
+        let mut h = Harness::new();
+        play(&mut h, 7);
+        let last = h.app.dynasty.as_ref().unwrap().0.entries.len() - 1;
+        for entry in [0, last] {
+            h.app.apply(Cmd::Entry(entry));
+            settle(&mut h);
+            let view = h.app.map.rect.get();
+            assert!(view.width() < 400.0, "{view:?}");
+            let labels = h.app.map.labels.borrow().clone();
+            assert!(labels.len() >= 3, "{labels:?}");
+            let w = h.app.dynasty.as_ref().unwrap().0.entries[entry].snapshot.clone();
+            for (i, (a, r)) in labels.iter().enumerate() {
+                assert!(!matches!(a, map::Click::Province(_)), "{a:?} named");
+                // Over its own land.
+                let under = h.app.map.province_at(r.center()).map(|id| &w.provinces[id].holder);
+                let state = match under {
+                    Some(Holder::Foreign(n)) => Some(map::Click::State(n.clone())),
+                    Some(_) => Some(map::Click::Kingdom),
+                    None => None,
+                };
+                assert_eq!(state.as_ref(), Some(a), "{a:?} {r:?}");
+                assert!(view.contains_rect(*r), "{a:?} {r:?} out of {view:?}");
+                // Across: 37 on the whole map.
+                assert!(r.height().min(r.width()) < 22.0, "{a:?} {r:?}");
+                for (b, o) in &labels[i + 1..] {
+                    assert!(!r.intersects(*o), "{a:?} {r:?} on {b:?} {o:?}");
                 }
             }
         }
@@ -5000,14 +5160,14 @@ mod tests {
     }
 
     /// Acceptance (stage 29c): the map has no legend: a state answers a click on its ribbon
-    /// and coat only, the kingdom on them and the cartouche (the legend's coats answered too).
+    /// only, the kingdom on it and the cartouche.
     #[test]
     fn the_map_has_no_legend() {
         let h = map_in(1187);
         let hits = h.app.map.hits.borrow();
-        let labels = h.app.map.labels.borrow();
+        let labels = ribbons(&h);
         assert!(labels.len() > 3, "{labels:?}");
-        for (click, ..) in labels.iter() {
+        for (click, _) in labels.iter() {
             let want = 1 + (*click == map::Click::Kingdom) as usize;
             assert_eq!(hits.iter().filter(|(_, c)| c == click).count(), want, "{click:?}");
         }

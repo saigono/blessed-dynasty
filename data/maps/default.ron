@@ -140,7 +140,8 @@
         "zeitun": [(20, 350), (80, 370), (110, 400), (160, 390), (180, 440), (120, 465), (30, 440)],
     },
     // Stage 29: the lie of the land on the old map (data/sprites.ron `terrain`), and the rivers,
-    // polylines that end in the sea.
+    // polylines from the source to the mouth on the coast (stage 29d: winding, drawn as a
+    // spline through their points, clear of the settlements and their names).
     terrain: {
         "capital": "fields", "berg": "hills", "holm": "forest", "arden": "hills",
         "ostwick": "fields", "lugovo": "fields", "weir": "marsh", "gart": "forest",
@@ -155,8 +156,8 @@
         "amida": "fields", "samosa": "hills", "zeitun": "fields",
     },
     rivers: [
-        [(262, 45), (245, 95), (230, 140), (250, 180), (240, 215), (240, 250), (230, 300), (240, 340), (240, 420), (215, 452)],
-        [(80, 95), (55, 120), (30, 150), (2, 160)],
-        [(600, 150), (565, 215), (548, 300), (572, 360), (600, 432)],
+        [(280, 108), (266, 116), (250, 124), (230, 140), (246, 154), (240, 168), (250, 180), (236, 196), (234, 214), (242, 232), (240, 250), (246, 268), (234, 284), (230, 300), (224, 318), (234, 332), (232, 350), (238, 366), (228, 382), (234, 400), (224, 414), (221, 425)],
+        [(90, 118), (82, 134), (70, 146), (56, 146), (42, 156), (30, 152), (16, 160)],
+        [(612, 168), (620, 190), (612, 214), (622, 240), (618, 262), (606, 284), (616, 312), (624, 336), (612, 360), (616, 384), (606, 406)],
     ],
 )

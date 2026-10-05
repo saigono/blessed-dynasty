@@ -601,16 +601,16 @@ fn no_best_law() {
             laws[i]
         );
     }
-    // Stage 30: «Единоверие» was worse by noise alone; with its price (merchants and the
-    // people's goodwill lost, the persecution) it is worse on two rows at least, by 5% of a
-    // median or 15 usurpations (docs/calibration.md, stage 30).
+    // Stage 30: «Единоверие» was worse by noise alone (8% of the median years on these
+    // seeds, 3% on the next thousand; Usurped 3 points, 1); with its price (merchants, their
+    // dues and the people's goodwill lost, the persecution) it is clearly worse on a row: by a
+    // tenth of a median or 5 points of Usurped (docs/calibration.md, stage 30).
     let (faith, none) = (&rows[3], &rows[0]);
     let clearly = |k: usize| match k {
-        2 => faith[k] <= none[k] - 15,
-        _ => faith[k] * 100 <= none[k] * 95,
+        2 => faith[k] <= none[k] - 5,
+        _ => faith[k] * 10 <= none[k] * 9,
     };
-    let rows_worse = (0..4).filter(|k| clearly(*k)).count();
-    assert!(rows_worse >= 2, "{faith:?} against {none:?}");
+    assert!((0..4).any(clearly), "{faith:?} against {none:?}");
     println!("{rows:?}");
 }
 

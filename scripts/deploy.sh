@@ -9,9 +9,19 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 # Trunk.toml: target crates/ui/index.html, dist crates/ui/dist. A relative public URL lets
 # the page live under any path, e.g. https://user.github.io/repo/.
+# Stage 11b (docs/stats.md): the build's version, the short commit hash unless given, shown
+# on the start screen and sent with the statistics. BD_STATS_URL, the receiver of the games,
+# goes into the build as it is; BD_GOATCOUNTER (https://CODE.goatcounter.com/count) puts
+# GoatCounter's script into the page. Unset, nothing is sent and nothing counted.
+export BD_VERSION=${BD_VERSION:-$(git rev-parse --short HEAD)}
 trunk build --release --public-url ./
 dist=crates/ui/dist
 touch "$dist/.nojekyll"
+if [ -n "${BD_GOATCOUNTER:-}" ]; then
+    gc="<script data-goatcounter=\"$BD_GOATCOUNTER\" async src=\"//gc.zgo.at/count.js\"></script>"
+    sed -i "s|</head>|$gc\n</head>|" "$dist/index.html"
+fi
+echo "версия $BD_VERSION, статистика: ${BD_STATS_URL:-нет}, GoatCounter: ${BD_GOATCOUNTER:-нет}"
 
 if [ $# -gt 0 ]; then
     mkdir -p "$1"

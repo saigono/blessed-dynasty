@@ -2932,7 +2932,9 @@ dependencies = [
  "png",
  "ron",
  "serde",
+ "serde_json",
  "wasm-bindgen-futures",
+ "web-sys",
  "zune-jpeg",
 ]
 

@@ -5,6 +5,7 @@
 use super::*;
 use crate::map::{CROWN, Click, cartouche_text, holder_color, map_font};
 use bd_core::rules::HolderKind;
+use std::collections::BTreeSet;
 
 /// What the right column shows.
 #[derive(Clone, Debug, PartialEq)]
@@ -220,7 +221,8 @@ fn wedded(g: &Game, who: Option<u32>) -> Option<String> {
 }
 
 /// The card on the right, with a way back to the kingdom's.
-pub fn card(ui: &mut Ui, g: &Game, card: &Card) -> Option<Cmd> {
+/// `capitals`: the states' capitals as the map marks them.
+pub fn card(ui: &mut Ui, g: &Game, card: &Card, capitals: &BTreeSet<ProvinceId>) -> Option<Cmd> {
     let open = g.available_actions();
     let mut cmd = None;
     if *card != Card::Kingdom && ui.small_button("◂ Королевство").clicked() {
@@ -229,7 +231,7 @@ pub fn card(ui: &mut Ui, g: &Game, card: &Card) -> Option<Cmd> {
     let asked = match card {
         Card::Kingdom => kingdom(ui, g, &open),
         Card::Province(id) => province(ui, g, &open, id),
-        Card::Neighbour(id) => neighbour(ui, g, &open, id),
+        Card::Neighbour(id) => neighbour(ui, g, &open, id, capitals),
         Card::Person(who) => person(ui, g, &open, *who),
     };
     asked.or(cmd)
@@ -390,7 +392,7 @@ fn province(ui: &mut Ui, g: &Game, open: &Open, id: &ProvinceId) -> Option<Cmd> 
 
 /// A neighbour: what the crown knows of it, the war (its lands to take and the strengths,
 /// or the war going on), the suit and the rest of diplomacy.
-fn neighbour(ui: &mut Ui, g: &Game, open: &Open, id: &NeighbourId) -> Option<Cmd> {
+fn neighbour(ui: &mut Ui, g: &Game, open: &Open, id: &NeighbourId, capitals: &BTreeSet<ProvinceId>) -> Option<Cmd> {
     let (w, d) = (&g.world, &g.data);
     let n = w.neighbours.get(id)?;
     let colour = holder_color(w, &Holder::Foreign(id.clone()));
@@ -404,6 +406,9 @@ fn neighbour(ui: &mut Ui, g: &Game, open: &Open, id: &NeighbourId) -> Option<Cmd
         .filter(|p| p.holder == Holder::Foreign(id.clone()))
         .collect();
     ui.label(format!("Земель {}", lands.len()));
+    if let Some(c) = lands.iter().find(|p| capitals.contains(&p.id)) {
+        ui.label(format!("Столица: {}", c.name));
+    }
     let mut cmd = None;
     heading(ui, "Война");
     let (ours, theirs) = bd_core::war::strengths(w, d, id);

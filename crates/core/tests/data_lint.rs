@@ -168,8 +168,9 @@ fn every_reign_choice_is_hinted() {
 #[test]
 fn sim_events_follow_the_brief() {
     let data = load_all();
-    // Stage 24: royal_will, forged_will. Stage 28: province_breakaway.
-    assert_eq!(data.sim_events.len(), 18);
+    // Stage 24: royal_will, forged_will. Stage 28: province_breakaway. Stage 30:
+    // faith_persecution.
+    assert_eq!(data.sim_events.len(), 19);
     for e in &data.sim_events {
         assert!((2..=3).contains(&e.choices.len()), "{}", e.id);
         assert!(e.importance >= data.sim.threshold, "{}", e.id);
@@ -249,7 +250,8 @@ fn every_reign_event_fires_under_neutral_play() {
 /// The same for the simulation: 1000 dynasties, each after a neutral reign of its seed; every
 /// simulation event and every omen reaches the chronicle at least once. Stage 20: every
 /// fourth dynasty has «Городские вольности» in force from the start (as `cli batch --law`):
-/// without a founder's law faith never falls to the schism. Stage 26c: 2000 dynasties, not
+/// without a founder's law faith never falls to the schism; stage 30: every fourth after it
+/// has «Единоверие», for its persecution. Stage 26c: 2000 dynasties, not
 /// 1000: «Подложное завещание» comes about once in 700, and the compound events moved the
 /// thousand it fell twice in to one it never does.
 #[test]
@@ -262,6 +264,10 @@ fn every_sim_event_fires_in_a_thousand_dynasties() {
         if seed % 4 == 0 {
             g.world.flags.insert("law_charters".into());
             g.world.laws.insert("law_charters".into(), g.world.tick);
+        }
+        // Stage 30: the persecution comes only under the law of one faith.
+        if seed % 4 == 1 {
+            bd_core::batch::set_law(&mut g, "law_one_faith").unwrap();
         }
         let end = loop {
             match g.wait().unwrap() {

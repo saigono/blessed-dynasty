@@ -3,6 +3,7 @@
 // (invasion, nomad_raid), succession crisis (succession_crisis, regency_council), disaster
 // (disaster, great_famine), decline (unrest -> decline), rise (prosperity -> golden_age);
 // plus monastery_vows and monastery_late: a king takes the vows and the reign ends.
+// Stage 30: faith_persecution, the price of the law of one faith.
 // The long ones start an outcome with SpawnEvent; it fires only if its `when` still holds.
 // `weight_bonus` raises the weight while its predicate holds: risks grow with a bad state.
 // Thresholds follow what the simulation reaches (stage 9 probe over 200 dynasties):
@@ -709,6 +710,64 @@
                 retold: [
                     "Храмы поделили по жребию: одним достался собор, другим часовни, и в одном городе стали звонить к двум разным обедням.",
                     "Корона признала раскол, и в королевстве стало две церкви, две правды и одна казна, которую тянули обе.",
+                ],
+            ),
+        ],
+    ),
+    // ------------------------------------------------------------ persecution
+    (
+        // Stage 30: the price of «Единоверие» (law_one_faith). While the law holds, the
+        // zealots hunt the other faiths, and the more faith weakens, the more often: the
+        // people grow bitter, merchants of other faiths leave, or the church, held back,
+        // cools and faith falls further.
+        id: "faith_persecution",
+        title: "Сыск по вере",
+        text: "Ревнители единой веры ходят по {province.дат} с монахами и стражей. В домах ищут чужие книги, у ворот допрашивают купцов, и соседи пишут доносы друг на друга.",
+        texts: [
+            "В {province.пр} взяли под стражу семью суконщика: у них нашли молитвенник не того обряда. Епископ требует суда, а цех просит за своих.",
+            "Иноверческий квартал в {province.пр} опустел за одну ночь. Кто не успел уехать, сидит в монастырском подвале и ждёт приговора.",
+            "Проповедники единой веры гонят по {province.дат} тех, кто молится по-старому. На торгу пусто: чужие купцы боятся показаться в городе.",
+        ],
+        recalled: "сыск по вере",
+        when: All([Flag("law_one_faith"), AxisBelow("faith", 85)]),
+        weight: 3,
+        weight_bonus: [(AxisBelow("faith", 70), 3), (AxisBelow("faith", 60), 5)],
+        once: false,
+        cooldown_years: 12,
+        importance: 4,
+        target: RandomProvince((holder: Crown, capital: false)),
+        choices: [
+            (
+                text: "Судить отступников церковным судом",
+                effects: [Axis("loyalty_people", -10), Axis("loyalty_church", 4), Axis("faith", 3), Axis("trade", -3)],
+                cause_tag: "persecution_burned",
+                told: "В {province.пр} искали отступников от единой веры, и церковный суд отправил их на костёр.",
+                retold: [
+                    "Костры на площади {province.род} горели три дня, и народ смотрел на них молча, а молчание это было недобрым.",
+                    "Церковный суд в {province.пр} не знал жалости: отступников жгли, их дома отдавали доносчикам, и соседи перестали здороваться друг с другом.",
+                    "Сыск по вере в {province.пр} кончился кострами. Епископ служил благодарственный молебен, а в слободах шептались, что следующими будут они.",
+                ],
+            ),
+            (
+                text: "Выслать иноверцев за рубеж",
+                effects: [Axis("trade", -8), Axis("treasury", -40), Axis("faith", 2), Axis("loyalty_church", 2)],
+                cause_tag: "persecution_exiled",
+                told: "Из {province.род} выслали иноверцев, и вместе с ними за рубеж ушли их лавки, мастерские и долги казне.",
+                retold: [
+                    "По дорогам из {province.род} тянулись повозки иноверцев, и на рынке опустели лучшие ряды.",
+                    "Иноверцев выставили за рубеж всей слободой, и через год в {province.пр} некому было ткать сукно и чеканить посуду.",
+                    "Высланные иноверцы унесли за рубеж ремёсла и серебро, а мытари {province.род} долго не могли собрать прежней подати.",
+                ],
+            ),
+            (
+                text: "Унять ревнителей и не искать по домам",
+                effects: [Axis("loyalty_church", -10), Axis("faith", -4), Axis("legitimacy", -4)],
+                cause_tag: "persecution_restrained",
+                told: "Ревнители единой веры искали отступников в {province.пр}, но двор их унял, и епископ затаил обиду.",
+                retold: [
+                    "Сыск по вере в {province.пр} остановили королевским указом, и клир громко говорил, что трон потакает отступникам.",
+                    "Ревнителей отозвали из {province.род} ни с чем, а иноверцы стали молиться по-своему почти не таясь.",
+                    "Двор запретил искать чужую веру по домам, и в {province.пр} вздохнули, а с амвонов ещё долго корили трон за мягкость.",
                 ],
             ),
         ],

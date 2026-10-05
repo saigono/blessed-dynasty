@@ -114,7 +114,9 @@ fn the_kingdoms_reach_us_only_through_the_realm_rules() {
 /// map (seed 42, `test.ron` softly, then neutral; 23 decisions) and its outcome re-pinned.
 /// Stage 28b: partition at the start and the empire on male primogeniture change the
 /// founder's reign: the link of stage 28 is refused at the 11th year. Re-made on seed 43 (on
-/// seed 42 the founder now dies without an heir and the chronicle is empty).
+/// seed 42 the founder now dies without an heir and the chronicle is empty). Stage 30: the same
+/// link plays to the same outcome (decisions, years, fall, entries, score); only the words
+/// differ, the news rewritten and the founder's hints told again in their variants.
 #[test]
 fn a_link_from_before_the_stage_plays_the_same() {
     let old = "AQdkZWZhdWx0Kh0AASMAAQABAQABAQABAQABAQABAQAAAQABAgABAQAAAQABAQABAQABAgABAQABAQABAQABAQ\
@@ -153,7 +155,7 @@ fn a_link_from_before_the_stage_plays_the_same() {
         ),
         (45, 176, "Conquered", 114, 11564)
     );
-    assert_eq!(format!("{hash:016x}"), "a4515ccec10b065b");
+    assert_eq!(format!("{hash:016x}"), "b6500d8f1d002dbd");
     assert_eq!(
         c.realms.len(),
         8,
@@ -625,8 +627,9 @@ fn a_kingdom_without_land_is_no_more_and_its_land_goes_by_rule() {
             .collect();
         assert_eq!(falls, [("purpur", &FallReason::Conquered)]);
         let told = news(&g, |n| &n.fallen);
+        // Stage 30: in a case of its own, by the variant.
         assert!(
-            told.len() == 1 && told[0].contains("Пурпуляндия"),
+            told.len() == 1 && told[0].contains("Пурпулянди"),
             "{told:?}"
         );
         one_map(&g);

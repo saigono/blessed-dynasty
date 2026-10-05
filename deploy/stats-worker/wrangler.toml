@@ -1,0 +1,15 @@
+# Stage 11b: a template; fill in database_id and GAME_ORIGIN (docs/stats.md), then
+# `wrangler deploy` from this folder.
+name = "bd-stats"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+# The game's origin, without a path: https://<user>.github.io
+GAME_ORIGIN = "https://USER.github.io"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "bd-stats"
+# Printed by `wrangler d1 create bd-stats`.
+database_id = "00000000-0000-0000-0000-000000000000"

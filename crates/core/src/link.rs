@@ -20,6 +20,13 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 /// The first byte. A link of another version is refused rather than misread.
 pub const VERSION: u8 = 1;
 
+/// Stage 11b: the build the game statistics are sent from and `cli stats` replays them on,
+/// the short commit hash `scripts/deploy.sh` sets; `dev` without it.
+pub const BUILD: &str = match option_env!("BD_VERSION") {
+    Some(v) => v,
+    None => "dev",
+};
+
 const CHOICE: u8 = 0;
 const ACTION: u8 = 1;
 const ABDICATE: u8 = 2;

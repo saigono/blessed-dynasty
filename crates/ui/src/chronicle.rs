@@ -1,5 +1,6 @@
 //! The dynasty after the founder: the chronicle with its map snapshots, then the score.
 
+use crate::art::Art;
 use crate::map::{BG, BG2, FG, FG2, GOOD, MapView, RUBRIC, round};
 use crate::{Cmd, OMEN, axis_name, heading, lands, plural, realm, tone};
 use bd_core::data::Data;
@@ -42,6 +43,7 @@ pub fn chronicle(
     g: &Game,
     c: &Chronicle,
     map: &MapView,
+    art: &Art,
     selected: usize,
 ) -> Option<Cmd> {
     let (d, w) = (&g.data, &g.world);
@@ -100,7 +102,7 @@ pub fn chronicle(
         .exact_size(320.0)
         .show(ui, |ui| {
             ui.allocate_ui(vec2(ui.available_width(), 260.0), |ui| {
-                map.show(ui, &e.snapshot, d, &[]);
+                map.show(ui, &e.snapshot, d, art, None);
             });
             // The numbers of the year on hover (stage 22).
             let more = RichText::new(crate::NUMBERS).small().color(FG2);

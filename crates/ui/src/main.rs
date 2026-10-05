@@ -1,6 +1,8 @@
 //! egui front end: start, reign, event, chronicle, score. Every rule lives in `bd_core`; this
 //! only shows and asks.
 
+mod art;
+mod cards;
 mod chronicle;
 mod map;
 
@@ -20,6 +22,8 @@ use bd_core::state::{
 use bd_core::testament::{Order, Testament};
 use bd_core::war::War;
 use eframe::egui::{self, Button, Grid, ProgressBar, RichText, Ui};
+use art::Art;
+use cards::Card;
 use map::{BG, BG2, FG, FG2, GOOD, MapView, RUBRIC, WARN, holder_name, round};
 
 // The web build has no file system, so the data ships inside the binary.
@@ -51,6 +55,9 @@ const PRESETS: [(&str, &str, &str); 1] = [(
 )];
 /// DejaVu Sans, Bitstream Vera license: assets/DejaVuSans-LICENSE.txt.
 const FONT: &[u8] = include_bytes!("../assets/DejaVuSans.ttf");
+/// Cormorant SC Bold, SIL Open Font License: assets/CormorantSC-LICENSE.txt. Cut to Latin,
+/// Cyrillic and punctuation; the map's lettering (stage 29), the family «map».
+const MAP_FONT: &[u8] = include_bytes!("../assets/CormorantSC-Bold.ttf");
 
 enum Screen {
     Start,
@@ -68,9 +75,8 @@ enum Screen {
 enum Cmd {
     Start(u64),
     Wait,
-    /// An action that needs a target: show its targets.
-    Pick(String, Vec<Target>),
-    Cancel,
+    /// Open this card in the right column (stage 29).
+    Card(Card),
     Act(String, Option<Target>),
     Choose(usize),
     Abdicate,
@@ -134,8 +140,10 @@ struct App {
     /// The chronicle entry on screen.
     entry: usize,
     map: MapView,
-    /// The action whose target is being chosen, with its targets.
-    picking: Option<(String, Vec<Target>)>,
+    /// The sprites, tiles and style of the map (stage 29).
+    art: Art,
+    /// The card in the right column (stage 29).
+    card: Card,
     /// The last refusal from the core.
     note: String,
     frame_ms: Option<f32>,
@@ -197,6 +205,11 @@ impl App {
                 .or_default()
                 .insert(0, "dejavu".into());
         }
+        let map = egui::FontData::from_static(MAP_FONT);
+        fonts.font_data.insert("cormorant".into(), std::sync::Arc::new(map));
+        // What the cut font lacks (⚔) comes from DejaVu.
+        let family = egui::FontFamily::Name("map".into());
+        fonts.families.insert(family, vec!["cormorant".into(), "dejavu".into()]);
         ctx.set_fonts(fonts);
         // The web build would follow the system theme; the palette is light only.
         ctx.set_theme(egui::Theme::Light);
@@ -215,7 +228,9 @@ impl App {
         App {
             game: None,
             screen: Screen::Start,
-            map: MapView::new(&presets[0].map.polygons),
+            map: MapView::new(&presets[0].map, presets[0].realms.as_ref()),
+            art: Art::load(ctx),
+            card: Card::Kingdom,
             score_rules: score::load(SCORE, &data).expect("score.ron"),
             data,
             presets,
@@ -224,7 +239,6 @@ impl App {
             played: 1,
             dynasty: None,
             entry: 0,
-            picking: None,
             note: String::new(),
             frame_ms: None,
             linked: false,
@@ -300,11 +314,15 @@ impl App {
                 return;
             }
             Cmd::Laws(open) => {
-                (self.laws, self.picking) = (open, None);
+                self.laws = open;
                 return;
             }
             Cmd::Will(draft) => {
-                (self.will, self.picking) = (draft, None);
+                self.will = draft;
+                return;
+            }
+            Cmd::Card(card) => {
+                self.card = card;
                 return;
             }
             Cmd::WriteWill(_) => self.will = None,
@@ -344,16 +362,8 @@ impl App {
                 }
                 res
             }
-            Cmd::Pick(id, targets) => {
-                self.picking = Some((id, targets));
-                return;
-            }
-            Cmd::Cancel => {
-                self.picking = None;
-                return;
-            }
             Cmd::Act(id, target) => {
-                (self.picking, self.laws) = (None, false);
+                self.laws = false;
                 g.start_action(&id, target).map(|_| Step::Idle)
             }
             Cmd::Choose(idx) => match g.choose(idx) {
@@ -388,6 +398,7 @@ impl App {
             | Cmd::Begin
             | Cmd::Tree(_)
             | Cmd::Laws(_)
+            | Cmd::Card(_)
             | Cmd::Continue => {
                 unreachable!("handled above")
             }
@@ -563,9 +574,9 @@ impl App {
 
     fn start(&mut self, seed: u64) {
         let p = &self.presets[self.preset];
-        self.map = MapView::new(&p.map.polygons);
+        self.map = MapView::new(&p.map, p.realms.as_ref());
         self.game = Some(Game::new(self.data.clone(), p, seed));
-        (self.screen, self.picking, self.dynasty) = (Screen::Reign, None, None);
+        (self.screen, self.card, self.dynasty) = (Screen::Reign, Card::Kingdom, None);
         (self.played, self.seed, self.entry) = (seed, seed.to_string(), 0);
         (self.intro, self.tree, self.year_start) = (true, false, None);
         (self.laws, self.will) = (false, None);
@@ -617,7 +628,10 @@ impl App {
             Screen::Reign => self.reign(ui),
             Screen::Event(v) => {
                 self.reign(ui);
-                event(&ctx, self.game.as_ref().expect("in a game"), v)
+                let g = self.game.as_ref().expect("in a game");
+                let e = (g.data.events.iter()).find(|e| e.id == v.event_id);
+                let picture = e.and_then(|e| self.art.picture(&ctx, &e.image));
+                event(&ctx, g, v, picture)
             }
             Screen::ReignOver => {
                 self.reign(ui);
@@ -630,7 +644,7 @@ impl App {
                 let g = self.game.as_ref().expect("in a game");
                 let (c, s) = self.dynasty.as_ref().expect("after the reign");
                 match self.screen {
-                    Screen::Chronicle => chronicle::chronicle(ui, g, c, &self.map, self.entry),
+                    Screen::Chronicle => chronicle::chronicle(ui, g, c, &self.map, &self.art, self.entry),
                     _ => chronicle::summary(ui, g, (c, s), self.played, self.entry),
                 }
             }
@@ -697,207 +711,35 @@ impl App {
         cmd
     }
 
+    /// Stage 29: the map as the menu. The header over it, the court under it, and on the
+    /// right the card of what was clicked over the year's summary.
     fn reign(&self, ui: &mut Ui) -> Option<Cmd> {
         let g = self.game.as_ref().expect("in a game");
         let mut cmd = None;
-        egui::Panel::top("top").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                if ui.button("Родословная").clicked() {
-                    cmd = Some(Cmd::Tree(true));
-                }
-                self.top_bar(ui, g)
-            })
-        });
-        egui::Panel::bottom("actions").show(ui, |ui| cmd = cmd.take().or(self.actions(ui, g)));
-        egui::Panel::right("side").exact_size(300.0).show(ui, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| side(ui, g))
-        });
-        egui::Panel::left("journal")
-            .exact_size(260.0)
-            .show(ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| journal(ui, &self.journal))
-            });
-        egui::CentralPanel::default().show(ui, |ui| {
-            let targets = self.picking.as_ref().map_or(&[][..], |(_, t)| t);
-            let marked: Vec<ProvinceId> = (targets.iter())
-                .filter_map(|t| match t {
-                    Target::Province(id) => Some(id.clone()),
-                    _ => None,
-                })
-                .collect();
-            // A panel, not a bottom-up layout: the legend wraps into rows that must stay visible.
-            egui::Panel::bottom("legend")
-                .resizable(false)
-                .frame(egui::Frame::NONE)
-                .show(ui, |ui| map::legend(ui, &g.world, &g.data));
-            let clicked = self.map.show(ui, &g.world, &g.data, &marked);
-            if let (Some(id), Some((action, _))) = (clicked, &self.picking)
-                && marked.contains(&id)
-            {
-                cmd = Some(Cmd::Act(action.clone(), Some(Target::Province(id))));
+        let dark = egui::Frame::new().fill(FG).inner_margin(egui::Margin::symmetric(10, 6));
+        egui::Panel::top("top")
+            .frame(dark)
+            .show(ui, |ui| cmd = cards::header(ui, g, self.frame_ms));
+        egui::Panel::bottom("court").show(ui, |ui| cmd = cmd.take().or(cards::court(ui, g, &self.card)));
+        egui::Panel::right("side").exact_size(380.0).show(ui, |ui| {
+            if !self.note.is_empty() {
+                ui.label(RichText::new(&self.note).color(RUBRIC));
             }
+            let h = ui.available_height() * 0.64;
+            let scroll = egui::ScrollArea::vertical().id_salt("card").auto_shrink([false, false]);
+            scroll.max_height(h).show(ui, |ui| cmd = cmd.take().or(cards::card(ui, g, &self.card)));
+            ui.separator();
+            let scroll = egui::ScrollArea::vertical().id_salt("journal").auto_shrink([false, false]);
+            scroll.show(ui, |ui| journal(ui, &self.journal));
         });
-        cmd
-    }
-
-    fn top_bar(&self, ui: &mut Ui, g: &Game) {
-        let (w, d) = (&g.world, &g.data);
-        let unit = w.time_unit;
-        ui.label(
-            RichText::new(w.tick.date(unit, w.start_year))
-                .size(22.0)
-                .strong(),
-        );
-        let age = w.ruler.age;
-        key(
-            ui,
-            "Правитель",
-            &format!("{}, {age} {}", w.ruler.name, years(age)),
-        );
-        let reign = w.tick.0.saturating_sub(w.ruler.reign_start.0) / unit.ticks_per_year + 1;
-        key(ui, "Правление", &format!("{reign}-й год"));
-        if let Some(war) = &w.war {
-            let enemy = target_name(w, &Target::Neighbour(war.enemy.clone()));
-            let flag = RichText::new(format!("⚔ Война: {enemy}"))
-                .color(BG)
-                .strong();
-            ui.add(Button::new(flag).fill(RUBRIC).sense(egui::Sense::hover()));
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if let Some(ms) = self.frame_ms {
-                ui.small(RichText::new(format!("кадр {ms:.1} мс")).color(FG2));
-            }
-            // Right to left: value first, then its key.
-            key_rtl(ui, "Провинций", &realm(w));
-            if let Some(army) = w.axes.get(&d.war.army) {
-                key_rtl(ui, axis_name(d, &d.war.army), &round(*army));
-            }
-            // What a year brings, net, apart from the treasury itself (stage 25).
-            let income = bd_core::war::yearly_income(w, d);
-            let year = RichText::new(format!("за год {} {INFO}", plus(income))).color(FG);
-            tip_label(ui, year, |ui| money_tip(ui, g));
-            key_rtl(ui, "Казна", &round(w.axes[&d.economy.treasury]));
+        egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
+            let selected = match &self.card {
+                Card::Province(id) => Some(id),
+                _ => None,
+            };
+            let click = self.map.show(ui, &g.world, &g.data, &self.art, selected);
+            cmd = cmd.take().or(cards::clicked(&g.world, click));
         });
-    }
-
-    fn actions(&self, ui: &mut Ui, g: &Game) -> Option<Cmd> {
-        let (w, d) = (&g.world, &g.data);
-        let mut cmd = None;
-        ui.add_space(4.0);
-        match &self.picking {
-            Some((id, targets)) => {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(format!(
-                        "Цель для «{}», на карте или из списка:",
-                        action_name(w, d, id)
-                    ));
-                    let def = d.actions.iter().find(|a| a.id == *id);
-                    let suit = def.filter(|a| a.marries());
-                    let rightful = rightful_heir(g).filter(|_| def.is_some_and(designates));
-                    for t in targets {
-                        let label = match (suit, t) {
-                            (Some(_), Target::Neighbour(n)) => {
-                                let chance = d.marriage.chance(w, d, n);
-                                format!("{} · {}%", target_name(w, t), round(chance))
-                            }
-                            (_, Target::Heir(id)) if rightful.is_some() => {
-                                let lawful = rightful.is_some_and(|r| r.id == *id);
-                                let how = if lawful {
-                                    "по закону"
-                                } else {
-                                    "в обход закона"
-                                };
-                                format!("{} · {how}", target_name(w, t))
-                            }
-                            _ => target_name(w, t),
-                        };
-                        if ui.button(label).clicked() {
-                            cmd = Some(Cmd::Act(id.clone(), Some(t.clone())));
-                        }
-                    }
-                    if ui.button("Отмена").clicked() {
-                        cmd = Some(Cmd::Cancel);
-                    }
-                });
-            }
-            None => {
-                ui.horizontal_wrapped(|ui| {
-                    // The laws to bring in or repeal go to a card of their own.
-                    if !d.laws.list.is_empty()
-                        && ui.button("Ввести закон").on_hover_text(LAWS_TIP).clicked()
-                    {
-                        cmd = Some(Cmd::Laws(true));
-                    }
-                    // Every action, those not to be had now grey with the reason in their
-                    // tip (stage 25); the war's own only at war.
-                    let open = g.available_actions();
-                    let shown = (d.actions.iter())
-                        .filter(|a| !a.id.starts_with(ENACT) && !a.id.starts_with(REPEAL))
-                        .filter(|a| a.target != ActionTarget::Enemy || w.war.is_some());
-                    for a in shown {
-                        let targets = open.iter().find(|(id, _)| *id == a.id).map(|x| &x.1);
-                        let name = action_name(w, d, &a.id);
-                        if let Some(why) = why_not(g, a, targets.is_some()) {
-                            let grey = Button::new(RichText::new(name).color(FG2)).fill(BG2);
-                            tip(ui.add(grey), |ui| {
-                                action_tip(ui, g, a);
-                                ui.label(RichText::new(&why).color(RUBRIC));
-                            });
-                            continue;
-                        }
-                        let targets = targets.cloned().unwrap_or_default();
-                        let button = ui.button(name).on_hover_ui(|ui| action_tip(ui, g, a));
-                        // A war action has one target, the enemy: no choice to make.
-                        let enemy = a.target == ActionTarget::Enemy;
-                        if button.clicked() {
-                            let id = a.id.clone();
-                            cmd = Some(match (targets.is_empty(), enemy) {
-                                (true, _) => Cmd::Act(id, None),
-                                (false, true) => Cmd::Act(id, targets.first().cloned()),
-                                (false, false) => Cmd::Pick(id, targets),
-                            });
-                        }
-                    }
-                    // Stage 24: written once, rewritten any time.
-                    let written = w.testament.as_ref().filter(|t| !t.by.0.is_empty());
-                    let label = match written {
-                        Some(_) => "Переписать завещание",
-                        None => "Составить завещание",
-                    };
-                    if d.testament.is_some() && ui.button(label).on_hover_text(WILL_TIP).clicked() {
-                        let draft = written.map_or_else(Testament::default, |t| Testament {
-                            precept: t.precept.clone(),
-                            order: t.order.clone(),
-                            heir: t.heir,
-                            ..Default::default()
-                        });
-                        cmd = Some(Cmd::Will(Some(draft)));
-                    }
-                    let abdicate = Button::new(RichText::new("Отречься").color(RUBRIC));
-                    let abdicate = ui.add(abdicate.stroke((1.0, RUBRIC)));
-                    if abdicate.on_hover_text(ABDICATE_TIP).clicked() {
-                        cmd = Some(Cmd::Abdicate);
-                    }
-                });
-            }
-        }
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(running(g)).color(FG2));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let wait = Button::new(RichText::new("Подождать год ▸").color(BG)).fill(FG);
-                if ui.add(wait).on_hover_text(WAIT_TIP).clicked() {
-                    cmd = Some(Cmd::Wait);
-                }
-                let link = ui.button("Скопировать ссылку").on_hover_text(LINK_TIP);
-                if link.clicked() {
-                    cmd = Some(Cmd::CopyLink);
-                }
-            });
-        });
-        if !self.note.is_empty() {
-            ui.label(RichText::new(&self.note).color(RUBRIC));
-        }
-        ui.add_space(4.0);
         cmd
     }
 }
@@ -1362,9 +1204,10 @@ fn intro(ctx: &egui::Context, p: &Preset) -> Option<Cmd> {
 const HOW_TO_PLAY: [&str; 4] = [
     "Цель: оставить потомкам крепкое государство. Вы правите только первым государем, \
      счёт считается по тому, сколько проживёт династия и чего она достигнет.",
-    "Ход: начните действие внизу экрана и нажмите «Подождать год». За год случаются \
-     события: выберите вариант в окне. Что произошло, видно в итогах года слева.",
-    "Наведите мышь на действие, соседа, закон или провинцию, чтобы узнать подробности.",
+    "Ход: щёлкните по своей земле, соседу на карте, гербу или человеку при дворе: справа \
+     откроется карточка с указами. Затем нажмите «Подождать год». За год случаются события: \
+     выберите вариант в окне. Что произошло, видно в итогах года справа.",
+    "Наведите мышь на указ, соседа, закон или провинцию, чтобы узнать подробности.",
     "Правление кончается смертью государя или отречением. Дальше симуляция разыграет \
      судьбу династии, а хроника покажет, к чему привели ваши решения.",
 ];
@@ -1456,20 +1299,10 @@ fn why_not(g: &Game, a: &Action, open: bool) -> Option<String> {
     if open {
         return (!d.action_slots.free(w, &d.actions, a)).then(|| slots_full(g, a));
     }
-    if let Some(why) = unmet(d, w, &a.requires) {
+    if let Some(why) = blocked(g, a) {
         return Some(why);
     }
-    let treasury = w.axes[&d.economy.treasury];
-    if a.cost > treasury {
-        let (cost, now) = (round(a.cost), round(treasury));
-        return Some(format!("Нужно {cost} золота, в казне {now}"));
-    }
-    let builds = (a.on_complete.iter()).any(|e| matches!(e, Effect::Build(..)));
-    let busy = match (builds, a.id.starts_with(ENACT)) {
-        (true, _) => "Уже строится",
-        (_, true) => "Уже вводится",
-        _ => "Уже идёт",
-    };
+    let busy = busy_text(a);
     let power = round(a.min_crown_power);
     let capital = w.provinces.get(&w.capital.province);
     let capital = capital.map_or(Fx(0), |p| p.crown_power);
@@ -1493,6 +1326,29 @@ fn why_not(g: &Game, a: &Action, open: bool) -> Option<String> {
         }
         _ => busy.into(),
     })
+}
+
+/// What keeps action `a` from starting anywhere: its condition or its price.
+fn blocked(g: &Game, a: &Action) -> Option<String> {
+    let (w, d) = (&g.world, &g.data);
+    if let Some(why) = unmet(d, w, &a.requires) {
+        return Some(why);
+    }
+    let treasury = w.axes[&d.economy.treasury];
+    (a.cost > treasury).then(|| {
+        let (cost, now) = (round(a.cost), round(treasury));
+        format!("Нужно {cost} золота, в казне {now}")
+    })
+}
+
+/// «Уже строится», «Уже вводится», «Уже идёт»: action `a` running on its target.
+fn busy_text(a: &Action) -> &'static str {
+    let builds = (a.on_complete.iter()).any(|e| matches!(e, Effect::Build(..)));
+    match (builds, a.id.starts_with(ENACT)) {
+        (true, _) => "Уже строится",
+        (_, true) => "Уже вводится",
+        _ => "Уже идёт",
+    }
 }
 
 /// Why `p` does not hold, in words; None when it holds. The conditions the actions and the
@@ -1542,12 +1398,21 @@ fn more_slots(d: &Data, w: &World) -> Option<String> {
     Some(format!("ещё одно откроет {by} {}", round(*at)))
 }
 
-/// The modal card over the dimmed reign screen.
-fn event(ctx: &egui::Context, g: &Game, v: &EventView) -> Option<Cmd> {
+/// The modal card over the dimmed reign screen, its picture on top (stage 29b).
+fn event(ctx: &egui::Context, g: &Game, v: &EventView, picture: Option<art::Sprite>) -> Option<Cmd> {
     let w = &g.world;
     let mut cmd = None;
     egui::Modal::new(egui::Id::new("event")).show(ctx, |ui| {
         ui.set_width(540.0);
+        // The full width; on a low screen cut at the top and bottom, so the choices still fit.
+        if let Some(p) = picture {
+            let full = 540.0 * p.size.y / p.size.x;
+            let height = full.min(ctx.content_rect().height() * 0.35);
+            let cut = (1.0 - height / full) / 2.0;
+            let uv = egui::Rect::from_min_max(egui::pos2(0.0, cut), egui::pos2(1.0, 1.0 - cut));
+            let r = ui.add(egui::Image::new((p.id, egui::vec2(540.0, height))).uv(uv));
+            ui.painter().rect_stroke(r.rect, 0.0, (1.0, FG), egui::StrokeKind::Inside);
+        }
         let mut eyebrow = vec!["Событие".to_string()];
         eyebrow.extend(v.target.as_ref().map(|t| target_name(w, t)));
         eyebrow.push(w.tick.date(w.time_unit, w.start_year));
@@ -1719,176 +1584,6 @@ fn realm_tip(ui: &mut Ui, d: &Data, n: &Neighbour) {
     if let Some(a) = d.axes.iter().find(|a| Some(&a.id) == axis) {
         ui.label(format!("Стабильность: {}", level(a, r.stability)));
     }
-}
-
-/// Ruler, axes, heirs, neighbours.
-fn side(ui: &mut Ui, g: &Game) {
-    let (w, d) = (&g.world, &g.data);
-    ui.horizontal(|ui| {
-        let (r, _) = ui.allocate_exact_size(egui::vec2(44.0, 52.0), egui::Sense::hover());
-        ui.painter().rect_filled(r, 0.0, BG2);
-        let initial = w.ruler.name.chars().next().unwrap_or('?').to_string();
-        let font = egui::FontId::proportional(22.0);
-        ui.painter()
-            .text(r.center(), egui::Align2::CENTER_CENTER, initial, font, FG2);
-        ui.vertical(|ui| {
-            ui.strong(&w.ruler.name);
-            let health = round(w.ruler.health);
-            Grid::new("health").show(ui, |ui| {
-                bar(
-                    ui,
-                    "Здоровье",
-                    w.ruler.health,
-                    Fx(0),
-                    Fx::from_int(100),
-                    &health,
-                )
-            });
-            ui.small(format!("{} {}", w.ruler.age, years(w.ruler.age)));
-        });
-    });
-    if let Some(war) = &w.war {
-        war_panel(ui, g, war);
-    }
-    heading(ui, "Состояние");
-    axes_panel(ui, g);
-    if let Some((line, hint)) = overreach(g) {
-        ui.label(RichText::new(line).color(RUBRIC));
-        ui.label(RichText::new(hint).small().color(FG2));
-    }
-    // The laws in force and what each does to the graph; succession too, also told with
-    // the heirs.
-    let laws: Vec<_> = d.laws_in_force(w).collect();
-    if !laws.is_empty() {
-        heading(ui, "Законы");
-        for l in laws {
-            tip_label(ui, format!("{} {INFO}", l.name), |ui| {
-                ui.strong(&l.name);
-                ui.label(&l.description);
-            });
-            let holds = holds(d, l);
-            if !holds.is_empty() {
-                ui.small(RichText::new(holds).color(FG2));
-            }
-        }
-    }
-    heading(ui, "Наследники");
-    let first = bd_core::sim::successor(w, d);
-    let rightful = bd_core::sim::rightful(w, d);
-    match d.heirs.law(w) {
-        Some(l) => {
-            tip_label(ui, format!("Закон: {} {INFO}", l.name), |ui| {
-                ui.strong(&l.name);
-                ui.label(l.text());
-            });
-        }
-        None => {
-            ui.label("Закона наследования нет");
-        }
-    }
-    let line = first.map_or("никого".into(), |i| w.heirs[i].name.clone());
-    ui.label(format!("Первый в очереди: {line}"));
-    if w.heirs.is_empty() {
-        ui.label("нет");
-    }
-    Grid::new("heirs").show(ui, |ui| {
-        for (i, h) in w.heirs.iter().enumerate() {
-            let status = match &h.status {
-                HeirStatus::Home if Some(i) == first && first != rightful => {
-                    RichText::new("назначен").color(RUBRIC)
-                }
-                HeirStatus::Home if Some(i) == first => RichText::new("первый").color(FG2),
-                HeirStatus::Home if Some(i) == rightful => RichText::new("по закону").color(FG2),
-                HeirStatus::Home => RichText::new(""),
-                HeirStatus::Studying(place) => RichText::new(format!("учится: {place}")).color(FG2),
-                HeirStatus::Hostage(n) => {
-                    let n = w.neighbours.get(n).map_or(&n.0, |n| &n.name);
-                    RichText::new(format!("заложник: {n}")).color(RUBRIC)
-                }
-            };
-            let sex = match h.sex {
-                Sex::Male => "♂",
-                Sex::Female => "♀",
-            };
-            let bastard = if h.bastard { " (бастард)" } else { "" };
-            ui.label(format!("{sex} {}{bastard}, {}", h.name, h.age));
-            ui.small(status);
-            ui.small(format!(
-                "спос. {} · прет. {}",
-                round(h.ability),
-                round(h.claim)
-            ));
-            ui.end_row();
-        }
-    });
-    if !w.bastards.is_empty() {
-        let names: Vec<String> = (w.bastards.iter())
-            .map(|h| format!("{}, {}", h.name, h.age))
-            .collect();
-        tip_label(
-            ui,
-            format!("Бастарды: {} {INFO}", names.join("; ")),
-            |ui| {
-                ui.label("Рождены вне брака и не наследуют, пока их не признают.");
-            },
-        );
-    }
-    heading(ui, "Соседи");
-    let bonds = g.bonds();
-    Grid::new("neighbours").show(ui, |ui| {
-        for n in w.neighbours.values() {
-            let sign = if n.relation > Fx(0) { "+" } else { "" };
-            let value = format!("{sign}{}", round(n.relation));
-            let (lo, hi) = (Fx::from_int(-100), Fx::from_int(100));
-            let ai = &d.neighbour_ai;
-            let mood = match n.relation {
-                r if r > ai.friendly_above => "друг",
-                r if r < ai.hostile_below => "враг",
-                _ => "нейтрален",
-            };
-            let stance = match n.stance {
-                Stance::Expand => "ищет, что захватить",
-                Stance::Defend => "обороняется",
-                Stance::Trade => "торгует",
-                Stance::Wait => "выжидает",
-            };
-            let ties: Vec<String> = (bonds.iter())
-                .filter(|(id, ..)| *id == n.id)
-                .map(|(_, a, t)| format!("{} с {}", a.bond, t.date(w.time_unit, w.start_year)))
-                .collect();
-            let at_war = w.war.as_ref().is_some_and(|x| x.enemy == n.id);
-            let label = match (ties.is_empty(), at_war) {
-                (_, true) => format!("{} ⚔", n.name),
-                (false, _) => format!("{} ♥", n.name),
-                _ => n.name.clone(),
-            };
-            let row = bar(ui, &label, n.relation, lo, hi, &value);
-            tip(row, |ui| {
-                ui.strong(&n.name);
-                ui.label(format!("Отношение {value}: {mood}"));
-                ui.label(format!("Сила {}, {stance}", round(n.strength)));
-                realm_tip(ui, d, n);
-                ally_tip(ui, w, d, n);
-                for t in &ties {
-                    ui.label(t);
-                }
-                // Who is wed into that court: the ruler or an heir.
-                if let Some(u) = w.unions.get(&n.id) {
-                    let spouse = match u.spouse {
-                        None => Some(&w.ruler.name),
-                        Some(id) => w.heir_index(id).map(|i| &w.heirs[i].name),
-                    };
-                    ui.label(format!("В браке: {}", spouse.map_or("", |s| s)));
-                }
-                if ties.is_empty() {
-                    ui.label(RichText::new("Союзов и браков нет").color(FG2));
-                }
-                if at_war {
-                    ui.label(RichText::new("Идёт война").color(RUBRIC));
-                }
-            });
-        }
-    });
 }
 
 /// Years of the trend arrow, of the forecast and of the far one.
@@ -2350,16 +2045,6 @@ pub(crate) fn heading(ui: &mut Ui, text: &str) {
     ui.label(RichText::new(text.to_uppercase()).small().color(FG2));
 }
 
-fn key(ui: &mut Ui, k: &str, v: &str) {
-    ui.label(RichText::new(k).color(FG2));
-    ui.label(RichText::new(v).color(FG));
-}
-
-fn key_rtl(ui: &mut Ui, k: &str, v: &str) {
-    ui.label(RichText::new(v).color(FG));
-    ui.label(RichText::new(k).color(FG2));
-}
-
 /// A grid row with a labelled bar; the colour goes from bad to good with the share of the range.
 /// Returns the label's response, for a tooltip.
 fn bar(ui: &mut Ui, label: &str, v: Fx, min: Fx, max: Fx, value: &str) -> egui::Response {
@@ -2396,6 +2081,7 @@ pub(crate) fn realm(w: &World) -> String {
     format!("{}, из них у короны {crown}", own.count())
 }
 
+#[cfg(test)]
 fn action_name(w: &World, d: &Data, id: &str) -> String {
     let def = d.actions.iter().find(|a| a.id == id);
     def.map_or(id.into(), |a| named(w, &a.name))
@@ -2693,9 +2379,16 @@ mod tests {
             self.click(centre)
         }
 
+        /// A spot of province `id` on screen that no ribbon, coat or cartouche covers.
         fn province_on_screen(&self, id: &str) -> Pos2 {
             let map = &self.app.map;
-            map.to_screen(map.centre(&ProvinceId(id.into())).unwrap())
+            let id = ProvinceId(id.into());
+            let c = map.to_screen(map.centre(&id).unwrap());
+            let near = (0..3600).map(|i| c + vec2((i % 60) as f32 - 30.0, (i / 60) as f32 - 30.0) * 1.5);
+            let mut near: Vec<Pos2> = near.collect();
+            near.sort_by(|a, b| a.distance(c).total_cmp(&b.distance(c)));
+            let here = |p: &Pos2| map.click_at(*p) == Some(map::Click::Province(id.clone()));
+            near.into_iter().find(here).unwrap_or(c)
         }
     }
 
@@ -2717,14 +2410,12 @@ mod tests {
                             Some(Target::Province(p)) => Some(p.0.clone()),
                             _ => None,
                         };
-                        match province {
-                            Some(p) => {
-                                h.app.apply(Cmd::Pick(id, targets));
-                                h.frame(vec![]);
-                                h.click(h.province_on_screen(&p));
-                            }
-                            None => h.app.apply(Cmd::Act(id, targets.first().cloned())),
+                        // A province by the map: its card opens, the decree goes from there.
+                        if let Some(p) = &province {
+                            h.click(h.province_on_screen(p));
+                            assert_ne!(h.app.card, Card::Kingdom, "{p}");
                         }
+                        h.app.apply(Cmd::Act(id, targets.first().cloned()));
                     }
                     h.app.apply(Cmd::Wait);
                 }
@@ -2979,6 +2670,8 @@ mod tests {
     #[test]
     fn the_year_summary_lists_what_happened() {
         let mut h = Harness::new();
+        // Stage 29: the journal under the card, every year of it on screen.
+        h.height = 1600.0;
         six_years(&mut h);
         let line = |s: &str, up| (s.to_string(), up);
         // Every year opens with the treasury, notable or not.
@@ -3276,6 +2969,7 @@ mod tests {
     #[test]
     fn the_side_panel_tells_the_penalty_over_the_limit() {
         let mut h = Harness::new();
+        h.height = 1800.0;
         h.app.apply(Cmd::Start(1));
         h.click_label("Править");
         let over = |t: &[String]| t.iter().any(|t| t.starts_with("Сверх предела"));
@@ -3455,10 +3149,13 @@ mod tests {
     #[test]
     fn hovering_tells_what_actions_neighbours_and_the_law_do() {
         let mut h = Harness::new();
-        // The side panel scrolls; the neighbours come after the axes and the heirs.
-        h.height = 1000.0;
+        // The kingdom's card scrolls; the neighbours come after the axes.
+        h.height = 1400.0;
         h.app.apply(Cmd::Start(1));
         h.click_label("Править");
+        // Stage 29: each decree on its card.
+        let card = |h: &mut Harness, c: Card| h.app.apply(Cmd::Card(c));
+        card(&mut h, Card::Province(ProvinceId("berg".into())));
         let road = hover(&mut h, "Проложить дорогу");
         for t in [
             "Стоимость 60 · 2 года",
@@ -3472,6 +3169,7 @@ mod tests {
         let g = h.app.game.as_mut().unwrap();
         g.world.flags.remove("married");
         g.data.marriage.percent = Fx::from_int(100);
+        card(&mut h, Card::Neighbour(NeighbourId("vestrum".into())));
         let marriage = hover(&mut h, "Заключить брачный союз");
         assert!(
             marriage.contains(&"согласие: отношения +30".to_string())
@@ -3504,6 +3202,7 @@ mod tests {
             assert!(subsidy.contains(&t.to_string()), "{t}: {subsidy:?}");
         }
 
+        card(&mut h, Card::Kingdom);
         // Stage 28b: the preset starts on partition.
         let law = hover(&mut h, "Закон: Разделение ℹ");
         let d = &h.game().data;
@@ -3580,6 +3279,18 @@ mod tests {
             (x.name, x.age) = (name.into(), 10);
             g.world.add_heir(x);
         }
+        // Stage 29: a click on a person of the court opens his card, his decrees on it.
+        let chip = |h: &mut Harness, name: &str| {
+            let t = texts_of(h);
+            let c = t.iter().find(|x| x.contains(&format!(" {name}, ")));
+            c.unwrap_or_else(|| panic!("{name}: {t:?}")).clone()
+        };
+        let ada = chip(&mut h, "Ада");
+        h.click_label(&ada);
+        let shown = texts_of(&mut h);
+        for t in ["По закону престол наследует: Ада", "Ада · по закону"] {
+            assert!(shown.contains(&t.to_string()), "{t}: {shown:?}");
+        }
         let tip = hover(&mut h, "Назначить наследника");
         assert!(
             tip.contains(&"По закону престол наследует: Ада".to_string()),
@@ -3587,21 +3298,24 @@ mod tests {
         );
         let penalty = "Назначить другого: Легитимность -10, Знать -5, Церковь -5";
         assert!(tip.iter().any(|t| t.starts_with(penalty)), "{tip:?}");
+        let bruno = chip(&mut h, "Бруно");
+        h.click_label(&bruno);
+        assert!(texts_of(&mut h).contains(&"Бруно · в обход закона".to_string()));
         h.click_label("Назначить наследника");
-        let shown = texts_of(&mut h);
-        for t in ["Ада · по закону", "Бруно · в обход закона"] {
-            assert!(shown.contains(&t.to_string()), "{t}: {shown:?}");
-        }
-        h.click_label("Бруно · в обход закона");
+        let id = h.game().world.heirs[1].id;
+        let running = &h.game().world.active_actions[0];
+        assert_eq!((running.id.as_str(), running.target.clone()), ("designate_heir", Some(id.to_string())));
         h.app.apply(Cmd::Wait);
+        while let Screen::Event(_) = h.app.screen {
+            h.app.apply(Cmd::Choose(0));
+        }
         let shown = texts_of(&mut h);
         assert!(
             shown.contains(&"Первый в очереди: Бруно".to_string()),
             "{shown:?}"
         );
-        assert!(
-            shown.contains(&"назначен".to_string()) && shown.contains(&"по закону".to_string())
-        );
+        assert!(chip(&mut h, "Бруно").ends_with(" · назначен"));
+        assert!(chip(&mut h, "Ада").ends_with(" · по закону"));
     }
 
     /// Acceptance (stage 16): a law changes by mouse: «Ввести закон» (stage 19: every law by
@@ -3896,53 +3610,46 @@ mod tests {
         );
     }
 
-    /// Line segments painted in the holder border colour, in map coordinates.
-    fn borders(h: &Harness, out: &egui::FullOutput) -> Vec<[(i32, i32); 2]> {
-        let map = &h.app.map;
-        (out.shapes.iter())
-            .filter_map(|c| match &c.shape {
-                egui::Shape::LineSegment { points, stroke } if stroke.color == map::BORDER => {
-                    let p = points.map(|p| map.to_map(p));
-                    let mut e = p.map(|p| (p.x.round() as i32, p.y.round() as i32));
-                    e.sort();
-                    Some(e)
-                }
-                _ => None,
-            })
-            .collect()
-    }
-
+    /// Stage 29: the ink tells the borders apart: a state's solid, a vassal's appanage
+    /// dashed, the provinces of one holder dotted. The ribbons name the states, the cartouche
+    /// the kingdom and the year.
     #[test]
-    fn the_map_outlines_every_realm_and_names_the_states() {
+    fn the_map_inks_every_border_and_names_the_states() {
         let mut h = Harness::new();
         h.app.apply(Cmd::Start(1));
         h.app.apply(Cmd::Begin);
         let out = h.frame(vec![]);
-        let lines = borders(&h, &out);
-        // capital–holm: crown against vassal; capital–berg: crown on both sides.
-        assert!(lines.contains(&[(160, 110), (210, 100)]));
-        assert!(!lines.contains(&[(150, 150), (160, 110)]));
+        let ink = |h: &Harness, a: &str, b: &str| h.app.map.ink_between(&h.game().world, a, b);
+        assert_eq!(ink(&h, "capital", "holm"), Some(map::Ink::Dashed));
+        assert_eq!(ink(&h, "capital", "berg"), Some(map::Ink::Dotted));
+        let w = &h.game().world;
+        let foreign = |id: &ProvinceId| matches!(w.provinces[id].holder, Holder::Foreign(_));
+        let (ours, theirs) = (w.provinces.values())
+            .filter(|p| p.holder == Holder::Crown)
+            .find_map(|p| p.neighbours.iter().find(|q| foreign(q)).map(|q| (p.id.0.clone(), q.0.clone())))
+            .expect("the crown borders a state");
+        assert_eq!(ink(&h, &ours, &theirs), Some(map::Ink::Solid));
         let shown = texts(&out);
         for t in [
-            "НОРДМАРК",
-            "ПУРПУЛЯНДИЯ",
-            "ВЕСТРУМ",
-            "вассал Вейр",
-            "вассал Арден",
+            "Королевство Ульриха",
+            "лета 1187",
+            "Королевство",
             "Нордмарк",
-            "граница владений",
+            "Пурпуляндия",
+            "Веструм",
+            "Кадарская империя",
         ] {
-            assert!(shown.contains(&t.to_string()), "{t}");
+            assert!(shown.contains(&t.to_string()), "{t}: {shown:?}");
         }
-        // Granted away, capital–berg becomes a border.
+        // Granted away, capital–berg becomes an appanage's border.
         let g = h.app.game.as_mut().unwrap();
         g.world
             .provinces
             .get_mut(&ProvinceId("berg".into()))
             .unwrap()
             .holder = Holder::Vassal(bd_core::state::VassalId("weir".into()));
-        let out = h.frame(vec![]);
-        assert!(borders(&h, &out).contains(&[(150, 150), (160, 110)]));
+        h.frame(vec![]);
+        assert_eq!(ink(&h, "capital", "berg"), Some(map::Ink::Dashed));
     }
 
     #[test]
@@ -3971,31 +3678,86 @@ mod tests {
         h.frame(vec![]);
     }
 
+    /// Acceptance (stage 29): a click on a province of ours opens its card with its decrees,
+    /// one not to be had there with its reason; a decree from it starts on that province.
     #[test]
-    fn map_click_picks_the_target() {
+    fn a_click_on_our_province_opens_its_card_and_decrees() {
         let mut h = Harness::new();
         h.app.apply(Cmd::Start(1));
         h.app.apply(Cmd::Begin);
-        let (id, targets) = (h.game().available_actions().into_iter())
-            .find(|(id, _)| id == "build_fort")
-            .unwrap();
-        assert!(targets.contains(&Target::Province(ProvinceId("berg".into()))));
-        h.app.apply(Cmd::Pick(id, targets));
         h.frame(vec![]);
-        // A foreign province is not a target: nothing starts.
-        h.click(h.province_on_screen("nordheim"));
-        assert!(h.game().world.active_actions.is_empty() && h.app.picking.is_some());
+        h.click(h.province_on_screen("capital"));
+        assert_eq!(h.app.card, Card::Province(ProvinceId("capital".into())));
+        let shown = texts_of(&mut h);
+        // Every decree for the crown's land, read from the data.
+        let d = load_data();
+        let crown = |a: &&Action| match &a.target {
+            ActionTarget::Province(f) => f.holder.is_none_or(|k| k == bd_core::rules::HolderKind::Crown),
+            _ => false,
+        };
+        let names: Vec<&str> = d.actions.iter().filter(crown).map(|a| a.name.as_str()).collect();
+        assert!(names.len() >= 4, "{names:?}");
+        for n in &names {
+            assert!(shown.contains(&n.to_string()), "{n}: {shown:?}");
+        }
+        assert!(shown.contains(&"Не для столицы".to_string()), "{shown:?}");
+        h.click_label("Пожаловать провинцию");
+        assert!(h.game().world.active_actions.is_empty(), "grey: nothing starts");
         h.click(h.province_on_screen("berg"));
+        assert_eq!(h.app.card, Card::Province(ProvinceId("berg".into())));
+        h.click_label("Построить крепость");
         let running = &h.game().world.active_actions;
         assert_eq!(running.len(), 1);
         assert_eq!(
             (running[0].id.as_str(), running[0].target.as_deref()),
             ("build_fort", Some("berg"))
         );
-        assert!(h.app.picking.is_none());
+        let t = texts_of(&mut h);
+        assert!(t.contains(&"Уже строится".to_string()), "{t:?}");
         assert!(running_line(&h).starts_with(
             "Действия 1 из 1 (ещё одно откроет бюрократия 40): идёт Построить крепость (Берг), 0 из"
         ));
+        // The header counts the crown's affairs.
+        assert!(texts_of(&mut h).contains(&format!("Дела короны: свободно 0 из 1 {INFO}")));
+    }
+
+    /// Acceptance (stage 29): a click on a neighbour's land or on its ribbon opens its card:
+    /// the war (their lands to take, the strengths) and the suit (its chance or the refusal).
+    #[test]
+    fn a_click_on_a_neighbour_opens_war_and_marriage() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(1));
+        h.app.apply(Cmd::Begin);
+        h.frame(vec![]);
+        h.click(h.province_on_screen("nordheim"));
+        let nordmark = NeighbourId("nordmark".into());
+        assert_eq!(h.app.card, Card::Neighbour(nordmark.clone()));
+        let shown = texts_of(&mut h);
+        for t in ["Объявить войну", "Заключить брачный союз", "Субсидия соседу", "Скала"] {
+            assert!(shown.contains(&t.to_string()), "{t}: {shown:?}");
+        }
+        assert!(shown.iter().any(|t| t.starts_with("Силы: наши ")), "{shown:?}");
+        // The king is wed and his heir a child: nobody to wed.
+        assert!(shown.iter().any(|t| t.starts_with("Сватать некого")), "{shown:?}");
+        // Widowed: Нордмарк at -40 turns the suit away, Веструм names its chance.
+        h.app.game.as_mut().unwrap().world.flags.remove("married");
+        assert!(texts_of(&mut h).contains(&"Отношения ниже -20: сватов не примут".to_string()));
+        let vestrum = NeighbourId("vestrum".into());
+        let ribbon = (h.app.map.hits.borrow().iter())
+            .find(|(_, c)| *c == map::Click::State(vestrum.clone()))
+            .map(|(r, _)| r.center())
+            .expect("Веструм's ribbon");
+        h.click(ribbon);
+        assert_eq!(h.app.card, Card::Neighbour(vestrum));
+        let shown = texts_of(&mut h);
+        assert!(shown.iter().any(|t| t.starts_with("Шанс согласия: ")), "{shown:?}");
+        // The cartouche opens the kingdom.
+        let cartouche = (h.app.map.hits.borrow().iter())
+            .find(|(_, c)| *c == map::Click::Kingdom)
+            .map(|(r, _)| r.center())
+            .unwrap();
+        h.click(cartouche);
+        assert_eq!(h.app.card, Card::Kingdom);
     }
 
     fn running_line(h: &Harness) -> String {
@@ -4025,14 +3787,12 @@ mod tests {
         h.click_label("Править");
         assert!(!texts_of(&mut h).iter().any(|t| t.starts_with("⚔")));
         assert!(!texts_of(&mut h).contains(&"Набрать войско".to_string()));
-        h.click_label("Объявить войну");
-        let Some((_, targets)) = &h.app.picking else {
-            panic!("a target to pick")
-        };
-        assert!(targets.contains(&Target::Province(ProvinceId("skala".into()))));
-        assert!(texts_of(&mut h).contains(&"Скала, Нордмарк".to_string()));
+        // Stage 29: their land on the map opens their card; the war goes on a land of theirs.
         h.click(h.province_on_screen("skala"));
-        assert_eq!(h.game().world.active_actions[0].id, "declare_war");
+        assert_eq!(h.app.card, Card::Neighbour(NeighbourId("nordmark".into())));
+        h.click_label("Скала");
+        let running = &h.game().world.active_actions[0];
+        assert_eq!((running.id.as_str(), running.target.as_deref()), ("declare_war", Some("skala")));
         h.click_label("Подождать год ▸");
         let Screen::Event(v) = &h.app.screen else {
             panic!("the war's first event")
@@ -4053,7 +3813,6 @@ mod tests {
             "счёт 0: равенство",
             "Битв ещё не было",
             "⚔ Скала",
-            "⚔ цель войны",
         ] {
             assert!(shown.contains(&t.to_string()), "{t}: {shown:?}");
         }
@@ -4061,7 +3820,6 @@ mod tests {
         assert_eq!(outlines(&out, map::RUBRIC, 4.0), 1);
         // War actions act at the enemy at once, no target to pick.
         h.click_label("Набрать войско");
-        assert!(h.app.picking.is_none());
         let running = &h.game().world.active_actions;
         assert_eq!(running[0].id, "war_recruit");
         assert_eq!(running[0].target.as_deref(), Some("nordmark"));
@@ -4121,6 +3879,23 @@ mod tests {
         g.world.axes.insert(AxisId(axis.into()), Fx::from_int(v));
     }
 
+    /// The card that offers action `id` on `target` (stage 29).
+    fn card_of(h: &Harness, id: &str, target: Option<&Target>) -> Card {
+        let w = &h.game().world;
+        let a = h.game().data.actions.iter().find(|a| a.id == id).unwrap();
+        match (cards::host(a), target) {
+            (cards::Host::Kingdom, _) => Card::Kingdom,
+            (cards::Host::Province, Some(Target::Province(p))) => Card::Province(p.clone()),
+            (cards::Host::Neighbour, Some(Target::Neighbour(n))) => Card::Neighbour(n.clone()),
+            (cards::Host::Neighbour, Some(Target::Province(p))) => match &w.provinces[p].holder {
+                Holder::Foreign(n) => Card::Neighbour(n.clone()),
+                h => panic!("{id} on {h:?}"),
+            },
+            (cards::Host::Person, Some(Target::Heir(i))) => Card::Person(Some(*i)),
+            (host, t) => panic!("{id}: {host:?} {t:?}"),
+        }
+    }
+
     /// Acceptance (stage 25): every action to be had has a tip with what it gives, costs and
     /// takes; so have the buttons beside them.
     #[test]
@@ -4130,15 +3905,17 @@ mod tests {
         begun(&mut h);
         let open = h.game().available_actions();
         assert!(open.len() > 5);
-        for (id, _) in open
+        for (id, targets) in open
             .iter()
             .filter(|(id, _)| !id.starts_with(ENACT) && !id.starts_with(REPEAL))
         {
             let name = action_name(&h.game().world, &h.game().data, id);
+            h.app.apply(Cmd::Card(card_of(&h, id, targets.first())));
             let tip = hover(&mut h, &name);
             let cost = tip.iter().any(|t| t.starts_with("Стоимость "));
             assert!(cost && tip.len() > 2, "{name}: {tip:?}");
         }
+        h.app.apply(Cmd::Card(Card::Kingdom));
         for (button, tip) in [
             ("Ввести закон", LAWS_TIP),
             ("Составить завещание", WILL_TIP),
@@ -4167,25 +3944,33 @@ mod tests {
         h.height = 1000.0;
         begun(&mut h);
         set_axis(&mut h, "treasury", 80);
-        let shown = texts_of(&mut h);
-        for t in [
-            "Построить крепость",
-            "Признать бастарда",
-            "Женить наследника",
+        let berg = Card::Province(ProvinceId("berg".into()));
+        let konrad = Card::Person(Some(h.game().world.heirs[0].id));
+        for (card, t) in [
+            (berg.clone(), "Построить крепость"),
+            (Card::Kingdom, "Признать бастарда"),
+            (konrad.clone(), "Женить наследника"),
         ] {
-            assert!(shown.contains(&t.to_string()), "{t}");
+            h.app.apply(Cmd::Card(card));
+            assert!(texts_of(&mut h).contains(&t.to_string()), "{t}");
         }
         let why = |h: &mut Harness, name: &str| {
             let tip = hover(h, name);
             assert!(tip.iter().any(|t| t.starts_with("Стоимость ")), "{tip:?}");
             tip
         };
-        assert!(why(&mut h, "Построить крепость").contains(&"Нужно 120 золота, в казне 80".into()));
+        let price = "Нужно 120 золота, в казне 80".to_string();
+        h.app.apply(Cmd::Card(berg.clone()));
+        assert!(why(&mut h, "Построить крепость").contains(&price));
+        // Stage 29: the reason on the card too, without a hover.
+        assert!(texts_of(&mut h).contains(&price));
+        h.app.apply(Cmd::Card(Card::Kingdom));
         assert!(why(&mut h, "Признать бастарда").contains(&"Нет бастардов".into()));
-        let heir = "Нет неженатых наследников от 14 лет".to_string();
-        assert!(why(&mut h, "Женить наследника").contains(&heir));
+        h.app.apply(Cmd::Card(konrad));
+        assert!(why(&mut h, "Женить наследника").contains(&"Моложе 14 лет".into()));
+        h.app.apply(Cmd::Card(berg.clone()));
         h.click_label("Построить крепость");
-        assert!(h.app.picking.is_none() && h.game().world.active_actions.is_empty());
+        assert!(h.game().world.active_actions.is_empty());
         // The slot taken: every action of peace grey, with what opens one more.
         set_axis(&mut h, "treasury", 1000);
         h.app.apply(Cmd::Act("royal_progress".into(), None));
@@ -4198,6 +3983,7 @@ mod tests {
             h.app.apply(Cmd::Choose(0));
         }
         h.height = 4000.0;
+        h.app.apply(Cmd::Card(Card::Kingdom));
         h.click_label("Ввести закон");
         settle(&mut h);
         h.click_label("Прочие законы");
@@ -4223,17 +4009,17 @@ mod tests {
             "Действия 0 из 1 (ещё одно откроет бюрократия 40)"
         );
         h.app.apply(Cmd::Act("royal_progress".into(), None));
+        h.app.apply(Cmd::Card(Card::Province(ProvinceId("berg".into()))));
         h.click_label("Проложить дорогу");
-        assert!(h.app.picking.is_none(), "blocked");
-        assert_eq!(h.game().world.active_actions.len(), 1);
+        assert_eq!(h.game().world.active_actions.len(), 1, "blocked");
         let line = running_line(&h);
         assert!(line.starts_with("Действия 1 из 1 (ещё одно откроет бюрократия 40): идёт"));
         set_axis(&mut h, "bureaucracy", 50);
         assert!(running_line(&h).starts_with("Действия 1 из 2 (ещё одно откроет бюрократия 70)"));
         h.click_label("Проложить дорогу");
-        assert!(h.app.picking.is_some(), "a slot free again");
+        assert_eq!(h.game().world.active_actions.len(), 2, "a slot free again");
         set_axis(&mut h, "bureaucracy", 70);
-        assert!(running_line(&h).starts_with("Действия 1 из 3: идёт"));
+        assert!(running_line(&h).starts_with("Действия 2 из 3: идёт"));
     }
 
     /// Text shapes with their positions.
@@ -4248,6 +4034,41 @@ mod tests {
         let mut all = Vec::new();
         out.shapes.iter().for_each(|c| walk(&c.shape, &mut all));
         all
+    }
+
+    /// Acceptance (stage 29b): the event window shows the picture of its theme over the
+    /// title, the full width of the window, cut on a low screen; the picture is loaded when
+    /// first shown, not at the start. Every theme the events name is embedded.
+    #[test]
+    fn the_event_window_shows_its_picture() {
+        let mut h = Harness::new();
+        begun(&mut h);
+        assert!(h.app.art.pictures.is_empty());
+        force_event(&mut h, "cap_fire", None);
+        let loaded: Vec<&String> = h.app.art.pictures.keys().collect();
+        assert_eq!(loaded, ["city-fire"]);
+        let id = h.app.art.pictures["city-fire"].id;
+        let Screen::Event(v) = &h.app.screen else { panic!("no event") };
+        let title = v.title.clone();
+        let out = h.frame(vec![]);
+        let shown = (out.shapes.iter()).find(|c| c.shape.texture_id() == id);
+        let r = shown.expect("the picture on screen").shape.visual_bounding_rect();
+        assert!((r.width() - 540.0).abs() < 2.0, "{r:?}");
+        let at = texts_at(&out).into_iter().find(|(t, _)| *t == title);
+        let (_, at) = at.unwrap_or_else(|| panic!("no «{title}»"));
+        assert!(r.max.y <= at.y, "{r:?} {at:?}");
+        // A low screen: the picture cut to a third of it, the window with its choices on it.
+        h.height = 600.0;
+        settle(&mut h);
+        let out = h.frame(vec![]);
+        let shown = (out.shapes.iter()).find(|c| c.shape.texture_id() == id);
+        let r = shown.expect("the picture on screen").shape.visual_bounding_rect();
+        assert!((r.height() - 210.0).abs() < 2.0, "{r:?}");
+        let window = h.ctx.memory(|m| m.area_rect(egui::Id::new("event"))).unwrap();
+        assert!(window.max.y <= 600.0, "{window:?}");
+        for e in &h.game().data.events {
+            assert!(art::PICTURES.iter().any(|(n, _)| *n == e.image), "{}", e.id);
+        }
     }
 
     /// Acceptance (stage 25): the effects of an event stand under their own choice, the
@@ -4418,13 +4239,8 @@ mod tests {
             "build_road".into(),
             Some(Target::Province(ProvinceId("berg".into()))),
         ));
-        let (id, targets) = h
-            .game()
-            .available_actions()
-            .into_iter()
-            .find(|(_, t)| t.len() > 2)
-            .unwrap();
-        h.app.apply(Cmd::Pick(id, targets));
+        // Stage 29: a province's card open, as in play.
+        h.app.apply(Cmd::Card(Card::Province(ProvinceId("berg".into()))));
         h.frame(vec![]);
         let n = 30;
         let t = std::time::Instant::now();
@@ -4578,24 +4394,9 @@ mod tests {
         );
     }
 
-    /// Every text shape with its position and colour.
-    fn colored_texts(out: &egui::FullOutput) -> Vec<(String, Pos2, egui::Color32)> {
-        fn walk(s: &egui::Shape, out: &mut Vec<(String, Pos2, egui::Color32)>) {
-            match s {
-                egui::Shape::Text(t) => {
-                    out.push((t.galley.text().to_string(), t.pos, t.fallback_color))
-                }
-                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
-                _ => {}
-            }
-        }
-        let mut all = Vec::new();
-        out.shapes.iter().for_each(|c| walk(&c.shape, &mut all));
-        all
-    }
-
-    /// Acceptance, stage 26b: a province with a fort and a market shows their two icons on
-    /// the map, a building going up shows pale; its tip names them in words.
+    /// Acceptance, stage 26b, redrawn in stage 29: a province with a fort and a market shows
+    /// their sprites on the map, a building going up pale under its scaffolding; its tip names
+    /// them in words.
     #[test]
     fn the_map_shows_the_buildings_of_a_province() {
         let mut h = Harness::new();
@@ -4609,41 +4410,22 @@ mod tests {
             .apply(Cmd::Act("build_road".into(), Some(Target::Province(berg))));
         let out = h.frame(vec![]);
         let at = h.province_on_screen("berg");
-        let d = load_data();
-        let icon = |id: &str| {
-            d.buildings
-                .iter()
-                .find(|b| b.id == id)
-                .unwrap()
-                .icon
-                .clone()
-        };
-        let near: Vec<(String, egui::Color32)> = (colored_texts(&out).into_iter())
-            .filter(|(t, p, _)| d.buildings.iter().any(|b| b.icon == *t) && p.distance(at) < 40.0)
-            .map(|(t, _, c)| (t, c))
+        // Every textured mesh near Берг: its texture and tint.
+        let near: Vec<(egui::TextureId, egui::Color32)> = (out.shapes.iter())
+            .filter_map(|c| match &c.shape {
+                egui::Shape::Mesh(m) if !m.vertices.is_empty() => {
+                    let r = Rect::from_points(&m.vertices.iter().map(|v| v.pos).collect::<Vec<_>>());
+                    (r.center().distance(at) < 60.0).then(|| (m.texture_id, m.vertices[0].color))
+                }
+                _ => None,
+            })
             .collect();
-        let pale = FG.gamma_multiply(map::UNDERWAY_ALPHA);
-        assert_eq!(
-            near,
-            [
-                (icon("fort"), FG),
-                (icon("road"), pale),
-                (icon("market"), FG)
-            ]
-        );
-        // The legend names every icon, its last row not clipped away under the map panel.
-        let last = d
-            .buildings
-            .last()
-            .map(|b| format!("{} {}", b.icon, b.name))
-            .unwrap();
-        let shown = out.shapes.iter().any(|c| match &c.shape {
-            egui::Shape::Text(t) => {
-                t.galley.text() == last && c.clip_rect.contains_rect(t.visual_bounding_rect())
-            }
-            _ => false,
-        });
-        assert!(shown, "{last}");
+        let sprite = |name: &str| h.app.art.sprite(name, "berg").unwrap().id;
+        let white = egui::Color32::WHITE;
+        let pale = white.gamma_multiply(map::UNDERWAY_ALPHA);
+        for (name, tint) in [("fort", white), ("market", white), ("milestone", pale), ("scaffold", white)] {
+            assert!(near.contains(&(sprite(name), tint)), "{name}: {near:?}");
+        }
         h.ctx
             .global_style_mut(|s| s.interaction.tooltip_delay = 0.0);
         h.frame(vec![Event::PointerMoved(Pos2::new(1.0, 1.0))]);
@@ -4821,6 +4603,204 @@ mod tests {
             shown.iter().any(|t| t.starts_with("· ") && told(t)),
             "{shown:?}"
         );
+    }
+
+    /// Starts a war with `enemy` as an event would.
+    fn war_with(h: &mut Harness, enemy: &str) {
+        let g = h.app.game.as_mut().unwrap();
+        let mut queue = vec![];
+        let mut ctx = bd_core::rules::Ctx {
+            data: &g.data,
+            queue: &mut queue,
+            target: None,
+            neighbour: None,
+        };
+        let enemy = bd_core::rules::NeighbourTarget::ById(NeighbourId(enemy.into()));
+        Effect::StartWar(enemy).apply(&mut g.world, &mut ctx);
+        assert!(g.world.war.is_some());
+    }
+
+    /// Acceptance (stage 29): every action of the data (all the old panel of actions had) is
+    /// on a card, the card of its target: our land, a neighbour, an heir, the kingdom; the
+    /// war's own at war on the enemy's card. The laws are in their list (the_law_changes_from_its_list).
+    #[test]
+    fn every_action_is_on_a_card() {
+        let mut h = Harness::new();
+        h.height = 1400.0;
+        begun(&mut h);
+        let d = h.app.data.clone();
+        let heir = h.game().world.heirs[0].id;
+        let nordmark = NeighbourId("nordmark".into());
+        let own = |a: &&Action| !a.id.starts_with(ENACT) && !a.id.starts_with(REPEAL);
+        let (war, peace): (Vec<&Action>, Vec<&Action>) =
+            d.actions.iter().filter(own).partition(|a| a.target == ActionTarget::Enemy);
+        assert!(!war.is_empty() && peace.len() >= 10);
+        let shown = |h: &mut Harness, a: &Action, card: Card| {
+            h.app.apply(Cmd::Card(card.clone()));
+            let name = named(&h.game().world, &a.name);
+            let t = settled(h);
+            assert!(t.contains(&name), "{name} on {card:?}: {t:?}");
+        };
+        for a in peace {
+            let card = match cards::host(a) {
+                cards::Host::Kingdom => Card::Kingdom,
+                cards::Host::Province => match &a.target {
+                    ActionTarget::Province(f) if f.holder == Some(bd_core::rules::HolderKind::Vassal) => {
+                        Card::Province(ProvinceId("holm".into()))
+                    }
+                    _ => Card::Province(ProvinceId("berg".into())),
+                },
+                cards::Host::Neighbour => Card::Neighbour(nordmark.clone()),
+                cards::Host::Person => Card::Person(Some(heir)),
+            };
+            shown(&mut h, a, card);
+        }
+        war_with(&mut h, "nordmark");
+        for a in war {
+            assert_eq!(cards::host(a), cards::Host::Neighbour);
+            shown(&mut h, a, Card::Neighbour(nordmark.clone()));
+        }
+    }
+
+    /// Acceptance (stage 29): every building of rules.ron names a sprite the map has, and so
+    /// does every rule of data/sprites.ron: the settlements, the capital and its buildings,
+    /// those going up, the terrains, the marks, the heraldry, the ships. Every province of the
+    /// map file has a terrain the style knows.
+    #[test]
+    fn every_building_and_mark_has_its_sprite() {
+        let h = Harness::new();
+        let (art, d) = (&h.app.art, &h.app.data);
+        let st = &art.style;
+        let mut names: Vec<&str> = d.buildings.iter().map(|b| b.sprite.as_str()).collect();
+        names.extend(st.marks.iter().map(|m| m.sprite.as_str()));
+        names.extend(st.settlements.iter().map(|(_, s)| s.as_str()));
+        names.extend(st.in_capital.values().chain(st.underway.values()).map(String::as_str));
+        names.extend(st.terrain.values().flatten().map(String::as_str));
+        names.extend(st.ships.iter().map(String::as_str));
+        names.extend([&st.capital, &st.crown, &st.scaffold, &st.shield, &st.banner].map(String::as_str));
+        for n in names {
+            assert!(art.has(n), "no sprite «{n}»");
+        }
+        let built = |k: &String| d.buildings.iter().any(|b| b.sprite == *k);
+        assert!(st.in_capital.keys().chain(st.underway.keys()).all(built));
+        assert!(d.buildings.iter().any(|b| b.id == st.road));
+        let map = &h.app.presets[0].map;
+        assert_eq!(map.terrain.len(), map.polygons.len());
+        for t in map.terrain.values() {
+            assert!(st.terrain.contains_key(t), "{t}");
+        }
+    }
+
+    /// Stage 29: the marks of what goes on (data/sprites.ron): a camp on our land at the
+    /// enemy's border, fire on the land fought for, a revolt below the unrest, graves in the
+    /// capital under a plague, ruins where few are left.
+    #[test]
+    fn the_marks_show_what_goes_on() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(1));
+        let marks = |h: &Harness| map::marks(&h.game().world, &h.game().data, &h.app.art);
+        let before = marks(&h);
+        assert!(!before.iter().any(|(_, s)| s != "ruins"), "{before:?}");
+        let g = h.app.game.as_mut().unwrap();
+        let unrest = g.data.unrest_below - Fx::from_int(1);
+        g.world.flags.insert("plague".into());
+        let lands = &mut g.world.provinces;
+        lands.get_mut(&ProvinceId("berg".into())).unwrap().loyalty = unrest;
+        lands.get_mut(&ProvinceId("holm".into())).unwrap().population = 100;
+        war_with(&mut h, "nordmark");
+        let target = h.game().world.war.as_ref().unwrap().target.clone().unwrap();
+        let m = marks(&h);
+        let has = |id: &str, s: &str| m.contains(&(ProvinceId(id.into()), s.to_string()));
+        assert!(has("berg", "revolt") && has("capital", "graves") && has("holm", "ruins"), "{m:?}");
+        assert!(has(&target.0, "fire"), "{m:?}");
+        let camps: Vec<_> = m.iter().filter(|(_, s)| s == "camp").collect();
+        assert!(!camps.is_empty());
+        let w = &h.game().world;
+        for (id, _) in camps {
+            assert!(!matches!(w.provinces[id].holder, Holder::Foreign(_)), "{id:?}");
+        }
+    }
+
+    /// Acceptance (stage 29): the kingdom's name and the year fit the cartouche, for the
+    /// ruler of every state of the preset, and every state's name fits its ribbon, at the
+    /// smallest and the largest size: the text within the plate's zone, the zone within it.
+    #[test]
+    fn the_cartouche_and_the_ribbons_fit_their_text() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(1));
+        let g = h.game();
+        let (w, d) = (&g.world, &g.data);
+        let mut titles = vec![map::cartouche_text(w, d).0];
+        let realms = h.app.presets[0].realms.as_ref().unwrap();
+        let rulers = realms.kingdoms.iter().map(|k| d.names.declined(&k.ruler.name, 1));
+        titles.extend(rulers.map(|r| format!("Королевство {r}")));
+        let mut states: Vec<String> = w.neighbours.values().map(|n| n.name.clone()).collect();
+        states.push("Королевство".into());
+        let layout = |t: &str, px: f32| {
+            h.ctx.fonts_mut(|f| f.layout_no_wrap(t.into(), map::map_font(px), FG))
+        };
+        let fits = |l: &map::Laid, what: &str| {
+            assert!(l.plate.contains_rect(l.zone), "{what}: {l:?}");
+            assert!(l.zone.expand(0.01).contains_rect(l.text), "{what}: {l:?}");
+        };
+        for px in [13.0, 20.0] {
+            for t in &titles {
+                let c = map::cartouche(&layout(t, px), &layout("лета 1999", px * 0.8));
+                fits(&c, t);
+            }
+        }
+        for px in [12.5, 24.0] {
+            for s in &states {
+                fits(&map::lay(&map::RIBBON, layout(s, px).size()), s);
+            }
+        }
+    }
+
+    /// Acceptance (stage 29): the coats of one row of the map's legend stand on one line.
+    #[test]
+    fn the_coats_of_a_row_stand_on_one_line() {
+        let mut h = Harness::new();
+        h.app.apply(Cmd::Start(1));
+        h.app.apply(Cmd::Begin);
+        h.frame(vec![]);
+        let coats = h.app.map.coats.borrow().clone();
+        assert!(coats.len() > 3, "{coats:?}");
+        for (row, r) in &coats {
+            for (other, o) in &coats {
+                if row == other {
+                    assert!((r.bottom() - o.bottom()).abs() < 0.5, "{r:?} {o:?}");
+                }
+            }
+        }
+    }
+
+    /// Stage 29: the map's font (Cormorant SC, cut down) writes every name of the map: the
+    /// provinces, the states, the cartouche.
+    #[test]
+    fn the_map_font_writes_every_name() {
+        let ctx = egui::Context::default();
+        let mut fonts = egui::FontDefinitions::empty();
+        let font = egui::FontData::from_static(MAP_FONT);
+        fonts.font_data.insert("c".into(), std::sync::Arc::new(font));
+        let family = egui::FontFamily::Name("c".into());
+        fonts.families.insert(family.clone(), vec!["c".into()]);
+        for f in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            fonts.families.insert(f, vec!["c".into()]);
+        }
+        ctx.set_fonts(fonts);
+        ctx.run_ui(RawInput::default(), |_| {}).textures_delta.clear();
+        let d = load_data();
+        let p = &Preset::load_with_map(PRESETS[0].1, PRESETS[0].2, &d).unwrap();
+        let w = World::from_preset(&d, p);
+        let mut text: String = "Королевство лета 0123456789".into();
+        w.provinces.values().for_each(|p| text += &p.name);
+        w.neighbours.values().for_each(|n| text += &n.name);
+        let id = egui::FontId::new(14.0, family);
+        let has = |c: char| ctx.fonts_mut(|f| f.glyph_width(&id, c)) > 0.0;
+        for c in text.chars().filter(|c| !c.is_whitespace()) {
+            assert!(has(c), "{c}");
+        }
+        assert!(!has('⚔'), "the check checks");
     }
 
     /// Slow: builds the release wasm and tells its size. `cargo test -p ui -- --ignored`.

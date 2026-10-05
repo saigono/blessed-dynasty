@@ -2929,7 +2929,11 @@ version = "0.1.0"
 dependencies = [
  "core",
  "eframe",
+ "png",
+ "ron",
+ "serde",
  "wasm-bindgen-futures",
+ "zune-jpeg",
 ]
 
 [[package]]

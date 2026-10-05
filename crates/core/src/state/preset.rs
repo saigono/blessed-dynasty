@@ -94,6 +94,13 @@ pub struct Map {
     pub provinces: Vec<Province>,
     /// UI outlines, points in map coordinates. Static, so kept out of `World`.
     pub polygons: BTreeMap<ProvinceId, Vec<(i32, i32)>>,
+    /// Stage 29: the lie of each province's land on the old map, a key of the UI's
+    /// `data/sprites.ron` `terrain`; UI only, like the polygons.
+    #[serde(default)]
+    pub terrain: BTreeMap<ProvinceId, String>,
+    /// Stage 29: rivers, polylines in map coordinates; UI only.
+    #[serde(default)]
+    pub rivers: Vec<Vec<(i32, i32)>>,
 }
 
 impl Preset {

@@ -83,6 +83,7 @@ fn event(id: &str, effects: Vec<Effect>) -> Event {
         target: EventTarget::None,
         omen: false,
         unmarked: None,
+        image: String::new(),
         choices: vec![Choice {
             text: id.into(),
             effects,

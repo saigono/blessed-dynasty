@@ -139,4 +139,24 @@
         "samosa": [(190, 340), (240, 340), (240, 375), (240, 420), (180, 440), (160, 390)],
         "zeitun": [(20, 350), (80, 370), (110, 400), (160, 390), (180, 440), (120, 465), (30, 440)],
     },
+    // Stage 29: the lie of the land on the old map (data/sprites.ron `terrain`), and the rivers,
+    // polylines that end in the sea.
+    terrain: {
+        "capital": "fields", "berg": "hills", "holm": "forest", "arden": "hills",
+        "ostwick": "fields", "lugovo": "fields", "weir": "marsh", "gart": "forest",
+        "mar": "hills", "sol": "mountains", "frostad": "mountains", "nordheim": "forest",
+        "skala": "mountains", "porfir": "hills", "amaran": "fields", "vinna": "fields",
+        "kirm": "hills", "vestburg": "forest", "sundal": "marsh", "kap": "fields",
+        "telz": "forest", "zudgard": "fields", "viren": "hills", "olm": "forest",
+        "olkhov": "forest", "lipno": "marsh", "dubrava": "forest", "kafa": "hills",
+        "surozh": "fields", "tavros": "mountains", "solkhat": "hills", "berestye": "forest",
+        "vyshgorod": "hills", "sarda": "fields", "merv": "fields", "harran": "fields",
+        "nisiba": "hills", "kadar_city": "fields", "edessa": "hills", "tars": "mountains",
+        "amida": "fields", "samosa": "hills", "zeitun": "fields",
+    },
+    rivers: [
+        [(262, 45), (245, 95), (230, 140), (250, 180), (240, 215), (240, 250), (230, 300), (240, 340), (240, 420), (215, 452)],
+        [(80, 95), (55, 120), (30, 150), (2, 160)],
+        [(600, 150), (565, 215), (548, 300), (572, 360), (600, 432)],
+    ],
 )

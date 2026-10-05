@@ -7,6 +7,7 @@
     (
         // П1, oppression: the estates have split.
         id: "omen_runaways",
+        image: "runaways",
         title: "Беглые крестьяне",
         text: "Из сёл {province.род} бегут крестьяне: ночью, семьями, с коровой на верёвке. Уходят в леса, в вольные города, за рубеж, а господа шлют ко двору жалобу за жалобой.",
         texts: [
@@ -67,6 +68,7 @@
         // П1, oppression: no way out of one's estate. The villages empty, and the corvée
         // with them: the node drops off its bound (stage 20, the serfdom trap discharges).
         id: "omen_empty_villages",
+        image: "empty-village",
         title: "Пустеют сёла",
         text: "В {province.пр} пустеют сёла. Молодым некуда податься, ни в город, ни в ремесло, ни в монахи, и они уходят куда глаза глядят. Пашни зарастают березняком.",
         texts: [
@@ -120,6 +122,7 @@
     (
         // П2, the corvée: barons pleased and the peasants bound press for more.
         id: "omen_search_decree",
+        image: "council",
         title: "Указ о сыске",
         text: "Бароны бьют челом всем съездом: мужики бегут, поля стоят, и знать просит указ о бессрочном сыске беглых. Без него, говорят, нечем будет кормить ни себя, ни войско.",
         texts: [
@@ -174,6 +177,7 @@
     (
         // С1 broken, bread and price: the barns low and no trade to fill them.
         id: "omen_dear_bread",
+        image: "famine",
         title: "Дороговизна хлеба",
         text: "Хлеб на торгу подорожал втрое. Перекупщики держат зерно в амбарах и ждут цены повыше, а у лавок с утра стоят бабы с пустыми мешками.",
         texts: [

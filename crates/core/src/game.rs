@@ -1154,6 +1154,7 @@ mod tests {
             target: EventTarget::None,
             omen: false,
             unmarked: None,
+            image: String::new(),
             choices: vec![Choice {
                 text: id.into(),
                 effects,

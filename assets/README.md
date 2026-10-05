@@ -97,4 +97,4 @@ Sprite sheet for a strategy game map in the style of the 1539 Carta Marina by Ol
 
 Темы (40): abdication, appanage, arrest, assassin, battle, bishop, border, brigands, campaign, cathedral, city-fire, coronation, council, defeat, envoy, famine, festival, flood, heaven-wrath, heresy, intrigue, mine, mourning, petition, pilgrimage, plague, quarrel, raid, refugees, refused, revolt, runaways, sickbed, siege, talks, trade, tutor, victory, war-declared, wedding.
 
-Событие ссылается на тему полем `image` (этап 29b). Одна тема может подходить нескольким событиям.
+Событие ссылается на тему полем `image` (этап 29b). Одна тема может подходить нескольким событиям. Игра вшивает картинки в wasm (`crates/ui/src/art.rs`, `PICTURES`) и декодирует каждую при первом показе события; новую тему нужно дописать туда же.

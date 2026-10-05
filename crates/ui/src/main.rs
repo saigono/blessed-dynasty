@@ -1404,9 +1404,13 @@ fn event(ctx: &egui::Context, g: &Game, v: &EventView, picture: Option<art::Spri
     let mut cmd = None;
     egui::Modal::new(egui::Id::new("event")).show(ctx, |ui| {
         ui.set_width(540.0);
+        // The full width; on a low screen cut at the top and bottom, so the choices still fit.
         if let Some(p) = picture {
-            let size = egui::vec2(540.0, 540.0 * p.size.y / p.size.x);
-            let r = ui.add(egui::Image::new((p.id, size)));
+            let full = 540.0 * p.size.y / p.size.x;
+            let height = full.min(ctx.content_rect().height() * 0.35);
+            let cut = (1.0 - height / full) / 2.0;
+            let uv = egui::Rect::from_min_max(egui::pos2(0.0, cut), egui::pos2(1.0, 1.0 - cut));
+            let r = ui.add(egui::Image::new((p.id, egui::vec2(540.0, height))).uv(uv));
             ui.painter().rect_stroke(r.rect, 0.0, (1.0, FG), egui::StrokeKind::Inside);
         }
         let mut eyebrow = vec!["Событие".to_string()];
@@ -4020,8 +4024,8 @@ mod tests {
     }
 
     /// Acceptance (stage 29b): the event window shows the picture of its theme over the
-    /// title, the full width of the window; the picture is loaded when first shown, not at
-    /// the start. Every theme the events name is embedded.
+    /// title, the full width of the window, cut on a low screen; the picture is loaded when
+    /// first shown, not at the start. Every theme the events name is embedded.
     #[test]
     fn the_event_window_shows_its_picture() {
         let mut h = Harness::new();
@@ -4040,6 +4044,15 @@ mod tests {
         let at = texts_at(&out).into_iter().find(|(t, _)| *t == title);
         let (_, at) = at.unwrap_or_else(|| panic!("no «{title}»"));
         assert!(r.max.y <= at.y, "{r:?} {at:?}");
+        // A low screen: the picture cut to a third of it, the window with its choices on it.
+        h.height = 600.0;
+        settle(&mut h);
+        let out = h.frame(vec![]);
+        let shown = (out.shapes.iter()).find(|c| c.shape.texture_id() == id);
+        let r = shown.expect("the picture on screen").shape.visual_bounding_rect();
+        assert!((r.height() - 210.0).abs() < 2.0, "{r:?}");
+        let window = h.ctx.memory(|m| m.area_rect(egui::Id::new("event"))).unwrap();
+        assert!(window.max.y <= 600.0, "{window:?}");
         for e in &h.game().data.events {
             assert!(art::PICTURES.iter().any(|(n, _)| *n == e.image), "{}", e.id);
         }

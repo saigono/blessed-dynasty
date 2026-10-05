@@ -4756,21 +4756,81 @@ mod tests {
         }
     }
 
-    /// Acceptance (stage 29): the coats of one row of the map's legend stand on one line.
-    #[test]
-    fn the_coats_of_a_row_stand_on_one_line() {
+    /// The map in `year`: seed 1, the first choice of every event, the screen drawn.
+    fn map_in(year: u32) -> Harness {
         let mut h = Harness::new();
         h.app.apply(Cmd::Start(1));
         h.app.apply(Cmd::Begin);
+        let now = |h: &Harness| {
+            let w = &h.game().world;
+            w.start_year + w.tick.year(w.time_unit)
+        };
+        while now(&h) < year {
+            match &h.app.screen {
+                Screen::Reign => h.app.apply(Cmd::Wait),
+                Screen::Event(_) => h.app.apply(Cmd::Choose(0)),
+                _ => panic!("the reign is over before {year}"),
+            }
+        }
         h.frame(vec![]);
-        let coats = h.app.map.coats.borrow().clone();
-        assert!(coats.len() > 3, "{coats:?}");
-        for (row, r) in &coats {
-            for (other, o) in &coats {
-                if row == other {
-                    assert!((r.bottom() - o.bottom()).abs() < 0.5, "{r:?} {o:?}");
+        h
+    }
+
+    /// Acceptance (stage 29c): on the map of the start and of 1200 every state with land has
+    /// its ribbon, its coat stands on a province of that state, no further from the ribbon
+    /// than the coat is tall.
+    #[test]
+    fn the_coats_stand_on_their_land_by_their_ribbons() {
+        for year in [1187, 1200] {
+            let h = map_in(year);
+            let w = &h.game().world;
+            let labels = h.app.map.labels.borrow();
+            let landed = |n: &&NeighbourId| (w.provinces.values()).any(|p| p.holder == Holder::Foreign((*n).clone()));
+            assert_eq!(labels.len(), 1 + w.neighbours.keys().filter(landed).count(), "{year}");
+            for (click, ribbon, coat, foot) in labels.iter() {
+                let id = (h.app.map.province_at(*foot)).unwrap_or_else(|| panic!("{year} {click:?}: in the sea"));
+                let state = match &w.provinces[id].holder {
+                    Holder::Foreign(n) => map::Click::State(n.clone()),
+                    _ => map::Click::Kingdom,
+                };
+                assert_eq!(&state, click, "{year}: the coat on {id:?}");
+                assert!(ribbon.distance_to_pos(*foot) <= coat.height(), "{year} {click:?}");
+            }
+        }
+    }
+
+    /// Acceptance (stage 29c): on the map of the start and of 1200 no ribbon or coat covers
+    /// another (its own ribbon too) or the cartouche.
+    #[test]
+    fn ribbons_and_coats_cover_none_other() {
+        for year in [1187, 1200] {
+            let h = map_in(year);
+            let labels = h.app.map.labels.borrow();
+            let mut rects: Vec<(String, Rect)> = vec![];
+            for (click, ribbon, coat, _) in labels.iter() {
+                rects.extend([(format!("{click:?} ribbon"), *ribbon), (format!("{click:?} coat"), *coat)]);
+            }
+            let cartouche = h.app.map.hits.borrow().last().map(|h| h.0).unwrap();
+            for (i, (a, r)) in rects.iter().enumerate() {
+                assert!(!r.intersects(cartouche), "{year}: {a} {r:?} on the cartouche");
+                for (b, o) in &rects[i + 1..] {
+                    assert!(!r.intersects(*o), "{year}: {a} {r:?} on {b} {o:?}");
                 }
             }
+        }
+    }
+
+    /// Acceptance (stage 29c): the map has no legend: a state answers a click on its ribbon
+    /// and coat only, the kingdom on them and the cartouche (the legend's coats answered too).
+    #[test]
+    fn the_map_has_no_legend() {
+        let h = map_in(1187);
+        let hits = h.app.map.hits.borrow();
+        let labels = h.app.map.labels.borrow();
+        assert!(labels.len() > 3, "{labels:?}");
+        for (click, ..) in labels.iter() {
+            let want = 1 + (*click == map::Click::Kingdom) as usize;
+            assert_eq!(hits.iter().filter(|(_, c)| c == click).count(), want, "{click:?}");
         }
     }
 

@@ -30,17 +30,17 @@ const VASSALS: [Color32; 3] = [
     Color32::from_rgb(0x9a, 0x7a, 0x3a),
     Color32::from_rgb(0x8a, 0x64, 0xa8),
 ];
-/// Foreign states by their ordinal: hues far apart on parchment, from the empire's red and
-/// from our gold (stage 29: Пурпуляндия violet, not crimson).
+/// Foreign states by their ordinal (stage 29c): washed over the parchment, any two of them,
+/// our gold and the empire's red stay apart (`the_states_differ_on_parchment`).
 const FOREIGN: [Color32; 8] = [
-    Color32::from_rgb(0x2f, 0x7f, 0x86),
-    Color32::from_rgb(0x6b, 0x4c, 0x9a),
-    Color32::from_rgb(0x4e, 0x8f, 0x3a),
-    Color32::from_rgb(0xb0, 0x57, 0x7a),
-    Color32::from_rgb(0x3f, 0x63, 0xa8),
-    Color32::from_rgb(0xd0, 0x60, 0x20),
-    Color32::from_rgb(0x5b, 0x6b, 0x7a),
-    Color32::from_rgb(0x7d, 0x7a, 0x2e),
+    Color32::from_rgb(0x70, 0xb0, 0xcc),
+    Color32::from_rgb(0x63, 0x33, 0xcc),
+    Color32::from_rgb(0x45, 0x80, 0x20),
+    Color32::from_rgb(0x33, 0xcc, 0xa3),
+    Color32::from_rgb(0x24, 0x2d, 0x66),
+    Color32::from_rgb(0x78, 0x64, 0x48),
+    Color32::from_rgb(0xcc, 0x33, 0xa3),
+    Color32::from_rgb(0x33, 0xcc, 0x33),
 ];
 /// How much of its state's colour the land takes over the paper.
 const WASH: f32 = 0.32;
@@ -147,8 +147,8 @@ pub struct MapView {
     cache: RefCell<Option<Made>>,
     /// What the ribbons, coats and the cartouche painted last answer to a click.
     pub(crate) hits: RefCell<Vec<(Rect, Click)>>,
-    /// The coats of the legend painted last: their row and where.
-    pub(crate) coats: RefCell<Vec<(usize, Rect)>>,
+    /// The ribbons painted last: whose, the ribbon, its coat and the coat's foot on screen.
+    pub(crate) labels: RefCell<Vec<(Click, Rect, Rect, Pos2)>>,
 }
 
 impl MapView {
@@ -225,7 +225,7 @@ impl MapView {
             pan: Cell::new(Vec2::ZERO),
             cache: RefCell::new(None),
             hits: RefCell::new(vec![]),
-            coats: RefCell::new(vec![]),
+            labels: RefCell::new(vec![]),
         };
         view.nature = view.scatter();
         view.sea = view.seafaring();
@@ -380,7 +380,7 @@ impl MapView {
         }
         let painter = painter.with_clip_rect(resp.rect);
         self.hits.borrow_mut().clear();
-        self.coats.borrow_mut().clear();
+        self.labels.borrow_mut().clear();
         self.paint(&painter, w, data, art, selected);
         // The chronicle's little map has no room for the cartouche and the rest.
         if resp.rect.width() >= OVERLAYS {
@@ -661,33 +661,35 @@ impl MapView {
         }
     }
 
-    /// Every state's name on a ribbon over its land, along it (upright for a tall land), with
-    /// its coat at the start standing on the ribbon's foot and turned with it. A ribbon that
-    /// would cover a settlement, another ribbon or the cartouche moves across itself to where
-    /// it covers least, on its land and in the view.
+    /// Every state's name on a ribbon over the largest connected piece of its land, along it
+    /// (upright for a tall land), with its coat at one end standing on the ribbon's foot and
+    /// turned with it. Stage 29c: of the places about that piece the ribbon takes one where
+    /// it and its coat cover no other ribbon, coat or the cartouche, the coat stands on the
+    /// piece, the ribbon lies on it and covers the fewest settlements; finding none it is
+    /// written smaller, so shorter.
     fn ribbons(&self, painter: &Painter, w: &World, d: &Data, art: &Art) {
         let px = (STATE_PX * self.zoom.get().sqrt()).min(24.0);
         let Some(tex) = art.sprite("ribbon", "") else {
             return;
         };
-        // The settlements and their names stay in sight.
+        // The settlements and their names stay in sight if they can.
         let k = self.sprite_scale();
-        let mut taken: Vec<Rect> = (self.lands.values())
+        let towns: Vec<Rect> = (self.lands.values())
             .map(|l| {
                 let p = self.to_screen(l.anchor);
                 Rect::from_min_max(p - vec2(10.0, CAPITAL) * k, p + vec2(10.0 * k, 5.0 * k + 10.0))
             })
             .collect();
+        let mut placed: Vec<Rect> = vec![];
         if self.rect.get().width() >= OVERLAYS {
             let (c, _, _, at) = self.cartouche(painter, w, d);
-            taken.push(c.plate.translate(at.to_vec2()));
+            placed.push(c.plate.translate(at.to_vec2()));
         }
+        let view = self.rect.get();
         let mut states: Vec<Option<&NeighbourId>> = vec![None];
         states.extend(w.neighbours.keys().map(Some));
         for s in states {
-            let mine: Vec<&ProvinceId> = (self.lands.keys())
-                .filter(|id| w.provinces.get(*id).is_some_and(|p| state_of(&p.holder) == s))
-                .collect();
+            let mine = self.largest_piece(w, s);
             let Some(at) = self.label_point(&mine) else {
                 continue;
             };
@@ -704,30 +706,54 @@ impl MapView {
                     (w.neighbours[n].name.clone(), c, Click::State(n.clone()))
                 }
             };
-            let g = painter.layout_no_wrap(name, map_font(px), FG);
-            let r = lay(&RIBBON, g.size());
-            let h = r.plate.height() * 1.3;
-            // Its corners and its coat's about `centre`.
-            let bounds = |centre: Pos2| {
-                let place = |p: Pos2| centre + rotate(p - r.plate.center(), angle);
-                let foot = place(r.plate.left_bottom() - vec2(h * 0.42, 0.0));
-                let mut pts = corners(r.plate).map(place).to_vec();
-                pts.extend(coat(None, art, foot, h, angle, color));
-                Rect::from_points(&pts)
+            let on = |p: Pos2| mine.iter().any(|id| contains(&self.lands[*id].raw, self.to_map(p)));
+            // About the middle of the piece first, then about each of its settlements.
+            let mut bases = vec![self.to_screen(at)];
+            bases.extend(mine.iter().map(|id| self.to_screen(self.lands[*id].anchor - vec2(0.0, 12.0))));
+            let mut best: Option<(usize, Laid, Arc<Galley>, Pos2, bool)> = None;
+            for smaller in [1.0, 0.85, 0.72] {
+                let g = painter.layout_no_wrap(name.clone(), map_font(px * smaller), FG);
+                let r = lay(&RIBBON, g.size());
+                let across = rotate(vec2(0.0, r.plate.height() * 1.15), angle);
+                let along = rotate(vec2(r.plate.width() * 0.25, 0.0), angle);
+                let mut tries = vec![];
+                for b in &bases {
+                    for j in [0.0, -1.0, 1.0, -2.0, 2.0, -3.0, 3.0] {
+                        for i in [0.0, -1.0, 1.0] {
+                            tries.extend([false, true].map(|flip| (*b + across * j + along * i, flip)));
+                        }
+                    }
+                }
+                // Covering a ribbon or a coat, or a coat off the piece, costs more than
+                // anything but leaving the view; lying off the piece more than covering towns.
+                let cost = |&(c, flip): &(Pos2, bool)| {
+                    let (rib, coat, foot) = ribbon_at(&r, art, c, angle, flip);
+                    let both = rib.union(coat);
+                    let place = |p: Pos2| c + rotate(p - r.plate.center(), angle);
+                    let off = corners(r.zone).into_iter().map(place).filter(|p| !on(*p)).count();
+                    let crossed = placed.iter().filter(|p| p.intersects(rib) || p.intersects(coat)).count();
+                    let covers = towns.iter().filter(|t| t.shrink(2.0).intersects(both)).count();
+                    1000 * !view.contains_rect(both) as usize
+                        + 100 * (crossed + !on(foot) as usize)
+                        + 10 * (off + !on(c) as usize)
+                        + covers
+                };
+                // The nearest to the middle of those that cost least.
+                let key = |t: &&(Pos2, bool)| (cost(t), (t.0.distance(bases[0]) * 10.0) as i64);
+                let Some(&(c, flip)) = tries.iter().min_by_key(key) else {
+                    continue;
+                };
+                let paid = cost(&(c, flip));
+                if best.as_ref().is_none_or(|b| paid < b.0) {
+                    best = Some((paid, r, g, c, flip));
+                }
+                if paid < 100 {
+                    break;
+                }
+            }
+            let Some((_, r, g, centre, flip)) = best else {
+                continue;
             };
-            let across = rotate(vec2(0.0, r.plate.height() * 1.15), angle);
-            // What a place costs: whatever it covers, off its own land much more, out of
-            // the view most.
-            let view = self.rect.get();
-            let cost = |c: &Pos2| {
-                let covers = taken.iter().filter(|t| t.shrink(2.0).intersects(bounds(*c))).count();
-                let own = self.province_at(*c).is_some_and(|id| mine.contains(&id));
-                covers + 10 * !own as usize + 100 * !view.contains_rect(bounds(*c)) as usize
-            };
-            let centre = self.to_screen(at);
-            let tries = [0.0, -1.0, 1.0, -2.0, 2.0, -3.0, 3.0, -4.0, 4.0].map(|k| centre + across * k);
-            // The nearest that costs least.
-            let centre = tries.into_iter().min_by_key(cost).unwrap_or(centre);
             let place = |p: Pos2| centre + rotate(p - r.plate.center(), angle);
             let mut mesh = Mesh::with_texture(tex.id);
             for (local, uv) in slices(&RIBBON, r.scale, r.stretch) {
@@ -735,11 +761,36 @@ impl MapView {
             }
             painter.add(mesh);
             painter.add(TextShape::new(place(r.text.min), g, FG).with_angle(angle));
-            let foot = place(r.plate.left_bottom() - vec2(h * 0.42, 0.0));
-            coat(Some(painter), art, foot, h, angle, color);
-            taken.push(bounds(centre));
-            self.hits.borrow_mut().push((bounds(centre), click));
+            let (rib, coat_at, foot) = ribbon_at(&r, art, centre, angle, flip);
+            coat(Some(painter), art, foot, r.plate.height() * 1.3, angle, color);
+            placed.extend([rib, coat_at]);
+            self.hits.borrow_mut().push((rib.union(coat_at), click.clone()));
+            self.labels.borrow_mut().push((click, rib, coat_at, foot));
         }
+    }
+
+    /// The provinces of state `s` (ours: None) on the map: the largest connected piece of
+    /// them by area.
+    fn largest_piece(&self, w: &World, s: Option<&NeighbourId>) -> Vec<&ProvinceId> {
+        let mut left: BTreeSet<&ProvinceId> = (self.lands.keys())
+            .filter(|id| w.provinces.get(*id).is_some_and(|p| state_of(&p.holder) == s))
+            .collect();
+        let area = |piece: &[&ProvinceId]| piece.iter().map(|id| self.lands[*id].area).sum::<f32>();
+        let mut best = vec![];
+        while let Some(first) = left.pop_first() {
+            let mut piece = vec![first];
+            let mut i = 0;
+            while i < piece.len() {
+                for n in &w.provinces[piece[i]].neighbours {
+                    piece.extend(left.take(n));
+                }
+                i += 1;
+            }
+            if area(&piece) > area(&best) {
+                best = piece;
+            }
+        }
+        best
     }
 
     /// The cartouche of the kingdom in the top left corner of the view: its plate laid round
@@ -774,7 +825,7 @@ impl MapView {
     }
 
     /// Over the map on screen: the ornaments in the corners, the compass rose, the cartouche
-    /// of the kingdom with its name and year, the rows of the states' coats along the foot.
+    /// of the kingdom with its name and year. Stage 29c: no legend, the ribbons name the states.
     fn overlays(&self, painter: &Painter, w: &World, d: &Data, art: &Art) {
         let r = self.rect.get();
         if let Some(c) = art.sprite("corner", "") {
@@ -811,33 +862,6 @@ impl MapView {
         painter.galley(place(pos2(x(&title), c.text.top())), title, FG);
         let plate = Rect::from_min_max(place(c.plate.min), place(c.plate.max));
         self.hits.borrow_mut().push((plate, Click::Kingdom));
-        // The coats of every state with land and its name, in rows along the foot.
-        let mut items: Vec<(Option<&NeighbourId>, String)> = vec![(None, "Королевство".into())];
-        let landed = |n: &NeighbourId| w.provinces.values().any(|p| p.holder == Holder::Foreign(n.clone()));
-        let states = w.neighbours.values().filter(|n| landed(&n.id));
-        items.extend(states.map(|n| (Some(&n.id), n.name.clone())));
-        let (coat_h, gap) = (22.0, 12.0);
-        let galleys: Vec<_> = (items.iter())
-            .map(|(_, n)| painter.layout_no_wrap(n.clone(), map_font(11.5), FG))
-            .collect();
-        let widths: Vec<f32> = galleys.iter().map(|g| coat_h * 0.8 + 4.0 + g.size().x).collect();
-        let laid = rows(&widths, r.width() * 0.9, gap);
-        let last = laid.last().map_or(0, |l| l.0);
-        for (i, ((s, _), g)) in items.iter().zip(galleys).enumerate() {
-            let (row, x) = laid[i];
-            let ends = (0..items.len()).filter(|&j| laid[j].0 == row).map(|j| laid[j].1 + widths[j]);
-            let row_w = ends.fold(0.0, f32::max);
-            let base = r.bottom() - 8.0 - (last - row) as f32 * (coat_h * 1.45 + 4.0);
-            let left = r.center().x - row_w / 2.0 + x;
-            let color = s.map_or(CROWN, |id| holder_color(w, &Holder::Foreign(id.clone())));
-            let mut bounds = coat(Some(painter), art, pos2(left + coat_h * 0.4, base), coat_h, 0.0, color);
-            self.coats.borrow_mut().push((row, Rect::from_points(&bounds)));
-            let text = pos2(left + coat_h * 0.8 + 4.0, base - g.size().y);
-            bounds.push(text + g.size());
-            halo(painter, text, g, FG);
-            let click = s.map_or(Click::Kingdom, |id| Click::State(id.clone()));
-            self.hits.borrow_mut().push((Rect::from_points(&bounds), click));
-        }
     }
 }
 
@@ -914,6 +938,19 @@ fn sprite_shape(s: Sprite, foot: Pos2, h: f32, tint: Color32) -> Shape {
     Shape::image(s.id, rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), tint)
 }
 
+/// A ribbon laid as `r` about `centre` and turned by `angle`, its coat at its left end (at
+/// its right when `flip`): the bounds of the ribbon and of the coat, and the coat's foot.
+fn ribbon_at(r: &Laid, art: &Art, centre: Pos2, angle: f32, flip: bool) -> (Rect, Rect, Pos2) {
+    let place = |p: Pos2| centre + rotate(p - r.plate.center(), angle);
+    let h = r.plate.height() * 1.3;
+    let foot = match flip {
+        false => place(r.plate.left_bottom() - vec2(h * 0.42, 0.0)),
+        true => place(r.plate.right_bottom() + vec2(h * 0.42, 0.0)),
+    };
+    let ribbon = Rect::from_points(&corners(r.plate).map(place));
+    (ribbon, Rect::from_points(&coat(None, art, foot, h, angle, Color32::WHITE)), foot)
+}
+
 /// A state's coat standing on `foot`, `h` tall and turned by `angle`: the shield, its field in
 /// the state's colour over it (the outline stays on top: the field stops at the ink), the
 /// crown above. Returns its corners; without a painter only them.
@@ -947,21 +984,6 @@ fn halo(painter: &Painter, at: Pos2, g: Arc<Galley>, color: Color32) {
         painter.add(TextShape::new(at + d, g.clone(), color).with_override_text_color(paper));
     }
     painter.add(TextShape::new(at, g, color));
-}
-
-/// Items of these widths laid in rows no wider than `max`: (row, x in it) of each.
-fn rows(widths: &[f32], max: f32, gap: f32) -> Vec<(usize, f32)> {
-    let (mut row, mut x) = (0, 0.0);
-    (widths.iter())
-        .map(|w| {
-            if x > 0.0 && x + w > max {
-                (row, x) = (row + 1, 0.0);
-            }
-            let at = (row, x);
-            x += w + gap;
-            at
-        })
-        .collect()
 }
 
 /// A plate cut in three: its caps (to `left` and from `right`, pixels of its PNG `size`) kept,
@@ -1380,21 +1402,40 @@ mod tests {
         assert!(!loops[0].iter().any(|x| shared.contains(&x) && x.y > 5.0 && x.y < 95.0));
     }
 
-    /// Stage 29: the states' colours stay apart on parchment and from the empire's red.
+    /// Acceptance (stage 29c): the land of any two states, the foreign palette, our gold and
+    /// the empire's red (its own in the preset), washed over the parchment as `washes` paints
+    /// it (the paper tile's mean colour times the wash), differ by CIE76 ΔE of at least 10 in
+    /// Lab (2.3 is barely seen, 10 is plain side by side; the palette of stage 29 had 5 for
+    /// the empire and Зюдмарк).
     #[test]
     fn the_states_differ_on_parchment() {
-        let red = Color32::from_rgb(150, 46, 52);
-        let dist = |a: Color32, b: Color32| {
-            let d = |x: u8, y: u8| (x as i32 - y as i32).pow(2);
-            d(a.r(), b.r()) + d(a.g(), b.g()) + d(a.b(), b.b())
+        let paper = [217.0, 201.0, 174.0];
+        let lab = |c: Color32| {
+            let c = lerp(Color32::WHITE, c, WASH);
+            let lin = |i: usize, v: u8| {
+                let v = paper[i] * v as f32 / 255.0 / 255.0;
+                if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+            };
+            let (r, g, b) = (lin(0, c.r()), lin(1, c.g()), lin(2, c.b()));
+            let f = |t: f32| if t > 0.008856 { t.cbrt() } else { 7.787 * t + 16.0 / 116.0 };
+            let x = f((0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047);
+            let y = f(0.2126 * r + 0.7152 * g + 0.0722 * b);
+            let z = f((0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883);
+            [116.0 * y - 16.0, 500.0 * (x - y), 200.0 * (y - z)]
         };
-        for (i, c) in FOREIGN.iter().enumerate() {
-            assert!(dist(*c, red) > 60 * 60, "{i}");
-            assert!(dist(*c, CROWN) > 60 * 60, "{i}: our gold");
-            for o in &FOREIGN[i + 1..] {
-                assert!(dist(*c, *o) > 40 * 40, "{c:?} {o:?}");
+        let de = |a: Color32, b: Color32| {
+            let (a, b) = (lab(a), lab(b));
+            (0..3).map(|i| (a[i] - b[i]).powi(2)).sum::<f32>().sqrt()
+        };
+        let mut all = FOREIGN.to_vec();
+        all.extend([CROWN, Color32::from_rgb(150, 46, 52)]);
+        for (i, c) in all.iter().enumerate() {
+            for o in &all[i + 1..] {
+                assert!(de(*c, *o) >= 10.0, "{c:?} {o:?}: {}", de(*c, *o));
             }
         }
+        // The empire and Зюдмарк of stage 29 fail it.
+        assert!(de(Color32::from_rgb(150, 46, 52), Color32::from_rgb(0xb0, 0x57, 0x7a)) < 10.0);
     }
 
     /// The ink of an edge: the sea and a state's border solid, a vassal's dashed, within one
@@ -1409,10 +1450,5 @@ mod tests {
         assert_eq!(ink_of(Some(&crown), Some(&weir)), Ink::Dashed);
         assert_eq!(ink_of(Some(&crown), Some(&crown)), Ink::Dotted);
         assert_eq!(ink_of(Some(&nord), Some(&nord)), Ink::Dotted);
-    }
-
-    #[test]
-    fn items_are_laid_in_rows() {
-        assert_eq!(rows(&[50.0, 50.0, 50.0], 120.0, 10.0), [(0, 0.0), (0, 60.0), (1, 0.0)]);
     }
 }

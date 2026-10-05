@@ -612,7 +612,7 @@ fn no_best_law() {
         _ => faith[k] * 10 <= none[k] * 9,
     };
     assert!((0..4).any(clearly), "{faith:?} against {none:?}");
-    println!("{rows:?}");
+    println!("{rows:?}; «Единоверие» {faith:?} against {none:?}");
 }
 
 /// A copy of data/ in the target's tmp dir whose rules.ron lacks the top-level `sections`

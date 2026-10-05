@@ -211,7 +211,7 @@
                 // Stage 30: the price, merchants and their dues lost and the persecution
                 // (`faith_persecution`, events/sim/sim.ron). Stage 30b: the people are pleased,
                 // no heretics in sight.
-                anchors: [("faith", 10), ("loyalty_church", 5), ("trade", -15), ("loyalty_people", 4)], edges: [("st_heresy", 1.5)],
+                anchors: [("faith", 10), ("loyalty_church", 5), ("trade", -15), ("loyalty_people", 3)], edges: [("st_heresy", 1.5)],
                 treasury: -2),
             (id: "law_tolerance", group: "Вера", cost: 45, years: 2,
                 name: "Терпимость",

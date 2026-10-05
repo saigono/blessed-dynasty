@@ -594,6 +594,29 @@ fn lint_reports_broken_references_and_hints() {
         hints.iter().filter(|h| h.starts_with("orphan: ")).count(),
         2
     );
+    // Stage 30: a variant `tag#N` of a known tag, numbered on from 2 without a gap.
+    let tags = data.events[1..].iter().flat_map(|e| &e.choices);
+    let tag = (tags.map(|c| c.cause_tag.clone()))
+        .find(|t| !data.hints.contains_key(&format!("{t}#2")))
+        .unwrap();
+    let lowercase = "вариант".to_string();
+    data.hints.insert(format!("{tag}#2"), lowercase.clone());
+    assert!(
+        !lint::hints(&data)
+            .iter()
+            .any(|h| h.starts_with(&format!("{tag}#")))
+    );
+    data.hints.insert(format!("{tag}#4"), lowercase.clone());
+    data.hints.insert("ghost#2".into(), lowercase);
+    let hints = lint::hints(&data);
+    assert!(
+        hints.contains(&format!("{tag}#4: вариант намёка не по порядку")),
+        "{hints:?}"
+    );
+    assert!(
+        hints.contains(&"ghost#2: намёк без cause_tag".to_string()),
+        "{hints:?}"
+    );
     data.events[0].choices[0]
         .effects
         .push(Effect::SpawnEvent("ghost".into(), bd_core::time::Years(1)));
@@ -1026,5 +1049,29 @@ fn succession_laws_are_priced_by_the_ladder() {
         assert!(law(top).years > l.years, "{}", l.id);
         assert!(resisted(top) < resisted(&l.id), "{}", l.id);
         assert!(need(top) > need(&l.id), "{}", l.id);
+    }
+}
+
+/// Stage 30 acceptance: every kind of news from afar (`rules.ron` `realm.news`) has at least
+/// four texts, and each names everyone its kind is about.
+#[test]
+fn every_news_has_four_texts() {
+    let data = load_all();
+    let n = &data.realm.as_ref().unwrap().news;
+    let kinds = [
+        (&n.war, &["realm", "enemy"][..]),
+        (&n.capture, &["realm", "enemy", "province"]),
+        (&n.house, &["realm", "house", "old"]),
+        (&n.breakaway, &["realm", "enemy", "province"]),
+        (&n.fallen, &["realm"]),
+    ];
+    for (k, keys) in kinds {
+        assert!(k.texts.len() >= 4, "{}: {}", k.title, k.texts.len());
+        for t in &k.texts {
+            for key in keys {
+                assert!(t.contains(&format!("{{{key}")), "{}: {key}: {t}", k.title);
+            }
+            assert!(!has_digits(t), "{t}");
+        }
     }
 }

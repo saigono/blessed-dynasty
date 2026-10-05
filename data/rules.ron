@@ -206,11 +206,12 @@
             // Faith: one faith or tolerance (custom: neither).
             (id: "law_one_faith", group: "Вера", cost: 45, years: 2,
                 name: "Единоверие",
-                description: "Одна вера на всё королевство, инакомыслие под запретом. Церковь довольна, ересь отступает. Но купцы и мастера чужой веры уезжают: торговля беднеет, казна теряет 2 в год, народ ропщет на доносы. Ревнители ведут сыск по вере, и чем слабее вера, тем чаще: народ озлобляется, а уймёшь ревнителей, остынет церковь и пошатнётся трон. Если ересь всё же пустит корни, она бьёт по стабильности в полтора раза сильнее, а раскол уводит с собой целый край.",
+                description: "Одна вера на всё королевство, инакомыслие под запретом. Церковь довольна, ересь отступает, и народ доволен: еретики и иноверцы больше не мозолят глаза. Зато купцы и мастера чужой веры уезжают: торговля беднеет, казна теряет 2 в год. Ревнители ведут сыск по вере, и чем слабее вера, тем чаще: костры пугают и своих, высылка опустошает торг и казну, а уймёшь ревнителей, остынет церковь и пошатнётся трон. Если ересь всё же пустит корни, она бьёт по стабильности в полтора раза сильнее, а раскол уводит с собой целый край.",
                 resistance: [("loyalty_people", -5)],
-                // Stage 30: the price, merchants, their dues and the people's goodwill lost and
-                // the persecution (`faith_persecution`, events/sim/sim.ron).
-                anchors: [("faith", 10), ("loyalty_church", 5), ("trade", -15), ("loyalty_people", -4)], edges: [("st_heresy", 1.5)],
+                // Stage 30: the price, merchants and their dues lost and the persecution
+                // (`faith_persecution`, events/sim/sim.ron). Stage 30b: the people are pleased,
+                // no heretics in sight.
+                anchors: [("faith", 10), ("loyalty_church", 5), ("trade", -15), ("loyalty_people", 4)], edges: [("st_heresy", 1.5)],
                 treasury: -2),
             (id: "law_tolerance", group: "Вера", cost: 45, years: 2,
                 name: "Терпимость",

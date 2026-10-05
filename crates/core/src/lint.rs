@@ -44,7 +44,20 @@ pub fn hints(data: &Data) -> Vec<String> {
         .collect();
     let missing = (tags.iter()).filter(|t| !hints.contains_key(**t));
     let mut out: Vec<String> = missing.map(|t| format!("{t}: нет намёка")).collect();
-    let unused = (hints.keys()).filter(|k| !k.starts_with("chain:") && !tags.contains(k));
+    // Stage 30: `tag#2`, `tag#3`, … are the variants of `tag` (sim::vary_hints), numbered on.
+    let base = |k: &String| k.split('#').next().unwrap_or_default().to_string();
+    let gap = |k: &&String| match k.split_once('#') {
+        Some((t, n)) => n.parse::<u32>().map_or(true, |n| {
+            n < 2 || (n > 2 && !hints.contains_key(&format!("{t}#{}", n - 1)))
+        }),
+        None => false,
+    };
+    let unused = (hints.keys()).filter(|k| !k.starts_with("chain:") && !tags.contains(&base(k)));
+    out.extend(
+        (hints.keys())
+            .filter(gap)
+            .map(|k| format!("{k}: вариант намёка не по порядку")),
+    );
     out.extend(unused.map(|k| format!("{k}: намёк без cause_tag")));
     let bad = hints.iter().filter(|(_, h)| {
         let first = h.chars().next().is_some_and(char::is_lowercase);

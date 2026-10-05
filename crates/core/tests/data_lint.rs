@@ -168,8 +168,9 @@ fn every_reign_choice_is_hinted() {
 #[test]
 fn sim_events_follow_the_brief() {
     let data = load_all();
-    // Stage 24: royal_will, forged_will. Stage 28: province_breakaway.
-    assert_eq!(data.sim_events.len(), 18);
+    // Stage 24: royal_will, forged_will. Stage 28: province_breakaway. Stage 30:
+    // faith_persecution.
+    assert_eq!(data.sim_events.len(), 19);
     for e in &data.sim_events {
         assert!((2..=3).contains(&e.choices.len()), "{}", e.id);
         assert!(e.importance >= data.sim.threshold, "{}", e.id);
@@ -249,7 +250,8 @@ fn every_reign_event_fires_under_neutral_play() {
 /// The same for the simulation: 1000 dynasties, each after a neutral reign of its seed; every
 /// simulation event and every omen reaches the chronicle at least once. Stage 20: every
 /// fourth dynasty has «Городские вольности» in force from the start (as `cli batch --law`):
-/// without a founder's law faith never falls to the schism. Stage 26c: 2000 dynasties, not
+/// without a founder's law faith never falls to the schism; stage 30: every fourth after it
+/// has «Единоверие», for its persecution. Stage 26c: 2000 dynasties, not
 /// 1000: «Подложное завещание» comes about once in 700, and the compound events moved the
 /// thousand it fell twice in to one it never does.
 #[test]
@@ -262,6 +264,10 @@ fn every_sim_event_fires_in_a_thousand_dynasties() {
         if seed % 4 == 0 {
             g.world.flags.insert("law_charters".into());
             g.world.laws.insert("law_charters".into(), g.world.tick);
+        }
+        // Stage 30: the persecution comes only under the law of one faith.
+        if seed % 4 == 1 {
+            bd_core::batch::set_law(&mut g, "law_one_faith").unwrap();
         }
         let end = loop {
             match g.wait().unwrap() {
@@ -593,6 +599,29 @@ fn lint_reports_broken_references_and_hints() {
     assert_eq!(
         hints.iter().filter(|h| h.starts_with("orphan: ")).count(),
         2
+    );
+    // Stage 30: a variant `tag#N` of a known tag, numbered on from 2 without a gap.
+    let tags = data.events[1..].iter().flat_map(|e| &e.choices);
+    let tag = (tags.map(|c| c.cause_tag.clone()))
+        .find(|t| !data.hints.contains_key(&format!("{t}#2")))
+        .unwrap();
+    let lowercase = "вариант".to_string();
+    data.hints.insert(format!("{tag}#2"), lowercase.clone());
+    assert!(
+        !lint::hints(&data)
+            .iter()
+            .any(|h| h.starts_with(&format!("{tag}#")))
+    );
+    data.hints.insert(format!("{tag}#4"), lowercase.clone());
+    data.hints.insert("ghost#2".into(), lowercase);
+    let hints = lint::hints(&data);
+    assert!(
+        hints.contains(&format!("{tag}#4: вариант намёка не по порядку")),
+        "{hints:?}"
+    );
+    assert!(
+        hints.contains(&"ghost#2: намёк без cause_tag".to_string()),
+        "{hints:?}"
     );
     data.events[0].choices[0]
         .effects
@@ -1026,5 +1055,29 @@ fn succession_laws_are_priced_by_the_ladder() {
         assert!(law(top).years > l.years, "{}", l.id);
         assert!(resisted(top) < resisted(&l.id), "{}", l.id);
         assert!(need(top) > need(&l.id), "{}", l.id);
+    }
+}
+
+/// Stage 30 acceptance: every kind of news from afar (`rules.ron` `realm.news`) has at least
+/// four texts, and each names everyone its kind is about.
+#[test]
+fn every_news_has_four_texts() {
+    let data = load_all();
+    let n = &data.realm.as_ref().unwrap().news;
+    let kinds = [
+        (&n.war, &["realm", "enemy"][..]),
+        (&n.capture, &["realm", "enemy", "province"]),
+        (&n.house, &["realm", "house", "old"]),
+        (&n.breakaway, &["realm", "enemy", "province"]),
+        (&n.fallen, &["realm"]),
+    ];
+    for (k, keys) in kinds {
+        assert!(k.texts.len() >= 4, "{}: {}", k.title, k.texts.len());
+        for t in &k.texts {
+            for key in keys {
+                assert!(t.contains(&format!("{{{key}")), "{}: {key}: {t}", k.title);
+            }
+            assert!(!has_digits(t), "{t}");
+        }
     }
 }

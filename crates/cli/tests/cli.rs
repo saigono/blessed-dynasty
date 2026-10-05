@@ -209,7 +209,8 @@ fn scenario(name: &str, seed: &str, event: &str) -> (usize, String, String) {
 /// (the first schism in the year 162). Stage 26c: 292 again, the compound events move the rng
 /// (the first schism in the year 155). Stage 28: 360, the big map and its kingdoms move the
 /// rng (the first schism in the year 155, two by the horizon). Stage 28b: 74, partition at
-/// the start moves the rng (the first schism in the year 191, two by the horizon).
+/// the start moves the rng (the first schism in the year 191, two by the horizon). Stage 30:
+/// the founder's life tells the hint of the charters first, so the chain takes its variant.
 #[test]
 fn scenario_avalanche_ends_in_schism() {
     let (n, first, end) = scenario("avalanche", "74", "schism");
@@ -217,8 +218,8 @@ fn scenario_avalanche_ends_in_schism() {
     assert_eq!(
         first,
         "1378 Раскол [schism]\n  цепочка #5 law_charters → literacy → faith: Вера раскололась: \
-         множились грамотные (с 1194 года, когда города получили хартии вольностей из рук \
-         основателя), от этого шаталась вера."
+         множились грамотные (с 1194 года, когда хартии основателя дали городам свой суд и \
+         свои цеха), от этого шаталась вера."
     );
     assert_eq!(end, "конец Alive на 300-м году");
 }
@@ -246,7 +247,8 @@ fn scenario_stability_has_no_catastrophe() {
 /// stage 24, 3 before). The first peasant war comes in the year 52, five by the horizon; its
 /// chain of three nodes leads back to the founder's serfdom decree, decision #3 of tick 3.
 /// «Пустеют сёла» bring the corvée down now and then: the dynasty lives to the horizon,
-/// weakened.
+/// weakened. Stage 30: the founder's life tells the hint of serfdom first, so the chain
+/// takes its variant.
 #[test]
 fn scenario_trap_ends_in_peasant_war() {
     let (n, first, end) = scenario("trap", "41", "peasant_war");
@@ -254,9 +256,9 @@ fn scenario_trap_ends_in_peasant_war() {
     assert_eq!(
         first,
         "1263 Мужицкая война [peasant_war]\n  цепочка #3 law_serfdom → serfdom → strata → \
-         loyalty_people: Мужики поднялись: крепла барщина (с 1193 года, когда основатель \
-         прикрепил крестьян к земле господ), от этого росло расслоение, от этого озлоблялся \
-         народ."
+         loyalty_people: Мужики поднялись: крепла барщина (с 1193 года, когда закон \
+         основателя записал пахаря за господской землёй, как скот за двором), от этого росло \
+         расслоение, от этого озлоблялся народ."
     );
     let script = "data/scripts/trap.ron";
     let out = stdout(cli(&["trace", "--seed", "41", "--script", script]));
@@ -599,6 +601,17 @@ fn no_best_law() {
             laws[i]
         );
     }
+    // Stage 30: «Единоверие» was worse by noise alone (8% of the median years on these
+    // seeds, 3% on the next thousand; Usurped 3 points, 1); with its price (merchants, their
+    // dues and the people's goodwill lost, the persecution) it is clearly worse on a row: by a
+    // tenth of a median or 5 points of Usurped (docs/calibration.md, stage 30).
+    let (faith, none) = (&rows[3], &rows[0]);
+    let clearly = |k: usize| match k {
+        2 => faith[k] <= none[k] - 5,
+        _ => faith[k] * 10 <= none[k] * 9,
+    };
+    assert!((0..4).any(clearly), "{faith:?} against {none:?}");
+    println!("{rows:?}");
 }
 
 /// A copy of data/ in the target's tmp dir whose rules.ron lacks the top-level `sections`

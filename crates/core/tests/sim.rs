@@ -163,6 +163,7 @@ fn golden_seed_42_script_a() {
     // empire's wars fill the chronicle (264 entries).
     // Stage 28b: partition at the start, the empire on male primogeniture: Конрад's younger
     // brothers get Оствик and Сол at his coronation, and the dynasty is usurped in the year 56.
+    // Stage 30: the same dynasty in other words, the news rewritten, the hints varied.
     assert_eq!(
         (c.years, &c.fall, c.entries.len()),
         (56, &FallReason::Usurped, 39)
@@ -174,7 +175,8 @@ fn golden_seed_42_script_a() {
             (
                 "Новое правление",
                 "Ещё не отзвонили колокола по Ульриху Набожному, а епископ уже поднимал корону над головой Конрада.",
-                hint("Основатель породнил наследника с домом своего барона."),
+                // Stage 30: the founder's life told it first, the entry takes its variant.
+                hint("Брак, устроенный основателем между наследником и баронским домом, привёл ко двору новую родню."),
             ),
             (
                 "Земли поделены между братьями",
@@ -183,7 +185,7 @@ fn golden_seed_42_script_a() {
             ),
             (
                 "Война соседей",
-                "Из-за рубежа пришла весть: Пурпуляндия двинула войско на Нордмарк.",
+                "На рубеже Пурпуляндии и Нордмарка загорелись сигнальные костры. Купцы с той стороны разворачивали обозы и божились, что дорога пахнет дымом.",
                 None,
             ),
         ]
@@ -1034,8 +1036,8 @@ fn lost_and_regained_provinces_are_told_with_the_hint_of_their_cause() {
             )
         })
         .collect();
-    let hint =
-        Some("По дорогам, проложенным в первое царствование, обозы шли в столицу и через век.");
+    // Stage 30: the founder's life told the road first, so the entry takes its variant.
+    let hint = Some("Дороги основателя связали дальний край со столицей.");
     assert_eq!(
         told[1..],
         [
@@ -1830,4 +1832,91 @@ fn a_compound_event_follows_its_causes_and_recalls_them() {
         }
     }
     assert!(stories >= 6, "{stories}");
+}
+
+/// The founder's hints told more than once in a chronicle: one key per extra telling, over
+/// what the reader sees (the entries not joined, their hints and chains, the lives).
+fn hint_repeats(c: &Chronicle, data: &Data) -> Vec<String> {
+    let shown = c.entries.iter().filter(|e| !e.joined);
+    let hints = shown.clone().filter_map(|e| e.hint.as_deref());
+    let chains = shown.filter_map(|e| e.chain.as_ref().map(|x| x.text.as_str()));
+    let lives = c.rulers.iter().map(|r| r.biography.as_str());
+    let text: Vec<&str> = hints.chain(chains).chain(lives).collect();
+    let mut out = vec![];
+    for (key, h) in data.hints.iter().filter(|(k, _)| !k.starts_with("chain:")) {
+        // Past the first letter: an entry tells it capitalised, a chain as it is.
+        let body: String = h.chars().skip(1).collect();
+        let n: usize = text.iter().map(|t| t.matches(body.as_str()).count()).sum();
+        out.extend(std::iter::repeat_n(key.clone(), n.saturating_sub(1)));
+    }
+    out
+}
+
+/// Stage 30 acceptance: over 40 neutral games the founder's hints told again in one
+/// chronicle, with their variants (`hints.ron` `tag#2`…, sim::vary_hints): 196 repeats
+/// before, 32 after, at most 6 in one chronicle (docs/calibration.md, stage 30). The bounds
+/// leave a quarter of room for new content.
+#[test]
+fn founder_hints_repeat_little_in_forty_games() {
+    let data = content();
+    let start = game(&data, 0);
+    let repeats = par_seeds(
+        0..40,
+        threads(),
+        |seed| {
+            let mut g = start.clone();
+            g.rng = Rng::from_seed(seed);
+            let (g, end) = reign(g, |_| {});
+            hint_repeats(&sim::run(end, &data, g.rng.clone()), &data)
+        },
+        |_| {},
+    );
+    let mut by: std::collections::BTreeMap<&str, usize> = Default::default();
+    for k in repeats.iter().flatten() {
+        *by.entry(k).or_default() += 1;
+    }
+    let all: usize = repeats.iter().map(Vec::len).sum();
+    let most = repeats.iter().map(Vec::len).max().unwrap_or(0);
+    println!("repeats {all}, most in one chronicle {most}: {by:?}");
+    assert!(all <= 40 && most <= 8, "{all} {most} {by:?}");
+}
+
+/// Stage 30 acceptance: the price of «Единоверие». Over 40 neutral games from its seeds, the
+/// law in force from the start: the persecution (`faith_persecution`) reaches the chronicle
+/// in a quarter of the dynasties at least, and trade is lower at the founder's end; without
+/// the law, no persecution.
+#[test]
+fn one_faith_has_its_price() {
+    let data = content();
+    let start = game(&data, 0);
+    let run = |law: bool| {
+        par_seeds(
+            0..40,
+            threads(),
+            |seed| {
+                let mut g = start.clone();
+                g.rng = Rng::from_seed(seed);
+                if law {
+                    bd_core::batch::set_law(&mut g, "law_one_faith").unwrap();
+                }
+                let (g, end) = reign(g, |_| {});
+                let trade = g.world.axes[&ax("trade")];
+                let c = sim::run(end, &data, g.rng.clone());
+                let told = (c.entries.iter())
+                    .filter(|e| e.event.as_deref() == Some("faith_persecution"))
+                    .count();
+                (told, trade)
+            },
+            |_| {},
+        )
+    };
+    let (with, without) = (run(true), run(false));
+    let told = |r: &[(usize, Fx)]| r.iter().map(|x| x.0).sum::<usize>();
+    let dynasties = with.iter().filter(|x| x.0 > 0).count();
+    println!("persecutions {} in {dynasties} of 40", told(&with));
+    assert!(dynasties >= 10, "{dynasties}");
+    assert_eq!(told(&without), 0);
+    // Merchants of other faiths leave: trade lower in every game than without the law.
+    let lower = with.iter().zip(&without).all(|(a, b)| a.1 + Fx::from_int(5) < b.1);
+    assert!(lower, "{with:?} {without:?}");
 }

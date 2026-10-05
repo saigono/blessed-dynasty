@@ -224,6 +224,7 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
     while d.fall.is_none() {
         d.tick();
     }
+    let told_hints = d.g.data.hints.clone();
     let mut c = d.close();
     // The same hint again within a few entries reads as a stammer (stage 26c): told once.
     let hints: Vec<_> = c.entries.iter().map(|e| e.hint.clone()).collect();
@@ -232,7 +233,50 @@ pub fn run(reign_end: ReignEnd, data: &Data, rng: Rng) -> Chronicle {
             e.hint = None;
         }
     }
+    vary_hints(&mut c, &told_hints);
     c
+}
+
+/// Stage 30: a hint told again further on takes its next variant (`hints.ron` keys
+/// `tag#2`, `tag#3`, …), round and round, in reading order: the lives, then every entry
+/// shown, its hint and its chain.
+fn vary_hints(c: &mut Chronicle, hints: &BTreeMap<String, String>) {
+    for (key, h) in hints.iter().filter(|(k, _)| !k.contains(['#', ':'])) {
+        let more = (2..).map_while(|n| hints.get(&format!("{key}#{n}")));
+        let all: Vec<&String> = std::iter::once(h).chain(more).collect();
+        if all.len() < 2 {
+            continue;
+        }
+        // Past the first letter: a sentence tells it capitalised, a chain as it is.
+        let body = &h[h.chars().next().map_or(0, char::len_utf8)..];
+        let shown = c.entries.iter_mut().filter(|e| !e.joined);
+        let entries = shown.flat_map(|e| {
+            e.hint
+                .iter_mut()
+                .chain(e.chain.iter_mut().map(|x| &mut x.text))
+        });
+        let mut n = 0;
+        for t in c.rulers.iter_mut().map(|r| &mut r.biography).chain(entries) {
+            let mut out = String::new();
+            let mut rest = t.as_str();
+            while let Some(i) = rest.find(body) {
+                let first = rest[..i].chars().next_back().expect("a first letter");
+                let v = all[n % all.len()];
+                n += 1;
+                let mut chars = v.chars();
+                let lead = chars.next().expect("not empty");
+                let lead: String = match first.is_uppercase() {
+                    true => lead.to_uppercase().collect(),
+                    false => lead.to_string(),
+                };
+                out += &rest[..i - first.len_utf8()];
+                out += &lead;
+                out += chars.as_str();
+                rest = &rest[i + body.len()..];
+            }
+            *t = out + rest;
+        }
+    }
 }
 
 /// Entries within which a hint is not told again.

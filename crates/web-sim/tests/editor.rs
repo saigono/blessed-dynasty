@@ -106,9 +106,10 @@ fn a_renamed_country_and_province_reach_the_chronicle_in_their_cases() {
             .collect::<String>()
     };
     let old = chronicles(&files());
+    // Stage 30: the news of lands taken read anew; any genitive of the country will do.
     assert!(
-        old.contains("под руку Нордмарка"),
-        "no land lost to Nordmark in 40 games"
+        old.contains("Нордмарка"),
+        "no Nordmark in the genitive in 40 games"
     );
     let mut f = files();
     edit(
@@ -136,7 +137,7 @@ fn a_renamed_country_and_province_reach_the_chronicle_in_their_cases() {
         "\"Северград||а|у||ом|е\"",
     );
     let new = chronicles(&f);
-    assert!(new.contains("под руку Северии"), "{new}");
+    assert!(new.contains("Северии"), "{new}");
     assert!(
         !new.contains("Нордмарк") && !new.contains("Нордхейм"),
         "{new}"

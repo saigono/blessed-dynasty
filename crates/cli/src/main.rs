@@ -4,7 +4,7 @@ use bd_core::batch::{self, NEUTRAL, chooser, dynasty, parse, play, play_script, 
 use bd_core::batch::{target_name, world_hash};
 use bd_core::fx::Fx;
 use bd_core::game::{Decision, DecisionKind, Game};
-use bd_core::link::replay;
+use bd_core::link::{self, replay};
 use bd_core::rules::Target;
 use bd_core::score;
 use bd_core::sim;
@@ -82,6 +82,28 @@ enum Cmd {
         #[arg(long)]
         realm: Option<String>,
     },
+    /// Stage 11b: reads a dump of the `games` table (`wrangler d1 execute --json`, a JSON
+    /// array of rows or a CSV with a header) and plays the links of build `--build` again:
+    /// the falls, the median years and score, the founder's decisions. Rows of other builds
+    /// are only counted.
+    Stats {
+        file: PathBuf,
+        /// The build of the data at hand; by default this binary's `BD_VERSION`.
+        #[arg(long, default_value = link::BUILD)]
+        build: String,
+        #[command(flatten)]
+        files: Files,
+    },
+}
+
+/// A row of the `games` table (deploy/stats-worker/schema.sql): what the game sent.
+#[derive(Deserialize)]
+struct Row {
+    version: String,
+    link: String,
+    fall: String,
+    years: u32,
+    score: i64,
 }
 
 #[derive(clap::Args)]
@@ -213,6 +235,145 @@ fn run(cli: Cli) -> Result<(), String> {
             print!("{}", batch::trace_of(g, &rules, &script, node, realm)?);
             Ok(())
         }
+        Cmd::Stats { file, build, files } => {
+            let rows = rows(&read(&file)?)?;
+            let texts = read_files(&files)?;
+            print!("{}", stats(&rows, &build, &files, &texts)?);
+            Ok(())
+        }
+    }
+}
+
+/// The rows of a dump: a JSON array of rows, or of result sets `{"results": [rows]}` as
+/// `wrangler d1 execute --json` prints them; else a CSV with a header.
+fn rows(text: &str) -> Result<Vec<Row>, String> {
+    use serde_json::Value;
+    if text.trim_start().starts_with('[') {
+        let all: Vec<Value> = serde_json::from_str(text).map_err(|e| format!("JSON: {e}"))?;
+        let all = all.into_iter().flat_map(|v| match v.get("results") {
+            Some(Value::Array(rows)) => rows.clone(),
+            _ => vec![v],
+        });
+        return (all.map(serde_json::from_value))
+            .collect::<Result<_, _>>()
+            .map_err(|e| format!("строка выгрузки: {e}"));
+    }
+    // ponytail: no field of the table holds a comma, so a plain split; quotes trimmed.
+    let mut lines = text.lines().filter(|l| !l.trim().is_empty());
+    let cells = |l: &str| -> Vec<String> {
+        l.split(',').map(|c| c.trim().trim_matches('"').to_string()).collect()
+    };
+    let head = cells(lines.next().ok_or("пустая выгрузка")?);
+    let col = |name: &str| (head.iter().position(|h| h == name)).ok_or(format!("нет столбца {name}"));
+    let cols = [col("version")?, col("link")?, col("fall")?, col("years")?, col("score")?];
+    lines
+        .map(|l| {
+            let c = cells(l);
+            let [version, link, fall, years, score] =
+                cols.map(|i| c.get(i).cloned().unwrap_or_default());
+            let num = |v: &str| v.parse::<i64>().map_err(|_| format!("не число «{v}» в «{l}»"));
+            Ok(Row {
+                years: num(&years)? as u32,
+                score: num(&score)?,
+                version,
+                link,
+                fall,
+            })
+        })
+        .collect()
+}
+
+/// The report of `cli stats`: rows of `build` played again from their links.
+fn stats(rows: &[Row], build: &str, f: &Files, texts: &batch::Files) -> Result<String, String> {
+    let preset = f.preset.file_stem().unwrap_or_default().to_string_lossy();
+    let rules = score_rules(texts, &load(f, texts, 0)?)?;
+    let (ours, others): (Vec<&Row>, Vec<&Row>) = rows.iter().partition(|r| r.version == build);
+    // Each row is its own game: by its index, on the threads of `batch`.
+    let play = |i: u64| -> Result<(Game, sim::Chronicle, score::Score), String> {
+        let text = ours[i as usize].link.as_str();
+        let l = link::decode(text.split_once("#p=").map_or(text, |(_, p)| p))?;
+        if l.preset_id != preset {
+            return Err(format!("пресет {}, а не {preset}", l.preset_id));
+        }
+        let mut g = load(f, texts, l.seed)?;
+        l.play(&mut g)?;
+        match dynasty(&g, &rules) {
+            (Some(c), Some(s)) => Ok((g, c, s)),
+            _ => Err("правление не закончено".into()),
+        }
+    };
+    let games = batch::par_seeds(0..ours.len() as u64, batch::threads(), play, |_| {});
+
+    let mut out = format!(
+        "Партий: {}, сборки {build}: {}, других сборок: {}\n",
+        rows.len(),
+        ours.len(),
+        others.len()
+    );
+    let (mut falls, mut decisions) = (BTreeMap::new(), BTreeMap::new());
+    let (mut years, mut scores, mut broken, mut differ) = (vec![], vec![], vec![], 0);
+    for (row, game) in ours.iter().zip(&games) {
+        let (g, c, s) = match game {
+            Ok(game) => game,
+            Err(e) => {
+                broken.push(format!("  {}: {e}", row.link));
+                continue;
+            }
+        };
+        let fall = format!("{:?}", c.fall);
+        differ += usize::from((&row.fall, row.years, row.score) != (&fall, c.years, s.total));
+        *falls.entry(fall).or_insert(0) += 1;
+        years.push(c.years as i64);
+        scores.push(s.total);
+        let mut seen = std::collections::BTreeSet::new();
+        for d in &g.decisions {
+            let key = match &d.kind {
+                DecisionKind::ActionStarted { action_id, .. } => format!("действие {action_id}"),
+                DecisionKind::EventChoice {
+                    event_id,
+                    choice_idx,
+                    ..
+                } => format!("событие {event_id}: вариант {choice_idx}"),
+                DecisionKind::Abdicate => "отречение".into(),
+                DecisionKind::Testament(_) => "завещание".into(),
+            };
+            let e = decisions.entry(key.clone()).or_insert((0, 0));
+            e.0 += 1;
+            e.1 += usize::from(seen.insert(key));
+        }
+    }
+    out += &format!("Не открылись: {}\n", broken.len());
+    out += &(broken.iter().map(|b| b.clone() + "\n").collect::<String>());
+    out += &format!("Не сошлись с присланным: {differ}\n");
+    out += "Причины падения:\n";
+    for (fall, n) in &falls {
+        out += &format!("  {fall}: {n}\n");
+    }
+    out += &format!("Медиана лет: {}\n", median(&mut years));
+    out += &format!("Медиана счёта: {}\n", median(&mut scores));
+    out += "Решения основателя (раз, в партиях):\n";
+    let mut decisions: Vec<_> = decisions.into_iter().collect();
+    decisions.sort_by_key(|(k, (n, _))| (std::cmp::Reverse(*n), k.clone()));
+    for (key, (n, games)) in decisions {
+        out += &format!("  {key}: {n}, {games}\n");
+    }
+    out += "Другие сборки:\n";
+    let mut builds = BTreeMap::new();
+    for r in &others {
+        *builds.entry(r.version.as_str()).or_insert(0) += 1;
+    }
+    for (b, n) in builds {
+        out += &format!("  {b}: {n}\n");
+    }
+    Ok(out)
+}
+
+/// The middle value, or the mean of the two middle ones; 0 of none.
+fn median(v: &mut [i64]) -> i64 {
+    v.sort();
+    match v.len() {
+        0 => 0,
+        n => (v[(n - 1) / 2] + v[n / 2]) / 2,
     }
 }
 

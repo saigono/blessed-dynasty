@@ -177,6 +177,13 @@ struct App {
     saved: Option<String>,
     /// `saved` goes to the browser's localStorage or a file natively; off in tests.
     persist: bool,
+    /// «Отправлять анонимную статистику» on the start screen (stage 11b).
+    stats: bool,
+    /// Where `POST /game` goes at the end of a game: `BD_STATS_URL` at build time.
+    stats_url: Option<&'static str>,
+    /// What went out for the statistics, in order: GoatCounter event paths and the bodies of
+    /// `POST /game`.
+    sent: Vec<String>,
 }
 
 fn load_data() -> Data {
@@ -254,13 +261,16 @@ impl App {
             money: None,
             saved: None,
             persist: false,
+            stats: true,
+            stats_url: option_env!("BD_STATS_URL"),
+            sent: Vec::new(),
         }
     }
 
     /// `App::new` with the saved game kept where the platform keeps it.
     fn persistent(ctx: &egui::Context) -> App {
         let mut app = App::new(ctx);
-        (app.persist, app.saved) = (true, load_save());
+        (app.persist, app.saved, app.stats) = (true, load_save(), load_stats());
         app
     }
 
@@ -274,6 +284,9 @@ impl App {
 
     fn apply(&mut self, cmd: Cmd) {
         self.note.clear();
+        if matches!(cmd, Cmd::Start(_) | Cmd::Restart | Cmd::NewSeed) {
+            self.count("start".into());
+        }
         if matches!(cmd, Cmd::Start(_) | Cmd::Restart | Cmd::NewSeed) && self.linked {
             self.linked = false;
             #[cfg(target_arch = "wasm32")]
@@ -418,7 +431,11 @@ impl App {
                 r => r.map(|_| Step::Idle),
             };
         }
+        let over = self.dynasty.is_some();
         self.step(res);
+        if !over && self.dynasty.is_some() {
+            self.report();
+        }
         // A year waiting on its event is not recorded yet: its money line comes with it.
         let closed = closes_year && matches!(self.screen, Screen::Reign);
         if closed {
@@ -453,6 +470,38 @@ impl App {
         }
         lines.retain(|(t, _)| !t.starts_with(MONEY));
         lines.insert(0, (text, Some(now >= start)));
+    }
+
+    /// GoatCounter's event `path` if the box is ticked (stage 11b); the page counts itself.
+    fn count(&mut self, path: String) {
+        if self.stats {
+            #[cfg(target_arch = "wasm32")]
+            goatcounter(&path);
+            self.sent.push(path);
+        }
+    }
+
+    /// The end of a game played here, for the statistics: GoatCounter's `end/<fall>` and, with
+    /// a receiver, the build and the link, by which `cli stats` plays the game again, with
+    /// what it came to.
+    fn report(&mut self) {
+        let Some((c, s)) = &self.dynasty else { return };
+        let (fall, years, score) = (format!("{:?}", c.fall), c.years, s.total);
+        self.count(format!("end/{fall}"));
+        let Some(url) = self.stats_url.filter(|_| self.stats) else {
+            return;
+        };
+        // Debug quotes the two strings as JSON does: neither has control characters.
+        let body = format!(
+            r#"{{"version":{:?},"link":{:?},"fall":"{fall}","years":{years},"score":{score}}}"#,
+            link::BUILD,
+            self.link()
+        );
+        #[cfg(target_arch = "wasm32")]
+        post(url, &body);
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = url;
+        self.sent.push(body);
     }
 
     /// Puts what happened since «Подождать год» into the journal: the choices made, then
@@ -707,6 +756,13 @@ impl App {
             if !self.note.is_empty() {
                 ui.label(RichText::new(&self.note).color(RUBRIC));
             }
+            // Stage 11b.
+            ui.add_space(12.0);
+            let stats = ui.checkbox(&mut self.stats, "Отправлять анонимную статистику");
+            if stats.changed() && self.persist {
+                write_stats(self.stats);
+            }
+            ui.small(RichText::new(format!("версия {}", link::BUILD)).color(FG2));
         });
         cmd
     }
@@ -2218,6 +2274,63 @@ fn write_save(text: Option<&str>) {
     }
 }
 
+/// Where the browser keeps the statistics box (stage 11b).
+#[cfg(target_arch = "wasm32")]
+const STATS_KEY: &str = "blessed-dynasty-stats";
+
+/// The box as last left; ticked when never touched or without storage.
+#[cfg(target_arch = "wasm32")]
+fn load_stats() -> bool {
+    storage().and_then(|s| s.get_item(STATS_KEY).ok()?).as_deref() != Some("0")
+}
+
+#[cfg(target_arch = "wasm32")]
+fn write_stats(on: bool) {
+    if let Some(s) = storage() {
+        let _ = s.set_item(STATS_KEY, if on { "1" } else { "0" });
+    }
+}
+
+/// Natively nothing is sent: the box is not kept.
+#[cfg(not(target_arch = "wasm32"))]
+fn load_stats() -> bool {
+    true
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn write_stats(_: bool) {}
+
+/// `window.goatcounter.count({path, event: true})`, if index.html has loaded GoatCounter.
+#[cfg(target_arch = "wasm32")]
+fn goatcounter(path: &str) {
+    use web_sys::js_sys::{Function, Object, Reflect};
+    use web_sys::wasm_bindgen::{JsCast, JsValue};
+    let Some(w) = web_sys::window() else { return };
+    let Ok(gc) = Reflect::get(&w, &"goatcounter".into()) else {
+        return;
+    };
+    let count = Reflect::get(&gc, &"count".into()).and_then(|f| f.dyn_into::<Function>());
+    let Ok(count) = count else { return };
+    let arg = Object::new();
+    let _ = Reflect::set(&arg, &"path".into(), &path.into());
+    let _ = Reflect::set(&arg, &"event".into(), &JsValue::TRUE);
+    let _ = count.call1(&gc, &arg);
+}
+
+/// `POST url` with `body` as text/plain, which needs no CORS preflight. A network error is
+/// dropped unread.
+#[cfg(target_arch = "wasm32")]
+fn post(url: &str, body: &str) {
+    let init = web_sys::RequestInit::new();
+    init.set_method("POST");
+    init.set_body(&web_sys::wasm_bindgen::JsValue::from_str(body));
+    let Some(w) = web_sys::window() else { return };
+    let sent = wasm_bindgen_futures::JsFuture::from(w.fetch_with_str_and_init(url, &init));
+    wasm_bindgen_futures::spawn_local(async move {
+        let _ = sent.await;
+    });
+}
+
 /// `blessed-dynasty/save.txt` in the user's data directory: `$XDG_DATA_HOME`,
 /// `~/.local/share`, `%APPDATA%`.
 #[cfg(not(target_arch = "wasm32"))]
@@ -2518,6 +2631,57 @@ mod tests {
         assert!(other.app.linked);
         other.click_label("Тот же старт, заново");
         assert!(!other.app.linked && !h.app.linked);
+    }
+
+    /// Stage 11b: the end of a game sends the build and its link once; by the link alone the
+    /// game comes to the same fall, years and score, and opening it sends nothing.
+    #[test]
+    fn the_end_of_a_game_is_reported_once() {
+        let mut h = Harness::new();
+        h.app.stats_url = Some("https://stats.example.org/game");
+        play(&mut h, 7);
+        h.click_label("К итогу ▸");
+        copy_link(&mut h);
+        let (c, s) = h.app.dynasty.clone().unwrap();
+        let fall = format!("{:?}", c.fall);
+        let sent = &h.app.sent;
+        assert_eq!(sent.len(), 3, "{sent:?}");
+        assert_eq!(sent[..2], ["start".to_string(), format!("end/{fall}")]);
+        assert!(sent[2].len() < 8 * 1024);
+        let body: serde_json::Value = serde_json::from_str(&sent[2]).unwrap();
+        assert_eq!(body["version"], link::BUILD);
+        assert_eq!(body["fall"], fall.as_str());
+        assert_eq!(body["years"], c.years);
+        assert_eq!(body["score"], s.total);
+        // The way of `cli stats`: the game again from the link.
+        let url = body["link"].as_str().unwrap();
+        assert!(url.starts_with("#p="), "{url}");
+        let mut other = Harness::new();
+        other.app.stats_url = h.app.stats_url;
+        other.app.open(url);
+        let (oc, os) = other.app.dynasty.as_ref().unwrap();
+        assert_eq!((format!("{:?}", oc.fall), oc.years), (fall, c.years));
+        assert_eq!(os.total, s.total);
+        assert!(other.app.sent.is_empty());
+    }
+
+    /// Stage 11b: without a receiver no body is made; with the box unticked, nothing at all.
+    #[test]
+    fn no_receiver_or_an_unticked_box_sends_nothing() {
+        let mut h = Harness::new();
+        h.app.stats_url = None;
+        play(&mut h, 7);
+        let fall = format!("{:?}", h.app.dynasty.as_ref().unwrap().0.fall);
+        assert_eq!(h.app.sent, ["start".to_string(), format!("end/{fall}")]);
+
+        let mut h = Harness::new();
+        h.app.stats_url = Some("https://stats.example.org/game");
+        let version = format!("версия {}", link::BUILD);
+        assert!(texts_of(&mut h).contains(&version));
+        h.click_label("Отправлять анонимную статистику");
+        assert!(!h.app.stats);
+        play(&mut h, 7);
+        assert!(h.app.dynasty.is_some() && h.app.sent.is_empty());
     }
 
     /// From the reign screen the link reopens the same reign, years waited included.

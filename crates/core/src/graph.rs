@@ -732,6 +732,8 @@ mod tests {
             ("loyalty_church", 50),
             ("shocks", 0),
         ];
+        // Stage 28b: no law shifts an anchor (the preset's partition lifts the nobles').
+        w.flags.remove("law_partition");
         set(&mut w, &d, &still); // nothing else moves
         let base = w.axes[&ax("stability")];
         add_axis(&mut w, &d, &ax("stability"), Fx::from_int(-10));

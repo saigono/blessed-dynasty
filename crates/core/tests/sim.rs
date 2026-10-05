@@ -58,6 +58,13 @@ fn game(data: &Data, seed: u64) -> Game {
     Game::new(data.clone(), &preset, seed)
 }
 
+/// The succession law of the preset before stage 28b, the tests of heirs and lands were
+/// written for: no appanages for younger sons, unlike the partition the preset starts on.
+fn primogeniture(g: &mut Game) {
+    g.world.flags.remove("law_partition");
+    g.world.flags.insert("law_primogeniture".into());
+}
+
 fn pid(s: &str) -> ProvinceId {
     ProvinceId(s.into())
 }
@@ -154,9 +161,11 @@ fn golden_seed_42_script_a() {
     // Stage 28: the big map, four more neighbours and the empire draw on the rng in the
     // founder's reign: another road; the dynasty lives to the horizon, the news of the
     // empire's wars fill the chronicle (264 entries).
+    // Stage 28b: partition at the start, the empire on male primogeniture: Конрад's younger
+    // brothers get Оствик and Сол at his coronation, and the dynasty is usurped in the year 56.
     assert_eq!(
         (c.years, &c.fall, c.entries.len()),
-        (300, &FallReason::Alive, 264)
+        (56, &FallReason::Usurped, 39)
     );
     let hint = |h: &'static str| Some(h);
     assert_eq!(
@@ -164,20 +173,18 @@ fn golden_seed_42_script_a() {
         [
             (
                 "Новое правление",
-                "В соборе пели многая лета, и Конрад принял скипетр, ещё помнивший руку Ульриха Набожного.",
-                hint("Наследник основателя учился власти в королевском совете."),
+                "Ещё не отзвонили колокола по Ульриху Набожному, а епископ уже поднимал корону над головой Конрада.",
+                hint("Основатель породнил наследника с домом своего барона."),
             ),
             (
-                "Заговор",
-                "Ночью по городу прошла стража с факелами, и к утру в темнице сидели двенадцать господ с их слугами, виновные и невиновные вперемешку.",
-                hint("По воле основателя наследника наказали при всём дворе."),
+                "Земли поделены между братьями",
+                "По закону о разделе младшие братья Конрада получили уделы: Генрих — Оствик, Освальд — Сол.",
+                None,
             ),
             (
-                "Мятеж дома Вейр",
-                "Мятеж дома Вейр решали мечом: Конрад сам повёл рать в Хольм, и по дороге горели баронские усадьбы.",
-                hint(
-                    "С того набега, отбитого в первое царствование, сосед ходил к границе с оглядкой."
-                ),
+                "Война соседей",
+                "Из-за рубежа пришла весть: Пурпуляндия двинула войско на Нордмарк.",
+                None,
             ),
         ]
     );
@@ -247,16 +254,17 @@ fn golden_seed_42_script_a_with_a_testament() {
     // Stage 27 (see golden_seed_42_script_a): usurped in the year 103.
     // Stage 26c on top of 27 (the compound events): alive at the horizon.
     // Stage 28 (the big map, see golden_seed_42_script_a): conquered in the year 177.
+    // Stage 28b (partition, see golden_seed_42_script_a): alive at the horizon.
     assert_eq!(
         (c.years, &c.fall, c.entries.len()),
-        (177, &FallReason::Conquered, 109)
+        (300, &FallReason::Alive, 168)
     );
     assert_eq!(
         texts(&c)[0],
         (
             "Завещание основателя",
-            "Когда Ульриха похоронили, при дворе вскрыли его завещание. Первым он завещал \
-             держаться правила: «Полная казна — крепость державы». Ещё он велел никогда не \
+            "Последнюю волю Ульриха огласили в тронном зале при всём дворе. Потомкам Ульрих \
+             оставил заповедь: «Полная казна — крепость державы». Ещё он велел никогда не \
              воевать с Нордмарком.",
             None
         )
@@ -356,6 +364,7 @@ fn no_heir_no_dynasty() {
 /// Heirs of these (age, claim, status); the ruler is one of them.
 fn heirs(data: &Data, list: &[(u32, i64, HeirStatus)]) -> Game {
     let mut g = game(data, 1);
+    primogeniture(&mut g);
     g.world.heirs.clear();
     for (i, (age, claim, status)) in list.iter().enumerate() {
         g.world.add_heir(Heir {
@@ -991,6 +1000,7 @@ fn land_taken_from_a_vanished_neighbour_is_told_without_its_name() {
 fn lost_and_regained_provinces_are_told_with_the_hint_of_their_cause() {
     let mut data = content();
     let mut g = game(&data, 1);
+    primogeniture(&mut g);
     g.start_action("build_road", Some(Target::Province(pid("berg"))))
         .unwrap();
     while g.world.tick < Tick(2) {
@@ -1241,26 +1251,20 @@ fn year_changes_of_seed_42_script_a() {
     // Бардан in the first year and takes it back; Остенбрук, its other governor, breaks away
     // with Эдесса).
     let moved = |p: &str, from: &str, to: &str| Change::Holder(pid(p), foreign(from), foreign(to));
+    // Stage 28b: the empire on male primogeniture keeps Мерв, other births and events.
     let want = vec![
-        (
-            1188,
-            vec![nobles(9), g1, moved("merv", "kadar", "bardan"), g2],
-        ),
+        (1188, vec![nobles(9), g1, g2]),
         (1189, vec![nobles(9), l1, l2]),
-        (1190, vec![nobles(7), b1, b2]),
-        (1191, vec![born("Матильда")]),
-        (1193, vec![born("Ирмгард")]),
-        (1194, vec![moved("merv", "bardan", "kadar")]),
-        (1197, vec![axis("loyalty_people", -5)]),
-        (1198, vec![born("Гизела")]),
-        (1199, vec![nobles(-6), moved("solkhat", "tavrika", "kadar")]),
-        (1206, vec![moved("porfir", "purpur", "nordmark")]),
-        (1207, vec![moved("olm", "zudmark", "kadar")]),
-        (1210, vec![axis("loyalty_church", 5)]),
-        (1214, vec![moved("amaran", "purpur", "nordmark")]),
-        (1215, vec![moved("edessa", "kadar", "Остенбрук")]),
-        (1219, vec![axis("loyalty_church", 5)]),
-        (1221, vec![moved("viren", "zudmark", "kadar")]),
+        (1190, vec![nobles(8), b1, b2]),
+        (1193, vec![born("Генрих")]),
+        (1196, vec![axis("army", 20), born("Освальд")]),
+        (1197, vec![axis("legitimacy", 6), axis("prestige", 15)]),
+        (1198, vec![axis("loyalty_church", 5)]),
+        (1199, vec![born("Гизела")]),
+        (1202, vec![born("Аделина")]),
+        (1203, vec![moved("solkhat", "tavrika", "kadar")]),
+        (1208, vec![moved("porfir", "purpur", "nordmark")]),
+        (1209, vec![axis("army", 20), moved("vyshgorod", "olkhovia", "kadar")]),
     ];
     assert_eq!(log, want);
 }
@@ -1279,23 +1283,25 @@ fn kin_of_seed_42_script_a() {
     assert_eq!((k[0].crowned, k[0].parent), (Some(1187), None));
     assert_eq!(k[0].died, Some(1187 + c.rulers[0].end.0));
     // Конрад, 6 at the start, reigned 1225..1243 (stage 28; 1223..1235 in stage 26b, 1258 in
-    // stage 25); his sisters died uncrowned, his son Леопольд followed him.
+    // stage 25). Stage 28b: crowned in 1210 and still on the throne when it is usurped in
+    // 1243; his brothers Генрих and Освальд took their appanages, Освальд's house rose and he
+    // died in 1242; Конрад's daughter Хедвига died at 16.
     assert_eq!(
         (k[1].name.as_str(), k[1].born, k[1].crowned, k[1].died),
-        ("Конрад", 1181, Some(1225), Some(1243))
+        ("Конрад", 1181, Some(1210), None)
     );
     assert_eq!(
         (k[2].name.as_str(), k[2].born, k[2].parent, k[2].crowned),
-        ("Матильда", 1191, Some(0), None)
+        ("Генрих", 1193, Some(0), None)
     );
-    assert_eq!(k[2].died, Some(1233));
+    assert_eq!(k[2].died, None);
     assert_eq!(
         (k[3].name.as_str(), k[3].born, k[3].parent, k[3].died),
-        ("Ирмгард", 1193, Some(0), Some(1272))
+        ("Освальд", 1196, Some(0), Some(1242))
     );
     assert_eq!(
-        (k[5].name.as_str(), k[5].born, k[5].parent, k[5].crowned),
-        ("Леопольд", 1212, Some(1), Some(1243))
+        (k[6].name.as_str(), k[6].born, k[6].parent, k[6].died),
+        ("Хедвига", 1197, Some(1), Some(1213))
     );
     // Every ruler in the chronicle is a crowned kin, in order; children point at a ruler.
     let crowned: Vec<(&str, u32)> = (k.iter())
@@ -1368,10 +1374,7 @@ fn law_texts_take_their_numbers_from_the_rules() {
     first.crisis_claim = Fx(65_500);
     assert!(first.text().contains("ниже 65.5"), "{}", first.text());
     let g = game(&data, 1);
-    assert_eq!(
-        data.heirs.law(&g.world).unwrap().name,
-        "Абсолютное первородство"
-    );
+    assert_eq!(data.heirs.law(&g.world).unwrap().name, "Разделение");
 }
 
 /// Stage 13: the bond of a finished marriage; stage 16: one per union (`World.unions`).

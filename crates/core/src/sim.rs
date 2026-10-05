@@ -1254,7 +1254,8 @@ fn province_entries(g: &Game, holders: &[Holder], c: &mut Chronicle, r: &mut Rei
         let ((title, text), foreign, key) = match (was, &p.holder) {
             (Holder::Foreign(_), Holder::Foreign(_)) => continue,
             (_, Holder::Foreign(n)) => (&t.province_lost, n, "province_lost"),
-            (Holder::Foreign(n), _) if c.entries.iter().any(ours) => {
+            // Data without the text tells all land as given back.
+            (Holder::Foreign(n), _) if t.province_taken.0.is_empty() || c.entries.iter().any(ours) => {
                 (&t.province_gained, n, "province_gained")
             }
             (Holder::Foreign(n), _) => (&t.province_taken, n, "province_taken"),

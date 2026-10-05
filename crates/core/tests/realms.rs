@@ -112,6 +112,9 @@ fn the_kingdoms_reach_us_only_through_the_realm_rules() {
 /// the rng) change the founder's reign, so a link made before the stage no longer fits: it
 /// is refused at the eighth year, not played otherwise. The link is re-made on the stage-28
 /// map (seed 42, `test.ron` softly, then neutral; 23 decisions) and its outcome re-pinned.
+/// Stage 28b: partition at the start and the empire on male primogeniture change the
+/// founder's reign: the link of stage 28 is refused at the 11th year. Re-made on seed 43 (on
+/// seed 42 the founder now dies without an heir and the chronicle is empty).
 #[test]
 fn a_link_from_before_the_stage_plays_the_same() {
     let old = "AQdkZWZhdWx0Kh0AASMAAQABAQABAQABAQABAQABAQAAAQABAgABAQAAAQABAQABAQABAgABAQABAQABAQABAQ\
@@ -120,10 +123,16 @@ fn a_link_from_before_the_stage_plays_the_same() {
     let l = bd_core::link::decode(old).unwrap();
     let mut g = batch::load(&f, PRESET, MAP, l.seed).unwrap();
     assert!(l.play(&mut g).unwrap_err().contains("журнал не совпадает"));
-    let link = "AQdkZWZhdWx0KhcAASMAAQAAAQABAQABAQABAQABAQABAQABAQAAAQAAAQAAAQABAQABAQABAQAAAQABAQAAAg\
-                ABAQAAAQAAAQAAAQAAAQAB";
+    let stage_28 = "AQdkZWZhdWx0KhcAASMAAQAAAQABAQABAQABAQABAQABAQABAQAAAQAAAQAAAQABAQABAQABAQAAAQABAQAAAg\
+                    ABAQAAAQAAAQAAAQAAAQAB";
+    let l = bd_core::link::decode(stage_28).unwrap();
+    let mut g = batch::load(&f, PRESET, MAP, l.seed).unwrap();
+    assert!(l.play(&mut g).unwrap_err().contains("не совпадает"));
+    let link = "AQdkZWZhdWx0KzIAASMAAQABAQABAQABAQAAAQABAQABAQABAQAAAgAAAQAAAgABAQABAQABAQAAAQABAQABAQAB\
+                AQAAAQABAQABAQABAQABAQABAQABAQABAQABAQABAQAAAQABAQABAQABAQAAAQAAAQABAgABAQABAQABAQABAgAB\
+                AQABAQABAQABAQABAwAB";
     let l = bd_core::link::decode(link).unwrap();
-    assert_eq!((l.preset_id.as_str(), l.seed), ("default", 42));
+    assert_eq!((l.preset_id.as_str(), l.seed), ("default", 43));
     let mut g = batch::load(&f, PRESET, MAP, l.seed).unwrap();
     l.play(&mut g).unwrap();
     let rules = batch::score_rules(&f, &g).unwrap();
@@ -142,13 +151,13 @@ fn a_link_from_before_the_stage_plays_the_same() {
             c.entries.len(),
             s.total
         ),
-        (23, 55, "Usurped", 35, 3861)
+        (45, 176, "Conquered", 114, 11564)
     );
-    assert_eq!(format!("{hash:016x}"), "fb0f7a86ea5d4bc1");
+    assert_eq!(format!("{hash:016x}"), "a4515ccec10b065b");
     assert_eq!(
         c.realms.len(),
-        9,
-        "the kingdoms play beside it, seven of the start, two of them new"
+        8,
+        "the kingdoms play beside it, seven of the start, one of them new"
     );
 }
 
@@ -1003,3 +1012,4 @@ fn a_subsidy_strengthens_the_neighbour() {
     let treasury = |g: &Game| g.world.axes[&ax("treasury")];
     assert_eq!(treasury(&none) - treasury(&paid), i(100));
 }
+

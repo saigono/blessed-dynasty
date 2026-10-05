@@ -28,8 +28,11 @@ fn data() -> Data {
     data_with("")
 }
 
+/// The preset, on the succession law it had before stage 28b: partition shifts the nobles'
+/// anchor and scales edges, absolute primogeniture neither.
 fn game(data: &Data) -> Game {
     let preset = read("presets/default.ron");
+    let preset = preset.replacen("[\"law_partition\",", "[\"law_primogeniture\",", 1);
     let preset = Preset::load_with_map(&preset, &read("maps/default.ron"), data).unwrap();
     Game::new(data.clone(), &preset, 1)
 }

@@ -3011,6 +3011,11 @@ mod tests {
                     ),
                     line("Рождение: Генрих", Some(true)),
                     line("Завершено: Проложить дорогу (Берг)", None),
+                    // Stage 28b: the empire on male primogeniture marches a year earlier.
+                    line(
+                        "Из-за рубежа пришла весть: Кадарская империя двинула войско на Ольховию.",
+                        Some(false),
+                    ),
                 ],
             ),
             (
@@ -3025,10 +3030,6 @@ mod tests {
                         Some(false),
                     ),
                     line("Церковь +7", Some(true)),
-                    line(
-                        "Из-за рубежа пришла весть: Кадарская империя двинула войско на Ольховию.",
-                        Some(false),
-                    ),
                 ],
             ),
             (
@@ -3063,9 +3064,10 @@ mod tests {
                     money("+54: доход +34, расходы -5, действия и события +25"),
                     line("Умер в детстве королевский сын Освальд", Some(false)),
                     // Stage 27: news from afar, in words.
+                    line("Земли: Кадарская империя взяла Вышгород", None),
                     line(
-                        "Из-за рубежа пришла весть: Пурпуляндия двинула войско на Нордмарк.",
-                        None,
+                        "Гонцы донесли, что земля Вышгород отошла под руку Кадарской империи, и Ольховия не сумела её отстоять.",
+                        Some(false),
                     ),
                 ],
             ),
@@ -3140,6 +3142,11 @@ mod tests {
         h.height = 1400.0;
         h.app.apply(Cmd::Start(1));
         h.click_label("Править");
+        // Stage 28b: the preset's partition says what it holds («держит выше: Знать»), which
+        // this test of the axes counts against them: the law before it holds nothing.
+        let flags = &mut h.app.game.as_mut().unwrap().world.flags;
+        flags.remove("law_partition");
+        flags.insert("law_primogeniture".into());
         let set = |h: &mut Harness, axes: &[(&str, i64)]| {
             let g = h.app.game.as_mut().unwrap();
             for (a, v) in axes {
@@ -4338,7 +4345,7 @@ mod tests {
         let mut h = Harness::new();
         assert!(h.ctx.global_style().interaction.tooltip_delay <= 0.1);
         begun(&mut h);
-        let law = h.game().data.heirs.laws[0].clone();
+        let law = h.game().data.heirs.law(&h.game().world).unwrap().clone();
         let label = format!("Закон: {} {INFO}", law.name);
         // No hover tip in this test: only the click can show it.
         h.ctx

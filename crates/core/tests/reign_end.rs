@@ -339,8 +339,9 @@ fn law_actions_switch_the_flag() {
         .into_iter()
         .map(|(id, _)| id)
         .collect();
-    assert!(!ids.contains(&"enact_law_primogeniture".to_string()));
-    g.start_action("enact_law_male", None).unwrap();
+    // Stage 28b: the preset's law is partition; seniority takes two years.
+    assert!(!ids.contains(&"enact_law_partition".to_string()));
+    g.start_action("enact_law_seniority", None).unwrap();
     g.wait().unwrap();
     g.wait().unwrap();
     let laws: Vec<_> = g
@@ -349,7 +350,7 @@ fn law_actions_switch_the_flag() {
         .iter()
         .filter(|f| f.starts_with("law_"))
         .collect();
-    assert_eq!(laws, ["law_male"]);
+    assert_eq!(laws, ["law_seniority"]);
 }
 
 fn births(married: bool) -> usize {
@@ -567,9 +568,9 @@ fn content_loads() {
         assert!(data.events.iter().any(|e| e.id == id), "{id}");
     }
     let w = game(data.clone(), 1).world;
-    assert!(w.flags.contains("law_primogeniture") && w.flags.contains("married"));
+    assert!(w.flags.contains("law_partition") && w.flags.contains("married"));
     // Flags come from the preset; without the field the world starts with none.
-    let bare = PRESET.replace("flags: [\"law_primogeniture\", \"married\"],", "");
+    let bare = PRESET.replace("flags: [\"law_partition\", \"married\"],", "");
     assert_ne!(bare, PRESET);
     let preset = Preset::load_with_map(&bare, MAP, &data).unwrap();
     assert!(World::from_preset(&data, &preset).flags.is_empty());

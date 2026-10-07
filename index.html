@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Blessed Dynasty</title>
+    <link rel="icon" href="data:,">
+    
+<script type="module">
+import init, * as bindings from './ui-32fca0a589fc56ec.js';
+const wasm = await init({ module_or_path: './ui-32fca0a589fc56ec_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script>
+    <!-- GoatCounter's script goes in at the end of this head by scripts/deploy.sh when
+         BD_GOATCOUNTER is set (docs/stats.md); without it the page counts nothing. -->
+    <style>
+        html, body { margin: 0; height: 100%; overflow: hidden; background: #e2d3b4; }
+        canvas { width: 100%; height: 100%; display: block; }
+    </style>
+<link rel="modulepreload" href="./ui-32fca0a589fc56ec.js" crossorigin="anonymous" integrity="sha384-DOXv7h93X/CFmKCaFsxCJrkcBVgiiErRVk5ZEB+t1k0/qGwrRmgadGkGMNGhO9uw"><link rel="preload" href="./ui-32fca0a589fc56ec_bg.wasm" crossorigin="anonymous" integrity="sha384-GHx5B1np2s+ZYwJcmXobjwu+0UuEuKlRwJHP9DF1CipdJ0TCsE2pSIOv2S/1bzsd" as="fetch" type="application/wasm"><script data-goatcounter="https://blessed-dynasty.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+</body>
+</html>

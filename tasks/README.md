@@ -48,6 +48,8 @@
 | 30 | 30-texts-and-faith.md | 28b, 29b |
 | 30b | 30b-one-faith-people.md | 30 |
 | 29d | 29d-playtest-04.md | 29c, 30 |
+| 30c | 30c-one-faith-literacy.md | 30b |
+| 31 | 31-capital-move.md | 29d, 30b |
 
 После этапа 2 параллельно можно вести 3, 5, 8a, 9, 10a. На соло-разработке реально две-три ветки за раз.
 

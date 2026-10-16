@@ -7,8 +7,8 @@
     <link rel="icon" href="data:,">
     
 <script type="module">
-import init, * as bindings from './ui-8e3867b16c601c33.js';
-const wasm = await init({ module_or_path: './ui-8e3867b16c601c33_bg.wasm' });
+import init, * as bindings from './ui-81883cdf979b0847.js';
+const wasm = await init({ module_or_path: './ui-81883cdf979b0847_bg.wasm' });
 
 
 window.wasmBindings = bindings;
@@ -22,10 +22,10 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
     <!-- GoatCounter's script goes in at the end of this head by scripts/deploy.sh when
          BD_GOATCOUNTER is set (docs/stats.md); without it the page counts nothing. -->
     <style>
-        html, body { margin: 0; height: 100%; overflow: hidden; background: #e2d3b4; }
+        html, body { margin: 0; height: 100%; overflow: hidden; background: #000000; }
         canvas { width: 100%; height: 100%; display: block; }
     </style>
-<link rel="modulepreload" href="./ui-8e3867b16c601c33.js" crossorigin="anonymous" integrity="sha384-o0hO8tUr0yHofFvIPnQ25kuZDTQxsYfWAwIEkfSjP3G1G6XRhFUIjxQGCPdC50+n"><link rel="preload" href="./ui-8e3867b16c601c33_bg.wasm" crossorigin="anonymous" integrity="sha384-qkruZo9eoXZf6Hbl1tjXLoffjmKN6vEPXhn9MDTz93Aep37rBsmY43hU8HL48ZUC" as="fetch" type="application/wasm"><script data-goatcounter="https://blessed-dynasty.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+<link rel="modulepreload" href="./ui-81883cdf979b0847.js" crossorigin="anonymous" integrity="sha384-ENQGUfY7EFEzPtC6gXr1QSN2J/eFc9VVFhUANNzzQDf2i9mSqBAdzvrGvd3bsjdb"><link rel="preload" href="./ui-81883cdf979b0847_bg.wasm" crossorigin="anonymous" integrity="sha384-jAPlVIvmD2678cxNuitF4jRrTXEdY5Icrvc3HvnyG7FOX26rSrToAy9NJE3xqN0y" as="fetch" type="application/wasm"><script data-goatcounter="https://blessed-dynasty.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
 </head>
 <body>
     <canvas id="canvas"></canvas>

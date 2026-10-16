@@ -1,0 +1,16 @@
+{
+  "name": "Blessed Dynasty",
+  "short_name": "Династия",
+  "description": "Основать династию: одна жизнь у власти, счёт за наследие.",
+  "lang": "ru",
+  "start_url": "../",
+  "scope": "../",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#000000",
+  "theme_color": "#0c1460",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

@@ -2,13 +2,23 @@
 <html lang="ru">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- Stage 46: the page does not zoom, the canvas reaches under the notch and keeps out of
+         it by the safe-area padding below. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
     <title>Blessed Dynasty</title>
     <link rel="icon" href="data:,">
+    <!-- Stage 46: «На экран „Домой“»: full screen and landscape from the home screen. -->
+    <link rel="manifest" href="web/manifest.webmanifest">
+    <link rel="apple-touch-icon" href="web/icon-192.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Династия">
+    <meta name="theme-color" content="#000000">
     
 <script type="module">
-import init, * as bindings from './ui-81883cdf979b0847.js';
-const wasm = await init({ module_or_path: './ui-81883cdf979b0847_bg.wasm' });
+import init, * as bindings from './ui-a7a22dd30fbe9c86.js';
+const wasm = await init({ module_or_path: './ui-a7a22dd30fbe9c86_bg.wasm' });
 
 
 window.wasmBindings = bindings;
@@ -17,17 +27,41 @@ window.wasmBindings = bindings;
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 </script>
+    
     <!-- Stage 40: the pictures of the starts, fetched when the start screen opens. -->
     
     <!-- GoatCounter's script goes in at the end of this head by scripts/deploy.sh when
          BD_GOATCOUNTER is set (docs/stats.md); without it the page counts nothing. -->
     <style>
-        html, body { margin: 0; height: 100%; overflow: hidden; background: #000000; }
-        canvas { width: 100%; height: 100%; display: block; }
+        html, body { margin: 0; height: 100%; overflow: hidden; background: #000000; overscroll-behavior: none; }
+        /* The window's height follows the address bar as it hides; the notch and the home bar
+           are padded out. */
+        body { height: 100vh; height: 100dvh; box-sizing: border-box;
+               padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+        /* A long press is egui's tip, not the text selection and its menu. */
+        html, body, canvas { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
+                             -webkit-tap-highlight-color: transparent; touch-action: none; }
+        canvas { width: 100%; height: 100%; display: block; outline: none; }
+        /* Stage 46: no portrait layout; the game stays under this and goes on when turned. */
+        #turn { display: none; }
+        @media (orientation: portrait) and (pointer: coarse) {
+            #turn { display: flex; position: fixed; inset: 0; z-index: 1; flex-direction: column;
+                    align-items: center; justify-content: center; gap: 16px; padding: 24px;
+                    background: #0c1460; color: #fcfcfc; font: bold 20px/1.4 monospace; text-align: center; }
+            #turn b { color: #fcfc54; font-size: 64px; line-height: 1; }
+            #turn span { color: #a8a8fc; font-size: 15px; font-weight: normal; }
+        }
     </style>
-<link rel="modulepreload" href="./ui-81883cdf979b0847.js" crossorigin="anonymous" integrity="sha384-ENQGUfY7EFEzPtC6gXr1QSN2J/eFc9VVFhUANNzzQDf2i9mSqBAdzvrGvd3bsjdb"><link rel="preload" href="./ui-81883cdf979b0847_bg.wasm" crossorigin="anonymous" integrity="sha384-jAPlVIvmD2678cxNuitF4jRrTXEdY5Icrvc3HvnyG7FOX26rSrToAy9NJE3xqN0y" as="fetch" type="application/wasm"><script data-goatcounter="https://blessed-dynasty.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+<link rel="modulepreload" href="./ui-a7a22dd30fbe9c86.js" crossorigin="anonymous" integrity="sha384-8Y3+KGkPfTe49i9u+TOMPTGOUfkxZUJzJZqnLPZdy/ZYrqB3PbShXmFP9rq7KkZ2"><link rel="preload" href="./ui-a7a22dd30fbe9c86_bg.wasm" crossorigin="anonymous" integrity="sha384-PuGs+BrPZ9eBhB0gkkB8m4pgIYnCPejkuSuc4AYGt8yuY2TcEl5CrOgOCT1Yhhp3" as="fetch" type="application/wasm"><script data-goatcounter="https://blessed-dynasty.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
 </head>
 <body>
     <canvas id="canvas"></canvas>
+    <div id="turn"><b>↻</b>Поверните телефон<span>Игра идёт в горизонтальном положении</span></div>
+    <script>
+        // Stage 46: Safari's pinch and double tap zoom the page past `user-scalable=no`.
+        for (const e of ["gesturestart", "gesturechange", "dblclick"]) {
+            document.addEventListener(e, (ev) => ev.preventDefault(), { passive: false });
+        }
+    </script>
 </body>
 </html>
